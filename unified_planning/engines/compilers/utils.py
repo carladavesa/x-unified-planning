@@ -298,12 +298,21 @@ def replace_action(
             "The Action of the given ActionInstance does not have a valid replacement."
         )
     if replaced_action is not None:
-        return ActionInstance(
-            replaced_action,
-            action_instance.actual_parameters,
-            action_instance.agent,
-            action_instance.motion_paths,
-        )
+        if type(replaced_action) is tuple:
+            non_number_param = [a for a in action_instance.actual_parameters if str(a.type) != 'Number']
+            return ActionInstance(
+                replaced_action[0],
+                non_number_param,
+                action_instance.agent,
+                action_instance.motion_paths,
+            )
+        else:
+            return ActionInstance(
+                replaced_action,
+                action_instance.actual_parameters,
+                action_instance.agent,
+                action_instance.motion_paths,
+            )
     else:
         return None
 
