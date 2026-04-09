@@ -25,8 +25,6 @@ from .base import Domain
 from .block_grouping import DOMAIN as block_grouping
 from .counters import DOMAIN as counters
 from .delivery import DOMAIN as delivery
-from .folding import DOMAIN as folding
-from .example_louis import DOMAIN as example_louis
 from .labyrinth import DOMAIN as labyrinth
 from .n_puzzle import DOMAIN as n_puzzle
 from .pancake_sorting import DOMAIN as pancake_sorting
@@ -41,8 +39,6 @@ DOMAINS: dict[str, Domain] = {
     "block_grouping": block_grouping,
     "counters": counters,
     "delivery": delivery,
-    "folding": folding,
-    "example_louis": example_louis,
     "labyrinth": labyrinth,
     "n_puzzle": n_puzzle,
     "pancake_sorting": pancake_sorting,
