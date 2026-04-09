@@ -580,9 +580,7 @@ class CPSolutionCollector(cp_model.CpSolverSolutionCallback):
 
 def requires_arithmetic(node: FNode) -> bool:
     ARITHMETIC_OPS = {OperatorKind.PLUS, OperatorKind.MINUS, OperatorKind.TIMES, OperatorKind.DIV}
-    if (node.node_type in ARITHMETIC_OPS
-            or node.is_lt() or node.is_le()
-            or (node.is_equals() and node.arg(0).type.is_int_type())):
+    if (node.node_type in ARITHMETIC_OPS or node.is_lt() or node.is_le()):
         return True
     return any(requires_arithmetic(arg) for arg in node.args)
 
