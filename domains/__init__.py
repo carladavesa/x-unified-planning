@@ -31,6 +31,7 @@ from .pancake_sorting import DOMAIN as pancake_sorting
 from .plotting import DOMAIN as plotting
 from .puzznic import DOMAIN as puzznic
 from .rush_hour import DOMAIN as rush_hour
+from .sailing import DOMAIN as sailing
 from .sokoban import DOMAIN as sokoban
 from .watering import DOMAIN as watering
 
@@ -44,6 +45,7 @@ DOMAINS: dict[str, Domain] = {
     "plotting": plotting,
     "puzznic": puzznic,
     "rush_hour": rush_hour,
+    "sailing": sailing,
     "sokoban": sokoban,
     "watering": watering,
 }
