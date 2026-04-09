@@ -17,6 +17,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (define (domain ext-plant-watering)
+    (:requirements :typing :numeric-fluents)
     (:types thing location - object
         agent plant tap - thing)
 
