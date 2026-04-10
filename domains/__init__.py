@@ -32,6 +32,7 @@ from .plotting import DOMAIN as plotting
 from .puzznic import DOMAIN as puzznic
 from .rush_hour import DOMAIN as rush_hour
 from .sailing import DOMAIN as sailing
+from .settlers import DOMAIN as settlers
 from .sokoban import DOMAIN as sokoban
 from .watering import DOMAIN as watering
 
@@ -46,6 +47,7 @@ DOMAINS: dict[str, Domain] = {
     "puzznic": puzznic,
     "rush_hour": rush_hour,
     "sailing": sailing,
+    "settlers": settlers,
     "sokoban": sokoban,
     "watering": watering,
 }
