@@ -58,7 +58,6 @@ class PathwaysDomain(Domain):
         for m in re.finditer(r'\(available_(\w+)\)', content):
             substances.add(m.group(1).lower())
 
-        # chosen_* i possible_* → choosable
         choosable = set()
         for m in re.finditer(r'\(chosen_(\w+)\)', content):
             choosable.add(m.group(1).lower())
@@ -101,7 +100,6 @@ class PathwaysDomain(Domain):
             prec_str = block[prec_idx:eff_idx]
             eff_str = block[eff_idx:]
 
-            # Parse precondicions numèriques: (>= (+ (* (available_X) 1.0) -N.0) 0.0)
             needs = {}
             for pm in re.finditer(
                 r'\(>=\s*\(\+\s*\(\*\s+\(available_(\w+)\)\s*[\d.]+\)\s*-([\d.]+)\s*\)\s*[\d.]+\)',
@@ -239,7 +237,6 @@ class PathwaysDomain(Domain):
             elif s1 in avail:
                 problem.add_goal(GE(avail[s1](), Int(threshold)))
         else:
-            # Fallback: cerca qualsevol available_* al goal_str
             goal_substs = [s.lower() for s in re.findall(r'\(available_(\w+)\)', data['goal_str'])]
             t = re.search(r'-([\d.]+)', data['goal_str'])
             threshold = int(float(t.group(1))) if t else 4
