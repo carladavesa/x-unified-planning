@@ -56,7 +56,6 @@ from typing import (
     cast,
 )
 
-
 def check_and_simplify_conditions(
     problem: AbstractProblem, action: DurativeAction, simplifier
 ) -> Tuple[bool, List[Tuple[TimeInterval, FNode]]]:
@@ -797,11 +796,15 @@ def add_cp_constraints(
         args = [add_cp_constraints(problem, a, variables, model, object_to_index) for a in node.args]
         result = args[0]
         for arg in args[1:]:
-            assert hasattr(arg, 'type'), \
-                f"TIMES not supported between linear expressions, only IntVars. Got: {type(arg)}"
-            temp = model.NewIntVar(arg.type.lower_bound, arg.type.upper_bound, f"mult_{id(node)}")
-            model.AddMultiplicationEquality(temp, result, arg)
-            result = temp
+            if isinstance(arg, int):
+                # constant * IntVar → LinearExpr
+                result = result * arg
+            else:
+                assert hasattr(arg, 'type'), \
+                    f"TIMES not supported between linear expressions, only IntVars. Got: {type(arg)}"
+                temp = model.NewIntVar(arg.Proto().domain[0], arg.Proto().domain[-1], f"mult_{id(node)}")
+                model.AddMultiplicationEquality(temp, result, arg)
+                result = temp
         return result
 
     raise NotImplementedError(f"Node type {node.node_type} not implemented in CP-SAT translation")
