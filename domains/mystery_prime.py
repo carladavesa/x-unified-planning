@@ -135,6 +135,8 @@ class MysteryPrimeDomain(Domain):
 
         # drink actions
         for (f1n, f2n) in domain_data['drink']:
+            if f1n == f2n:
+                continue
             a = InstantaneousAction(f'drink_{f1n}_{f2n}')
             f1o = food_objs[f1n]
             f2o = food_objs[f2n]
@@ -145,6 +147,8 @@ class MysteryPrimeDomain(Domain):
 
         # feast actions
         for (pn, f1n, f2n) in domain_data['feast']:
+            if f1n == f2n:
+                continue
             a = InstantaneousAction(f'feast_{pn}_{f1n}_{f2n}')
             po = person_objs[pn]
             f1o = food_objs[f1n]
