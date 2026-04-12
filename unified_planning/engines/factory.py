@@ -76,10 +76,6 @@ DEFAULT_ENGINES = {
         "unified_planning.engines.compilers.bounded_types_remover",
         "BoundedTypesRemover",
     ),
-    "up_unboundedness_remover": (
-        "unified_planning.engines.compilers.unboundedness_remover",
-        "UnboundednessRemover",
-    ),
     "up_conditional_effects_remover": (
         "unified_planning.engines.compilers.conditional_effects_remover",
         "ConditionalEffectsRemover",
@@ -190,7 +186,6 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "sequential_simulator",
     "up_time_triggered_validator",
     "up_bounded_types_remover",
-    "up_unboundedness_remover",
     "up_conditional_effects_remover",
     "up_disjunctive_conditions_remover",
     "up_ma_disjunctive_conditions_remover",
