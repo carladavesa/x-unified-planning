@@ -47,19 +47,20 @@ COMPILATION_PIPELINES = {
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     "int": [  # numeric
-        CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
-        CompilationKind.ARRAYS_REMOVING,
+        #CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
+        #CompilationKind.ARRAYS_REMOVING,
+        CompilationKind.BOUNDED_TYPES_REMOVING
     ],
     "uti": [
-        CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
-        CompilationKind.ARRAYS_REMOVING,
+        #CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
+        #CompilationKind.ARRAYS_REMOVING,
         CompilationKind.GROUNDING,
         CompilationKind.INTEGERS_REMOVING,
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     "log": [
-        CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
-        CompilationKind.ARRAYS_REMOVING,
+        #CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
+        #CompilationKind.ARRAYS_REMOVING,
         CompilationKind.GROUNDING,
         CompilationKind.LOGARITHMIC_REMOVING,
         #CompilationKind.USERTYPE_FLUENTS_REMOVING,
@@ -276,7 +277,7 @@ def solve_problem(
 
         else:
             with OneshotPlanner(name=resolved_name, params=params) as planner:
-                _check_support(planner, problem)
+                #_check_support(planner, problem)
                 result = planner.solve(problem)
                 if result.plan is not None:
                     print("Solution found!\n")
@@ -322,6 +323,7 @@ def compile_and_solve(
 
     try:
         compiled_problem, comp_results, comp_time = compile_problem(problem, compilation, timeout)
+        print(compiled_problem)
         remaining_timeout = 0 if timeout == 0 else max(1, timeout - int(comp_time))
         solve_time = solve_problem(
             compiled_problem,
