@@ -17,7 +17,6 @@ from unified_planning.shortcuts import (
 )
 from domains.base import Domain
 
-PDDL_DIR = os.path.join(os.path.dirname(__file__), 'settlers', 'handcrafted')
 READ_INSTANCE_SCRIPT = os.path.join(os.path.dirname(__file__), 'settlers', 'read_instance.py')
 
 INSTANCES: list[str] = [f"pfile{i}" for i in range(1, 21)]
@@ -33,10 +32,7 @@ class SettlersDomain(Domain):
     def get_instance(self, instance: Optional[str] = None) -> dict:
         if not instance or instance not in self._instances:
             raise ValueError(f"Instance '{instance}' not found!")
-        proc = subprocess.run(
-            ['python3', READ_INSTANCE_SCRIPT, instance],
-            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
+        proc = subprocess.run(['python', READ_INSTANCE_SCRIPT, instance], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if proc.returncode != 0:
             raise ValueError(f"Error parsing '{instance}': {proc.stderr}")
         parts = proc.stdout.split('---')
