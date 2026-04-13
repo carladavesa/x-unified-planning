@@ -220,7 +220,7 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
         if not clauses:
             return []
         full_cond = Or(clauses).simplify() if len(clauses) > 1 else clauses[0]
-        return [(TRUE(), full_cond)]
+        return full_cond
 
     def _add_effects_for_solution(
             self,
@@ -284,8 +284,7 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                         v_fnode = TRUE() if v else FALSE()
                     if not new_condition.is_true() and requires_arithmetic(new_condition):
                         expansions = self._expand_condition_with_cp(problem, new_problem, new_condition, solution)
-                        for _, cond in expansions:
-                            new_action.add_effect(f, v_fnode, cond, old_effect.forall)
+                        new_action.add_effect(f, v_fnode, expansions, old_effect.forall)
                     else:
                         new_action.add_effect(f, v_fnode, new_condition, old_effect.forall)
 
@@ -299,8 +298,7 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                 if not new_condition.is_true() and requires_arithmetic(new_condition):
                     # Arithmetic condition not evaluated - expand with CP-SAT
                     expansions = self._expand_condition_with_cp(problem, new_problem, new_condition, solution)
-                    for _, cond in expansions:
-                        new_action.add_effect(new_fluent, new_value, cond, old_effect.forall)
+                    new_action.add_effect(new_fluent, new_value, expansions, old_effect.forall)
                 else:
                     new_action.add_effect(new_fluent, new_value, new_condition, old_effect.forall)
 
