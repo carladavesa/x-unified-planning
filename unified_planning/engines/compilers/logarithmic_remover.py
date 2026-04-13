@@ -49,7 +49,7 @@ from unified_planning.engines.compilers.utils import (
 from unified_planning.exceptions import UPProblemDefinitionError
 from typing import Dict, List, Optional, OrderedDict, Iterable, Tuple
 from functools import partial
-from unified_planning.shortcuts import And, Not, Iff, FALSE, TRUE, Or
+from unified_planning.shortcuts import And, Not, Iff, FALSE, TRUE, Or, DerivedBoolType
 
 
 class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
@@ -408,10 +408,31 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
             action.add_effect(goal_fluent_exp, TRUE(), substituted_goal)
             action.add_effect(goal_fluent_exp, FALSE(), Not(substituted_goal))
 
+
+    def _add_goal_as_axiom(self, problem: Problem, new_problem: Problem, goal_expr: FNode, i, arithmetic):
+        fluent_name = f"goal_{i}"
+        from unified_planning.model import Fluent
+        goal_fluent = Fluent(fluent_name, DerivedBoolType())
+        new_problem.add_fluent(goal_fluent, default_initial_value=FALSE())
+        new_problem.add_goal(goal_fluent)
+
+        self._object_to_index = {}
+        axiom = up.model.Axiom(f"{goal_fluent}")
+        axiom.set_head(goal_fluent())
+
+        if arithmetic:
+            axiom_condition = self._expand_condition_with_cp(problem, new_problem, goal_expr, {})
+            axiom.add_body_condition(axiom_condition)
+            new_problem.add_axiom(axiom)
+        else:
+            new_goal_expr = self._get_new_expression(new_problem, goal_expr)
+            axiom.add_body_condition(new_goal_expr)
+            new_problem.add_axiom(axiom)
+
     def _transform_goals(self, problem: Problem, new_problem: Problem) -> None:
         """
         Transform goals: separate arithmetic and non-arithmetic.
-        For arithmetic goals, create auxiliary boolean fluents.
+        Create an auxiliary axiom por each goal.
         """
         non_arithmetic_goals = []
         arithmetic_goals = []
@@ -423,25 +444,16 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                 non_arithmetic_goals.append(goal)
 
         # Non-arithmetic goals - direct transformation
-        for goal in non_arithmetic_goals:
-            transformed = self._get_new_expression(new_problem, goal)
-            if transformed and transformed != TRUE():
-                new_problem.add_goal(transformed)
+        for i, goal in enumerate(non_arithmetic_goals):
+            #transformed = self._get_new_expression(new_problem, goal)
+            #if transformed and transformed != TRUE():
+            #    new_problem.add_goal(transformed)
+            self._add_goal_as_axiom(problem, new_problem, goal, i, False)
 
         # Create a predicate for each arithmetic goal
         self._goal_registry = []
         for i, goal in enumerate(arithmetic_goals):
-            fluent_name = f"goal_{i}"
-            from unified_planning.model import Fluent
-            from unified_planning.shortcuts import BoolType
-            goal_fluent = Fluent(fluent_name, BoolType())
-            new_problem.add_fluent(goal_fluent, default_initial_value=FALSE())
-
-            init_val = evaluate_goal_in_initial_state(problem, goal)
-            new_problem.set_initial_value(goal_fluent(), TRUE() if init_val else FALSE())
-
-            new_problem.add_goal(goal_fluent())
-            self._goal_registry.append((goal, goal_fluent()))
+            self._add_goal_as_axiom(problem, new_problem, goal, i, True)
 
     # ==================== AXIOMS TRANSFORMATION ====================
 
