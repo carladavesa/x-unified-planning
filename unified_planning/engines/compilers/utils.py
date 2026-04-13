@@ -799,13 +799,10 @@ def add_cp_constraints(
             if isinstance(result, int) and isinstance(arg, int):
                 result = result * arg
             elif isinstance(result, int):
-                # int * IntVar → IntVar * int
                 result = arg * result
             elif isinstance(arg, int):
-                # IntVar * int → LinearExpr
                 result = result * arg
             else:
-                # IntVar * IntVar → necessita variable auxiliar
                 lb = min(result.Proto().domain[0] * arg.Proto().domain[0],
                          result.Proto().domain[0] * arg.Proto().domain[-1],
                          result.Proto().domain[-1] * arg.Proto().domain[0],
