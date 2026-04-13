@@ -99,11 +99,12 @@ class FarmlandDomain(Domain):
 
         problem = Problem('farmland_problem')
 
-        # Bounds correctes
+        # Bounds ajustats
         total_x = sum(x_init.values())
         x_ub = total_x
-        cost_ub = total_x
+        cost_ub = total_x // 4  # cada movefast consumeix 4 unitats
 
+        # Fluents
         x = {f: Fluent(f'x_{f}', IntType(0, x_ub)) for f in farms}
         cost = Fluent('cost', IntType(0, cost_ub))
 
@@ -117,15 +118,14 @@ class FarmlandDomain(Domain):
                 problem.set_initial_value(x[f](), Int(x_init[f]))
         problem.set_initial_value(cost(), Int(cost_init))
 
-        # adj as a Python set for fast lookup
+        # Adjacency
         adj_set = set(adj)
 
-        # Actions: one movefast and one moveslow per (f1, f2) adj pair
+        # Actions
         for (f1, f2) in adj_set:
             if f1 not in x or f2 not in x:
                 continue
 
-            # movefast: >= 4 from f1, -4 f1, +2 f2, cost+1
             a_fast = InstantaneousAction(f'movefast__{f1}__{f2}')
             a_fast.add_precondition(GE(x[f1](), Int(4)))
             a_fast.add_decrease_effect(x[f1](), Int(4))
@@ -133,19 +133,18 @@ class FarmlandDomain(Domain):
             a_fast.add_increase_effect(cost(), Int(1))
             problem.add_action(a_fast)
 
-            # moveslow: >= 1 from f1, -1 f1, +1 f2
             a_slow = InstantaneousAction(f'moveslow__{f1}__{f2}')
             a_slow.add_precondition(GE(x[f1](), Int(1)))
             a_slow.add_decrease_effect(x[f1](), Int(1))
             a_slow.add_increase_effect(x[f2](), Int(1))
             problem.add_action(a_slow)
 
-        # Goal: min x per farm
+        # Goals: min x per farm
         for f, val in min_x.items():
             if f in x:
                 problem.add_goal(GE(x[f](), Int(val)))
 
-        # Goal: benefit constraint sum(coeff_i * x_i) >= threshold
+        # Goal: benefit constraint
         if coeffs and benefit_threshold is not None:
             terms = [Times(Int(c), x[f]()) for f, c in coeffs.items() if f in x]
             if len(terms) == 1:
