@@ -758,9 +758,16 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
 
                 # Default initial values
                 default_value = problem.fluents_defaults.get(fluent)
-                default_bits = self._convert_value(
-                    default_value.constant_value(), n_bits, self.offsets.get(fluent.name,0)
-                ) if default_value else [False] * n_bits
+                if default_value is not None:
+                    dv = default_value.constant_value()
+                    lb = self.offsets.get(fluent.name, 0)
+                    ub = fluent.type.upper_bound
+                    if lb <= dv <= ub:
+                        default_bits = self._convert_value(dv, n_bits, lb)
+                    else:
+                        default_bits = [False] * n_bits
+                else:
+                    default_bits = [False] * n_bits
 
                 # Create bit fluents
                 for i in range(n_bits):
