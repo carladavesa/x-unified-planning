@@ -451,7 +451,8 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
         # Create a predicate for each arithmetic goal
         self._goal_registry = []
         for i, goal in enumerate(arithmetic_goals):
-            self._add_goal_as_axiom(problem, new_problem, goal, i, True)
+            j = len(non_arithmetic_goals) + i
+            self._add_goal_as_axiom(problem, new_problem, goal, j, True)
 
     # ==================== AXIOMS TRANSFORMATION ====================
 

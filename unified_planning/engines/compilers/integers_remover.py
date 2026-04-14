@@ -622,16 +622,16 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         Create an auxiliary axiom por each goal.
         """
         arithmetic_goals = []
-        direct_goals = []
+        non_arithmetic_goals = []
 
         for goal in problem.goals:
             if requires_arithmetic(goal):
                 arithmetic_goals.append(goal)
             else:
-                direct_goals.append(goal)
+                non_arithmetic_goals.append(goal)
 
         # Non-arithmetic goals
-        for i, goal in enumerate(direct_goals):
+        for i, goal in enumerate(non_arithmetic_goals):
             #transformed = self._transform_node(problem, new_problem, goal)
             #if transformed and transformed != TRUE():
             #    new_problem.add_goal(transformed)
@@ -640,7 +640,8 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         # a)
         # Create a predicate for each arithmetic goal
         for i, goal in enumerate(arithmetic_goals):
-            self._add_goal_as_axiom(problem, new_problem, goal, i, True)
+            j = len(non_arithmetic_goals) + i
+            self._add_goal_as_axiom(problem, new_problem, goal, j, True)
 
         # b)
         # Create a predicate for all arithmetic goals
