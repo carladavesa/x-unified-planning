@@ -64,6 +64,7 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
         engines.engine.Engine.__init__(self)
         CompilerMixin.__init__(self, CompilationKind.LOGARITHMIC_REMOVING)
         self.n_bits = OrderedDict()
+        self.offsets = {}
         self._object_to_index = {}
         self._index_to_object = {}
         self._goal_registry = []
@@ -161,9 +162,11 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
 
     # ==================== METHODS ====================
 
-    def _convert_value(self, value: int, n_bits: int) -> List[bool]:
-        """Convert integer value to binary list of n_bits."""
-        return [b == '1' for b in bin(value)[2:].zfill(n_bits)]
+    def _convert_value(self, value: int, n_bits: int, offset: int = 0) -> List[bool]:
+        """Convert integer value to binary list of n_bits, applying offset."""
+        shifted = value - offset
+        assert shifted >= 0, f"Value {value} - offset {offset} = {shifted} < 0"
+        return [b == '1' for b in bin(shifted)[2:].zfill(n_bits)]
 
     def _get_bit_fluents(self, new_problem: Problem, fluent_exp: FNode) -> List[FNode]:
         """Get the bit fluents representing an integer fluent."""
@@ -210,7 +213,7 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                 fluent = fnode.fluent()
                 if fluent.type.is_int_type() and fluent.name in self.n_bits:
                     n_bits = self.n_bits[fluent.name]
-                    value_bits = self._convert_value(sol[var_str], n_bits)
+                    value_bits = self._convert_value(sol[var_str], n_bits, self.offsets.get(fluent.name, 0))
                     bit_fluents = self._get_bit_fluents(new_problem, fnode)
                     bit_conds = [f if b else Not(f) for f, b in zip(bit_fluents, value_bits)]
                     sol_conds.append(And(bit_conds) if len(bit_conds) > 1 else bit_conds[0])
@@ -264,7 +267,7 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
 
                 next_val = (cur_val + delta) if old_effect.is_increase() else (cur_val - delta)
                 n_bits = self.n_bits[fluent.name]
-                next_bits = self._convert_value(next_val, n_bits)
+                next_bits = self._convert_value(next_val, n_bits, self.offsets.get(fluent.name, 0))
                 bit_fluents = self._get_bit_fluents(new_problem, old_effect.fluent)
                 for f, bit_val in zip(bit_fluents, next_bits):
                     new_action.add_effect(f, TRUE() if bit_val else FALSE(), new_condition, old_effect.forall)
@@ -336,8 +339,8 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                 continue
 
             # Convert current and next values to bits
-            current_bits = self._convert_value(i, n_bits)
-            next_bits = self._convert_value(next_val_int, n_bits)
+            current_bits = self._convert_value(i, n_bits, self.offsets.get(name_fluent, 0))
+            next_bits = self._convert_value(next_val_int, n_bits, self.offsets.get(name_fluent, 0))
 
             # Get bit fluents
             new_fluents = self._get_new_fluent(new_problem, effect.fluent)
@@ -521,7 +524,7 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                     name_fluent = fluent.name
                     if name_fluent in self.n_bits:
                         n_bits = self.n_bits[name_fluent]
-                        value_bits = self._convert_value(value, n_bits)
+                        value_bits = self._convert_value(value, n_bits, self.offsets.get(name_fluent, 0))
                         new_fluents = self._get_bit_fluents(new_problem, fnode)
                         for f, bit_val in zip(new_fluents, value_bits):
                             new_action.add_precondition(f if bit_val else Not(f))
@@ -654,7 +657,14 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
 
         # Calculate and save number of bits required to encode the integer domain
         if save:
-            self.n_bits[fluent.name] = math.ceil(math.log2(inner_fluent.upper_bound + 1))
+            lb = inner_fluent.lower_bound
+            ub = inner_fluent.upper_bound
+            self.offsets[fluent.name] = lb  # <-- afegir
+            n_values = ub - lb + 1
+            if n_values <= 1:
+                self.n_bits[fluent.name] = 1
+            else:
+                self.n_bits[fluent.name] = math.ceil(math.log2(n_values))
 
         return [fluent.name]
 
@@ -730,7 +740,7 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
             new_values = self._get_new_fluent(new_problem, value)
         else:
             assert value.is_constant(), "Value must be a constant!"
-            new_values = self._convert_value(value.constant_value(), n_bits)
+            new_values = self._convert_value(value.constant_value(), n_bits, self.offsets.get(fluent.fluent().name, 0))
         return new_fluents, new_values
 
     def _transform_fluents(self, problem: Problem, new_problem: Problem):
@@ -748,7 +758,9 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
 
                 # Default initial values
                 default_value = problem.fluents_defaults.get(fluent)
-                default_bits = self._convert_value(default_value.constant_value(), n_bits) if default_value else [False] * n_bits
+                default_bits = self._convert_value(
+                    default_value.constant_value(), n_bits, self.offsets.get(fluent.name,0)
+                ) if default_value else [False] * n_bits
 
                 # Create bit fluents
                 for i in range(n_bits):
@@ -758,7 +770,7 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                 # Set initial values from the original problem
                 for k, v in problem.explicit_initial_values.items():
                     if k.fluent() == fluent:
-                        new_value = self._convert_value(v.constant_value(), n_bits)
+                        new_value = self._convert_value(v.constant_value(), n_bits, self.offsets.get(fluent.name, 0))
                         self._set_fluent_bits(new_problem, fluent, k.args, new_value, n_bits)
             else:
                 # Non-integer fluent: copy as-is
