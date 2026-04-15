@@ -1,10 +1,12 @@
 """farmland planning domain."""
 import os
 import re
-from typing import Optional
+from typing import Optional, Dict
+
+from unified_planning.model import Action, Expression, MinimizeActionCosts
 from unified_planning.shortcuts import (
     Fluent, IntType, InstantaneousAction, Problem,
-    GE, Plus, Minus, Times, Int, Not, Equals,
+    GE, Plus, Minus, Times, Int, Not, Equals, UserType,
 )
 from domains.base import Domain
 
@@ -92,69 +94,84 @@ class FarmlandDomain(Domain):
         farms = data['farms']
         x_init = data['x_init']
         cost_init = data['cost_init']
-        adj = data['adj']
+        adjacent = data['adj']
         min_x = data['min_x']
         coeffs = data['coeffs']
         benefit_threshold = data['benefit_threshold']
 
         problem = Problem('farmland_problem')
+        Farm = UserType('Farm')
+
+        for f in farms:
+            problem.add_object(f, Farm)
 
         # Bounds ajustats
         total_x = sum(x_init.values())
         x_ub = total_x
-        cost_ub = total_x // 4  # cada movefast consumeix 4 unitats
+        cost_ub = total_x // 4
 
         # Fluents
-        x = {f: Fluent(f'x_{f}', IntType(0, x_ub)) for f in farms}
+        adj = Fluent('adj', f1=Farm, f2=Farm)
+        x = Fluent('x', IntType(0, x_ub), f=Farm)
         cost = Fluent('cost', IntType(0, cost_ub))
 
-        for f, fl in x.items():
-            problem.add_fluent(fl, default_initial_value=Int(0))
-        problem.add_fluent(cost, default_initial_value=Int(0))
+        problem.add_fluent(adj, default_initial_value=False)
+        problem.add_fluent(x, default_initial_value=0)
+        problem.add_fluent(cost, default_initial_value=0)
 
         # Initial values
         for f in farms:
             if f in x_init:
-                problem.set_initial_value(x[f](), Int(x_init[f]))
-        problem.set_initial_value(cost(), Int(cost_init))
+                o_f = problem.object(f)
+                problem.set_initial_value(x(o_f), x_init[f])
+        problem.set_initial_value(cost, cost_init)
 
-        # Adjacency
-        adj_set = set(adj)
+        for f1, f2 in adjacent:
+            o_f1 = problem.object(f1)
+            o_f2 = problem.object(f2)
+            problem.set_initial_value(adj(o_f1, o_f2), True)
 
         # Actions
-        for (f1, f2) in adj_set:
-            if f1 not in x or f2 not in x:
-                continue
+        movefast = InstantaneousAction('movefast', f1=Farm, f2=Farm)
+        f1, f2 = movefast.parameter('f1'), movefast.parameter('f2')
+        movefast.add_precondition(Not(Equals(f1, f2)))
+        movefast.add_precondition(adj(f1, f2))
+        movefast.add_precondition(GE(x(f1), 4))
+        movefast.add_decrease_effect(x(f1), 4)
+        movefast.add_increase_effect(x(f2), 2)
+        problem.add_action(movefast)
 
-            a_fast = InstantaneousAction(f'movefast__{f1}__{f2}')
-            a_fast.add_precondition(GE(x[f1](), Int(4)))
-            a_fast.add_decrease_effect(x[f1](), Int(4))
-            a_fast.add_increase_effect(x[f2](), Int(2))
-            a_fast.add_increase_effect(cost(), Int(1))
-            problem.add_action(a_fast)
-
-            a_slow = InstantaneousAction(f'moveslow__{f1}__{f2}')
-            a_slow.add_precondition(GE(x[f1](), Int(1)))
-            a_slow.add_decrease_effect(x[f1](), Int(1))
-            a_slow.add_increase_effect(x[f2](), Int(1))
-            problem.add_action(a_slow)
+        moveslow = InstantaneousAction('moveslow', f1=Farm, f2=Farm)
+        f1, f2 = moveslow.parameter('f1'), moveslow.parameter('f2')
+        moveslow.add_precondition(Not(Equals(f1, f2)))
+        moveslow.add_precondition(adj(f1, f2))
+        moveslow.add_precondition(GE(x(f1), 1))
+        moveslow.add_decrease_effect(x(f1), 1)
+        moveslow.add_increase_effect(x(f2), 1)
+        problem.add_action(moveslow)
 
         # Goals: min x per farm
         for f, val in min_x.items():
-            if f in x:
-                problem.add_goal(GE(x[f](), Int(val)))
+            o_f = problem.object(f)
+            problem.add_goal(GE(x(o_f), val))
 
         # Goal: benefit constraint
         if coeffs and benefit_threshold is not None:
-            terms = [Times(Int(c), x[f]()) for f, c in coeffs.items() if f in x]
+            terms = [Times(c, x(problem.object(f))) for f, c in coeffs.items()]
             if len(terms) == 1:
                 benefit_expr = terms[0]
             else:
                 benefit_expr = terms[0]
                 for t in terms[1:]:
                     benefit_expr = Plus(benefit_expr, t)
-            problem.add_goal(GE(benefit_expr, Int(benefit_threshold)))
+            problem.add_goal(GE(benefit_expr, benefit_threshold))
 
+        costs: Dict[Action, Expression] = {
+            movefast: Int(1),
+            moveslow: Int(0),
+        }
+
+        problem.add_quality_metric(MinimizeActionCosts(costs))
         return problem
 
 
