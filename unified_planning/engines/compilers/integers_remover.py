@@ -199,6 +199,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
     def _transform_increase_decrease_effect(
             self,
             effect,
+            problem: Problem,
             new_problem: Problem,
     ) -> Iterator[Effect]:
         """
@@ -236,10 +237,14 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
             old_obj = self._get_number_object(new_problem, i)
             new_obj = self._get_number_object(new_problem, next_val_int)
+            transformed_condition = self._transform_node(problem, new_problem, effect.condition) \
+                if not effect.condition.is_true() else TRUE()
+            full_condition = And(Equals(new_fluent, old_obj), transformed_condition).simplify() \
+                if not transformed_condition.is_true() else Equals(new_fluent, old_obj).simplify()
             new_effect = Effect(
                 new_fluent,
                 new_obj,
-                And(Equals(new_fluent, old_obj), effect.condition).simplify(),
+                full_condition,
                 EffectKind.ASSIGN,
                 effect.forall
             )
@@ -328,7 +333,12 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             # Efectes independents: iguals a totes les accions
             for effect in independent_effects:
                 if effect.is_increase() or effect.is_decrease():
-                    for new_eff in self._transform_increase_decrease_effect(effect, new_problem):
+                    if requires_arithmetic(effect.condition):
+                        raise NotImplementedError(
+                            f"increase/decrease effect with arithmetic condition not yet supported: "
+                            f"{effect} in action {old_action.name}"
+                        )
+                    for new_eff in self._transform_increase_decrease_effect(effect, problem, new_problem):
                         new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
                 elif requires_arithmetic(effect.condition):
                     new_fluent = self._transform_node(problem, new_problem, effect.fluent)
@@ -398,13 +408,13 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 try:
                     delta = old_effect.value.constant_value()
                 except:
-                    for new_eff in self._transform_increase_decrease_effect(old_effect, new_problem):
+                    for new_eff in self._transform_increase_decrease_effect(old_effect, problem, new_problem):
                         new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
                     continue
 
                 cur_val = solution.get(str(old_effect.fluent))
                 if cur_val is None:
-                    for new_eff in self._transform_increase_decrease_effect(old_effect, new_problem):
+                    for new_eff in self._transform_increase_decrease_effect(old_effect, problem, new_problem):
                         new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
                     continue
 
