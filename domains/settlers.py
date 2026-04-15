@@ -105,7 +105,7 @@ class SettlersDomain(Domain):
         # Calculate bounds
         n_places = len(places)
         n_vehicles = len(vehicles)
-        n_actions_estimate = (n_places + n_vehicles) * 20
+        n_actions_estimate = (n_places + n_vehicles) * 8
 
         max_housing_goal = 0
         for goal_str in pd.get('goals', []):
@@ -113,10 +113,10 @@ class SettlersDomain(Domain):
             if m:
                 max_housing_goal = max(max_housing_goal, int(m.group(1)))
 
-        available_ub = n_places * 5 + 5
+        available_ub = max(max_housing_goal * 2 + 4, 8)
         space_ub = 10
-        housing_ub = max(max_housing_goal + 2, 5)
-        labour_ub = n_actions_estimate
+        housing_ub = max_housing_goal + 1
+        labour_ub = n_actions_estimate * 3
         pollution_ub = n_actions_estimate // 2
         resource_use_ub = n_actions_estimate // 3
 
