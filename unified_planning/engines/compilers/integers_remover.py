@@ -666,7 +666,10 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             #transformed = self._transform_node(problem, new_problem, goal)
             #if transformed and transformed != TRUE():
             #    new_problem.add_goal(transformed)
-            self._add_goal_as_axiom(problem, new_problem, goal, i, False)
+            if goal.is_fluent_exp():
+                new_problem.add_goal(goal)
+            else:
+                self._add_goal_as_axiom(problem, new_problem, goal, i, False)
 
         # a)
         # Create a predicate for each arithmetic goal
@@ -763,15 +766,16 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
         # ========== Transform Fluents ==========
         self._transform_fluents(problem, new_problem)
-
-        # ========== Transform Goals ==========
-        self._transform_goals(problem, new_problem)
-
+        print("actions...")
         # ========== Transform Actions ==========
         new_to_old = self._transform_actions(problem, new_problem)
-
+        print("axioms...")
         # ========== Transform Axioms ==========
         self._transform_axioms(problem, new_problem, new_to_old)
+
+        # ========== Transform Goals ==========
+        print("goals...")
+        self._transform_goals(problem, new_problem)
 
         # ========== Transform Quality Metrics ==========
         for metric in problem.quality_metrics:

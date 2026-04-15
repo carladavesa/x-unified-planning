@@ -449,7 +449,10 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
             #transformed = self._get_new_expression(new_problem, goal)
             #if transformed and transformed != TRUE():
             #    new_problem.add_goal(transformed)
-            self._add_goal_as_axiom(problem, new_problem, goal, i, False)
+            if goal.is_fluent_exp():
+                new_problem.add_goal(goal)
+            else:
+                self._add_goal_as_axiom(problem, new_problem, goal, i, False)
 
         # Create a predicate for each arithmetic goal
         self._goal_registry = []
@@ -869,11 +872,11 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
         # ========== Transform Fluents ==========
         self._transform_fluents(problem, new_problem)
 
-        # ========== Transform Goals ==========
-        self._transform_goals(problem, new_problem)
-
         # ========== Transform Actions ==========
         new_to_old = self._transform_actions(problem, new_problem)
+
+        # ========== Transform Goals ==========
+        self._transform_goals(problem, new_problem)
 
         # ========== Transform Quality Metrics ==========
         for metric in problem.quality_metrics:
