@@ -864,6 +864,8 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                     f"Apply GROUNDING before LOGARITHMIC_REMOVING."
                 )
 
+        problem = remove_write_only_fluents(problem)
+
         # ========== Transform Fluents ==========
         self._transform_fluents(problem, new_problem)
 

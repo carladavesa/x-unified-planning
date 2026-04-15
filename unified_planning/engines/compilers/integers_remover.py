@@ -20,7 +20,8 @@ from bidict import bidict
 from ortools.sat.python import cp_model
 from unified_planning.engines.compilers.utils import (
     add_cp_constraints, add_effect_bounds_constraints, compute_integer_range, solve_with_cp_sat, requires_arithmetic,
-    substitute_modified_fluents, evaluate_goal_in_initial_state, get_fluent_exps_in_expression, evaluate_with_solution
+    substitute_modified_fluents, evaluate_goal_in_initial_state, get_fluent_exps_in_expression, evaluate_with_solution,
+    remove_write_only_fluents
 )
 from typing import Any
 from unified_planning.model.expression import ListExpression
@@ -327,7 +328,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             if and_clauses:
                 new_action.add_precondition(And(and_clauses) if len(and_clauses) > 1 else and_clauses[0])
 
-            # Dependant effects fixed by solution
+            # Dependent effects fixed by solution
             self._add_effects_for_solution(new_action, problem, new_problem, solution, dependent_effects)
 
             # Efectes independents: iguals a totes les accions
@@ -505,7 +506,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 # Boolean effects or simple assignments with arithmetic conditions - independent of main cp-solver
                 independent_effects.append(effect)
 
-        # Fluents of the dependant effects
+        # Fluents of the dependent effects
         dependent_fluent_strs = set()
         for effect in dependent_effects:
             for f in get_fluent_exps_in_expression(effect.fluent):
@@ -521,7 +522,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             else:
                 direct_precs.append(prec)
 
-        # Cas 2: CP-SAT for cp_precs and dependant effects
+        # Cas 2: CP-SAT for cp_precs and dependent effects
         self._object_to_index = {}
         self._index_to_object = {}
         variables = bidict({})
@@ -751,6 +752,8 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         new_problem.initial_values.clear()
         new_problem.clear_quality_metrics()
         self._goal_registry = []
+
+        problem = remove_write_only_fluents(problem)
 
         # Compute the range of integer values needed across the entire problem
         global_lb, global_ub = compute_integer_range(problem)

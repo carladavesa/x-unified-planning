@@ -1058,3 +1058,95 @@ def get_fluent_exps_in_expression(node: FNode) -> set:
     for arg in node.args:
         result.update(get_fluent_exps_in_expression(arg))
     return result
+
+
+def remove_write_only_fluents(problem: Problem) -> Problem:
+    """
+    Remove fluents that never appear in preconditions or goals.
+    """
+    read_fluent_names = set()
+    for action in problem.actions:
+        for prec in action.preconditions:
+            for f in get_fluent_exps_in_expression(prec):
+                read_fluent_names.add(f.fluent().name)
+    for goal in problem.goals:
+        for f in get_fluent_exps_in_expression(goal):
+            read_fluent_names.add(f.fluent().name)
+
+    write_only_names = {
+        fluent.name for fluent in problem.fluents
+        if fluent.name not in read_fluent_names
+    }
+
+    if not write_only_names:
+        return problem
+
+    new_problem = problem.clone()
+    new_problem.clear_fluents()
+    new_problem.clear_actions()
+    new_problem.initial_values.clear()
+
+    for fluent in problem.fluents:
+        if fluent.name not in write_only_names:
+            default = problem.fluents_defaults.get(fluent)
+            new_problem.add_fluent(fluent, default_initial_value=default)
+
+    for k, v in problem.explicit_initial_values.items():
+        if k.fluent().name not in write_only_names:
+            new_problem.set_initial_value(k, v)
+
+    for action in problem.actions:
+        new_action = action.clone()
+        effects_to_keep = [
+            e for e in new_action.effects
+            if e.fluent.fluent().name not in write_only_names
+        ]
+        new_action.effects.clear()
+        for e in effects_to_keep:
+            new_action._add_effect_instance(e)
+        new_problem.add_action(new_action)
+
+    return new_problem
+
+def group_conditions_by_shared_fluents(conditions: List[FNode]) -> List[List[FNode]]:
+    """
+    Groups conditions that share numeric fluents.
+    """
+    def get_numeric_fluents(cond):
+        return {str(f) for f in get_fluent_exps_in_expression(cond)
+                if f.fluent().type.is_int_type()}
+
+    def get_bool_fluents(cond):
+        return {str(f) for f in get_fluent_exps_in_expression(cond)
+                if f.fluent().type.is_bool_type()}
+
+    numeric_fluents = [get_numeric_fluents(c) for c in conditions]
+    bool_fluents = [get_bool_fluents(c) for c in conditions]
+
+    parent = list(range(len(conditions)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        parent[find(x)] = find(y)
+
+    for i in range(len(conditions)):
+        for j in range(i + 1, len(conditions)):
+            shared_numeric = numeric_fluents[i] & numeric_fluents[j]
+            shared_bool = bool_fluents[i] & bool_fluents[j]
+
+            if shared_numeric:
+                union(i, j)
+            elif shared_bool and (numeric_fluents[i] or numeric_fluents[j]):
+                union(i, j)
+
+    groups = {}
+    for i in range(len(conditions)):
+        root = find(i)
+        groups.setdefault(root, []).append(conditions[i])
+
+    return list(groups.values())
