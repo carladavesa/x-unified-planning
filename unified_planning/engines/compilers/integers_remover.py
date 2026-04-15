@@ -283,7 +283,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         return None
 
     def _create_multiple_actions(self, old_action, problem, new_problem, params, solutions, variables,
-                                 dependent_effects=None, independent_effects=None):
+                                 dependent_effects=None, independent_effects=None, direct_precs=None):
         dependent_effects = dependent_effects if dependent_effects is not None else old_action.effects
         independent_effects = independent_effects or []
 
@@ -304,7 +304,11 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             action_name = f"{old_action.name}_d{idx}"
             new_action = InstantaneousAction(action_name, _parameters=params, _env=problem.environment)
 
-            # Precondicions de la solució
+            # Add direct preconditions
+            for prec in direct_precs:
+                new_action.add_precondition(prec)
+
+            # Preconditions fixed by solution
             and_clauses = []
             for fnode, var in variables.items():
                 var_str = str(fnode)
@@ -318,7 +322,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             if and_clauses:
                 new_action.add_precondition(And(and_clauses) if len(and_clauses) > 1 else and_clauses[0])
 
-            # Efectes dependents: fixats per la solució
+            # Dependant effects fixed by solution
             self._add_effects_for_solution(new_action, problem, new_problem, solution, dependent_effects)
 
             # Efectes independents: iguals a totes les accions
@@ -465,7 +469,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                     new_action.add_effect(new_fluent, new_value, new_cond, old_effect.forall)
             return [new_action]
 
-        # Classify effects: dependents (relacionats amb prec_vars) vs independents
+        # Classify effects: dependents (share fluents with prec_vars) vs independents
         prec_vars = set()
         for prec in old_action.preconditions:
             for f in get_fluent_exps_in_expression(prec):
@@ -473,13 +477,11 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
         dependent_effects = []
         independent_effects = []
-
         for effect in old_action.effects:
             if effect.is_increase() or effect.is_decrease():
                 effect_vars = get_fluent_exps_in_expression(effect.fluent)
                 value_vars = get_fluent_exps_in_expression(effect.value)
-                all_vars = effect_vars | value_vars
-                if any(str(v) in prec_vars for v in all_vars):
+                if any(str(v) in prec_vars for v in effect_vars | value_vars):
                     dependent_effects.append(effect)
                 else:
                     independent_effects.append(effect)
@@ -490,25 +492,34 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 else:
                     independent_effects.append(effect)
             else:
-                # Efectes booleans/assignació simple i condicions aritmètiques → independents
-                # Les condicions MAI van al CP-SAT principal
+                # Boolean effects or simple assignments with arithmetic conditions - independent of main cp-solver
                 independent_effects.append(effect)
 
-        # Cas 2: CP-SAT NOMÉS per precondicions + efectes dependents
+        # Fluents of the dependant effects
+        dependent_fluent_strs = set()
+        for effect in dependent_effects:
+            for f in get_fluent_exps_in_expression(effect.fluent):
+                dependent_fluent_strs.add(str(f))
+
+        # Separate preconditions into those handled by CP-SAT and those directly added to actions
+        cp_precs = []
+        direct_precs = []
+        for prec in old_action.preconditions:
+            prec_fluents = {str(f) for f in get_fluent_exps_in_expression(prec)}
+            if prec_fluents & dependent_fluent_strs or requires_arithmetic(prec):
+                cp_precs.append(prec)
+            else:
+                direct_precs.append(prec)
+
+        # Cas 2: CP-SAT for cp_precs and dependant effects
         self._object_to_index = {}
         self._index_to_object = {}
         variables = bidict({})
         cp_model_obj = cp_model.CpModel()
 
-        if has_arithmetic_preconditions:
-            result_var = add_cp_constraints(problem, And(old_action.preconditions), variables, cp_model_obj,
-                                            self._object_to_index)
+        if cp_precs:
+            result_var = add_cp_constraints(problem, And(cp_precs), variables, cp_model_obj, self._object_to_index)
             cp_model_obj.Add(result_var == 1)
-        else:
-            for prec in old_action.preconditions:
-                if not requires_arithmetic(prec):
-                    prec_var = add_cp_constraints(problem, prec, variables, cp_model_obj, self._object_to_index)
-                    cp_model_obj.Add(prec_var == 1)
 
         add_effect_bounds_constraints(problem, variables, cp_model_obj, dependent_effects, self._object_to_index, False)
 
@@ -517,10 +528,19 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             return []
 
         self._index_to_object = {(t, idx): obj for (t, obj), idx in self._object_to_index.items()}
+
+        # Transform direct_precs
+        transformed_direct_precs = []
+        for prec in direct_precs:
+            new_prec = self._transform_node(problem, new_problem, prec)
+            if new_prec and new_prec != TRUE():
+                transformed_direct_precs.append(new_prec)
+
         return self._create_multiple_actions(
             old_action, problem, new_problem, params, solutions, variables,
             dependent_effects=dependent_effects,
-            independent_effects=independent_effects
+            independent_effects=independent_effects,
+            direct_precs=transformed_direct_precs
         )
     def _add_goal_as_axiom(self, problem: Problem, new_problem: Problem, goal_expr: FNode, i, arithmetic):
         fluent_name = f"goal_{i}"
