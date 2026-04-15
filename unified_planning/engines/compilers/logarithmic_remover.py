@@ -44,7 +44,7 @@ from unified_planning.engines.compilers.utils import (
     get_fresh_name,
     replace_action,
     updated_minimize_action_costs, requires_arithmetic, substitute_modified_fluents, evaluate_goal_in_initial_state,
-    get_fluent_exps_in_expression, evaluate_with_solution,
+    get_fluent_exps_in_expression, evaluate_with_solution, remove_write_only_fluents,
 )
 from unified_planning.exceptions import UPProblemDefinitionError
 from typing import Dict, List, Optional, OrderedDict, Iterable, Tuple
