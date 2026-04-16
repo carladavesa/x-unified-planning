@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import os.path
 import signal
+import sys
 import time
 
 from domains import DOMAINS
@@ -278,7 +279,7 @@ def solve_problem(
         else:
             with OneshotPlanner(name=resolved_name, params=params) as planner:
                 #_check_support(planner, problem)
-                result = planner.solve(problem)
+                result = planner.solve(problem, output_stream=sys.stdout)
                 if result.plan is not None:
                     print("Solution found!\n")
                     plan = result.plan
