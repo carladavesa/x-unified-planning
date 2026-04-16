@@ -1101,6 +1101,8 @@ def remove_write_only_fluents(problem: Problem) -> Problem:
             e for e in new_action.effects
             if e.fluent.fluent().name not in write_only_names
         ]
+        if not effects_to_keep:
+            continue
         new_action.effects.clear()
         for e in effects_to_keep:
             new_action._add_effect_instance(e)
