@@ -588,7 +588,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
     def _add_condition_as_axiom(self, problem: Problem, new_problem: Problem, expr: FNode):
         if expr in self._conditions:
-            return new_problem.fluent(self._conditions[expr])
+            return new_problem.fluent(self._conditions[expr])()
 
         i = len(self._conditions)
         fluent_name = f"condition_{i}"
@@ -778,6 +778,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         """Main compilation"""
         assert isinstance(problem, Problem)
 
+        problem = remove_write_only_fluents(problem)
         new_problem = problem.clone()
         new_problem.name = f"{self.name}_{problem.name}"
         new_problem.clear_fluents()
