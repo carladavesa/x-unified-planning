@@ -596,7 +596,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         condition_fluent = Fluent(fluent_name, DerivedBoolType())
         new_problem.add_fluent(condition_fluent, default_initial_value=FALSE())
 
-        self._conditions[expr] = condition_fluent
+        self._conditions[expr] = fluent_name
         self._object_to_index = {}
         axiom = up.model.Axiom(f"{condition_fluent}")
         axiom.set_head(condition_fluent())
