@@ -454,8 +454,6 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                     new_action.add_effect(new_fluent, new_value, new_condition, old_effect.forall)
 
     def _transform_action_integers(self, problem, new_problem, old_action):
-        print(f"Transforming {old_action.name}, effects: {[str(e.fluent) for e in old_action.effects]}")
-
         params = OrderedDict(((p.name, p.type) for p in old_action.parameters))
         has_arithmetic_preconditions = any(requires_arithmetic(p) for p in old_action.preconditions)
         has_arithmetic_effects = any(
