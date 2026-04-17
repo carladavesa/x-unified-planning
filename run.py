@@ -4,7 +4,7 @@ This script provides a single entry point for executing planning problems
 defined in ``domains/``. Each domain exposes a ``Domain`` instance that
 knows how to build UP ``Problem`` objects for its own set of instances.
 
-Usage examples::
+Usage examples:
 
   python run.py --domain counters --instance pfile1 --compilation uti --solving fast-downward
   python run.py --domain domain.pddl --instance problem.pddl --compilation none --solving fast-downward
@@ -17,13 +17,11 @@ from __future__ import annotations
 import argparse
 import os.path
 import signal
-import sys
 import time
 
 from domains import DOMAINS
 from unified_planning.io import PDDLReader
 
-# Side-effect import: registers the rantanplan planner with UP.
 try:
     import rantanplan
 except ImportError:
@@ -379,6 +377,26 @@ def list_instances(domain: str) -> None:
         print(f"  - {name}: {params}")
 
 
+import subprocess
+import sys
+
+def solve_with_fd_direct(domain_path: str, problem_path: str, timeout: int = 0) -> None:
+    fd_path = "/home/cdavesa/.local/lib/python3.6/site-packages/up_fast_downward/downward/fast-downward.py"
+
+    cmd = [
+        sys.executable, fd_path,
+        domain_path, problem_path,
+        "--evaluator", "hlm=landmark_sum(lm_reasonable_orders_hps(lm_rhw()),transform=adapt_costs(one))",
+        "--evaluator", "hff=ff(transform=adapt_costs(one))",
+        "--search", "lazy_greedy([hlm,hff],preferred=[hlm,hff],cost_type=one,reopen_closed=false)",
+    ]
+
+    kwargs = {"timeout": timeout} if timeout > 0 else {}
+    try:
+        subprocess.run(cmd, **kwargs)
+    except subprocess.TimeoutExpired:
+        print(f"Timeout ({timeout}s)")
+
 def main(argv: Optional[list[str]] = None) -> None:
     parser = argparse.ArgumentParser(prog="python run.py")
     parser.add_argument("--domain", help="Domain name (e.g. counters) or path to a PDDL domain file")
@@ -392,7 +410,7 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser.add_argument("--param", action="append", default=[], help="Extra planner param as key=value")
     args = parser.parse_args(argv)
 
-    # Handle informational commands first.
+    # Handle informational commands first
     if args.list_domains:
         list_domains()
         return
@@ -413,12 +431,16 @@ def main(argv: Optional[list[str]] = None) -> None:
         k, v = p.split("=", 1)
         planner_params[k] = v
 
-    # Build the UP Problem: either from PDDL files on disk or from a
-    # registered Python domain.
+    # Build the UP Problem: either from PDDL files on disk or from a registered Python domain
+    #if os.path.isfile(args.domain) and os.access(args.domain, os.R_OK) and \
+    #   os.path.isfile(args.instance) and os.access(args.instance, os.R_OK):
+    #    reader = PDDLReader()
+    #    problem = reader.parse_problem(args.domain, args.instance)
+    print(os.path.isfile(args.domain), os.path.isfile(args.instance))
     if os.path.isfile(args.domain) and os.access(args.domain, os.R_OK) and \
-       os.path.isfile(args.instance) and os.access(args.instance, os.R_OK):
-        reader = PDDLReader()
-        problem = reader.parse_problem(args.domain, args.instance)
+            os.path.isfile(args.instance) and os.access(args.instance, os.R_OK):
+        solve_with_fd_direct(args.domain, args.instance, timeout=args.timeout)
+        return
     else:
         dom = DOMAINS.get(args.domain)
         if dom is None:
