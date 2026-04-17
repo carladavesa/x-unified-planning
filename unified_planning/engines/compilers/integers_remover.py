@@ -454,6 +454,8 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                     new_action.add_effect(new_fluent, new_value, new_condition, old_effect.forall)
 
     def _transform_action_integers(self, problem, new_problem, old_action):
+        print(f"Transforming {old_action.name}, effects: {[str(e.fluent) for e in old_action.effects]}")
+
         params = OrderedDict(((p.name, p.type) for p in old_action.parameters))
         has_arithmetic_preconditions = any(requires_arithmetic(p) for p in old_action.preconditions)
         has_arithmetic_effects = any(
@@ -789,8 +791,6 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         new_problem.clear_quality_metrics()
         self._goal_registry = []
 
-        problem = remove_write_only_fluents(problem)
-
         # Compute the range of integer values needed across the entire problem
         global_lb, global_ub = compute_integer_range(problem)
         ut_number = UserType('Number')
@@ -799,8 +799,10 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
         # ========== Transform Fluents ==========
         self._transform_fluents(problem, new_problem)
+
         # ========== Transform Actions ==========
         new_to_old = self._transform_actions(problem, new_problem)
+
         # ========== Transform Axioms ==========
         self._transform_axioms(problem, new_problem, new_to_old)
 
