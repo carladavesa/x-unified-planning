@@ -107,7 +107,9 @@ class FarmlandDomain(Domain):
 
         # Bounds ajustats
         total_x = sum(x_init.values())
-        x_ub = total_x
+        max_goal = max(min_x.values(), default=0)
+        x_ub = max(max_goal * 2, total_x // len(farms) * 3)
+        x_ub = min(x_ub, total_x)
         cost_ub = total_x // 4
 
         # Fluents
