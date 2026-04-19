@@ -105,12 +105,12 @@ class FarmlandDomain(Domain):
         for f in farms:
             problem.add_object(f, Farm)
 
-        # Bounds ajustats
+        # Bounds
         total_x = sum(x_init.values())
         max_goal = max(min_x.values(), default=0)
-        x_ub = max(max_goal * 2, total_x // len(farms) * 3)
+        max_initial = max(x_init.values(), default=0)
+        x_ub = max(max_goal * 2, max_initial, total_x // len(farms) * 3)
         x_ub = min(x_ub, total_x)
-        cost_ub = total_x // 4
 
         # Fluents
         adj = Fluent('adj', f1=Farm, f2=Farm)
@@ -121,12 +121,12 @@ class FarmlandDomain(Domain):
         problem.add_fluent(x, default_initial_value=0)
         problem.add_fluent(cost, default_initial_value=0)
 
-        # Initial values
+          # Initial values
         for f in farms:
             if f in x_init:
                 o_f = problem.object(f)
-                problem.set_initial_value(x(o_f), x_init[f])
-        problem.set_initial_value(cost, cost_init)
+                problem.set_initial_value(x(o_f), Int(x_init[f]))
+        problem.set_initial_value(cost, Int(cost_init))
 
         for f1, f2 in adjacent:
             o_f1 = problem.object(f1)
