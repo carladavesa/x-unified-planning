@@ -163,10 +163,7 @@ class RoverDomain(Domain):
 
         # Fluents enters
         energy = Fluent('energy', IntType(0, energy_ub), r=Rover)
-        max_recharges = 50
-        total_cost = Fluent('total-cost', IntType(0, max_recharges))
         problem.add_fluent(energy, default_initial_value=Int(0))
-        problem.add_fluent(total_cost, default_initial_value=Int(0))
 
         # Fluents booleans
         def bf(name, *types):
@@ -228,8 +225,6 @@ class RoverDomain(Domain):
                 r = obj_map.get(args[0])
                 if r:
                     problem.set_initial_value(energy(r), Int(val))
-            elif fname == 'total_cost':
-                problem.set_initial_value(total_cost(), Int(val))
 
         # Valors inicials booleans
         pred_name_map = {
@@ -281,7 +276,6 @@ class RoverDomain(Domain):
         recharge.add_precondition(in_sun(w))
         recharge.add_precondition(LE(energy(x), Int(80)))
         recharge.add_increase_effect(energy(x), Int(20))
-        recharge.add_increase_effect(total_cost(), Int(1))
         problem.add_action(recharge)
 
         # samplesoil(?x rover, ?s store, ?p waypoint)
@@ -416,11 +410,19 @@ class RoverDomain(Domain):
                     problem.add_goal(f(*arg_objs))
 
         # ===== METRIC =====
-        if metric and metric[0] == 'minimize':
-            if metric[1] == 'total_cost':
-                problem.add_quality_metric(
-                    MinimizeExpressionOnFinalState(total_cost())
-                )
+        action_costs = {
+            navigate: 0,
+            recharge: 1,
+            samplesoil: 0,
+            samplerock: 0,
+            drop: 0,
+            calibrate: 0,
+            takeimage: 0,
+            commsoil: 0,
+            commrock: 0,
+            commimg: 0,
+        }
+        problem.add_quality_metric(MinimizeActionCosts(action_costs))
 
         return problem
 
