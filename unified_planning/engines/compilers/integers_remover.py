@@ -623,118 +623,60 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
     # ==================== GOALS TRANSFORMATION ====================
 
-    def _add_goal_maintenance_effects(
-            self,
-            action: Action,
-            goal_expr: FNode,
-            goal_fluent_exp: FNode,
-    ) -> None:
-        """
-        Adds conditional effects to maintain the truth value of a goal fluent based on the goal expression.
-        """
-        goal_fluent_exps = get_fluent_exps_in_expression(goal_expr)
-        action_modifies_exps = {
-            effect.fluent
-            for effect in action.effects
-            if effect.fluent.is_fluent_exp()
-        }
+    def _extract_objects(self, expr: FNode) -> set:
+        """Recursively extract all Object instances appearing in an expression."""
+        objects = set()
+        if expr.is_object_exp():
+            objects.add(expr.object())
+        for arg in expr.args:
+            objects.update(self._extract_objects(arg))
+        return objects
 
-        goal_fluent_strs = {str(f) for f in goal_fluent_exps}
-        action_modifies_strs = {str(f) for f in action_modifies_exps}
+    def _add_goal_as_axiom(self, problem: Problem, new_problem: Problem, goal_expr: FNode, i, arithmetic):
+        fluent_name = f"goal_{i}"
 
-        if not goal_fluent_strs & action_modifies_strs:
-            return
+        goal_fluent = Fluent(fluent_name, DerivedBoolType())
+        new_problem.add_fluent(goal_fluent, default_initial_value=FALSE())
+        new_problem.add_goal(goal_fluent)
 
-        if not goal_fluent_exps & action_modifies_exps:
-            return
+        self._object_to_index = {}
+        axiom = up.model.Axiom(f"{goal_fluent}")
+        axiom.set_head(goal_fluent())
 
-        # Replace modified fluents for its next expression
-        substituted_goal = substitute_modified_fluents(action, goal_expr).simplify()
-
-        # Add conditional effects with the goal expression as condition to maintain the goal fluent's value
-        if substituted_goal is TRUE():
-            action.add_effect(goal_fluent_exp, TRUE())
-        elif substituted_goal is FALSE():
-            action.add_effect(goal_fluent_exp, FALSE())
+        if arithmetic:
+            axiom_condition = self._expand_condition_with_cp(problem, new_problem, goal_expr, {})
+            axiom.add_body_condition(axiom_condition)
+            new_problem.add_axiom(axiom)
         else:
-            action.add_effect(goal_fluent_exp, TRUE(), substituted_goal)
-            action.add_effect(goal_fluent_exp, FALSE(), Not(substituted_goal))
+            new_goal_expr = self._transform_node(problem, new_problem, goal_expr)
+            axiom.add_body_condition(new_goal_expr)
+            new_problem.add_axiom(axiom)
 
     def _transform_goals(self, problem: Problem, new_problem: Problem) -> None:
         """
-        Transform all compound/arithmetic goals into a single dummy achievement action.
-
-        Simple atomic goals are added directly. All compound and arithmetic goals are
-        combined into a single action whose precondition is their conjunction. This
-        ensures the planner cannot satisfy subgoals at different times — they must all
-        hold simultaneously in the same state.
-
-        Using one flag (instead of one per subgoal) is critical: persistent per-subgoal
-        flags would allow the planner to "lock in" a subgoal at one timestep and then
-        invalidate it when modifying shared fluents, falsely claiming the goal is met.
+        Transform goals: separate arithmetic and non-arithmetic.
+        Create an auxiliary axiom por each goal.
         """
-        direct_goals = []
-        compound_goals = []
+        non_arithmetic_goals = []
+        arithmetic_goals = []
 
         for goal in problem.goals:
-            if not requires_arithmetic(goal) and goal.is_fluent_exp():
-                direct_goals.append(goal)
-            else:
-                compound_goals.append(goal)
-
-        # Atomic Boolean goals: pass through directly
-        for goal in direct_goals:
-            new_problem.add_goal(goal)
-
-        if not compound_goals:
-            return
-
-        # Build precondition for the single dummy action
-        all_preconds = []
-        for goal in compound_goals:
-            self._object_to_index = {}
-            self._index_to_object = {}
             if requires_arithmetic(goal):
-                try:
-                    cond = self._expand_condition_with_cp(problem, new_problem, goal, {})
-                except ValueError:
-                    print(f"[WARNING] Goal {goal} has no satisfying assignments; problem unsolvable")
-                    # Add an unsatisfiable goal so the planner reports infeasibility
-                    impossible = Fluent("impossible_goal", BoolType())
-                    new_problem.add_fluent(impossible, default_initial_value=FALSE())
-                    new_problem.add_goal(impossible())
-                    return
+                arithmetic_goals.append(goal)
             else:
-                cond = self._transform_node(problem, new_problem, goal)
+                non_arithmetic_goals.append(goal)
 
-            if cond is None:
-                print(f"[WARNING] Cannot transform goal {goal}")
-                continue
-            if cond == FALSE():
-                print(f"[WARNING] Goal {goal} simplifies to FALSE; problem unsolvable")
-                impossible = Fluent("impossible_goal", BoolType())
-                new_problem.add_fluent(impossible, default_initial_value=FALSE())
-                new_problem.add_goal(impossible())
-                return
-            if cond == TRUE():
-                continue
-            all_preconds.append(cond)
+        # Non-arithmetic goals - direct transformation
+        for i, goal in enumerate(non_arithmetic_goals):
+            if goal.is_fluent_exp():
+                new_problem.add_goal(goal)
+            else:
+                self._add_goal_as_axiom(problem, new_problem, goal, i, False)
 
-        if not all_preconds:
-            # All compound goals trivially TRUE
-            return
-
-        # Single flag for all compound goals
-        flag = Fluent("all_compound_goals_reached", BoolType())
-        new_problem.add_fluent(flag, default_initial_value=FALSE())
-        new_problem.add_goal(flag())
-
-        full_precondition = And(all_preconds) if len(all_preconds) > 1 else all_preconds[0]
-
-        achieve = InstantaneousAction("achieve_all_compound_goals", _env=problem.environment)
-        achieve.add_precondition(full_precondition)
-        achieve.add_effect(flag(), TRUE())
-        new_problem.add_action(achieve)
+        # Create a predicate for each arithmetic goal
+        for i, goal in enumerate(arithmetic_goals):
+            j = len(non_arithmetic_goals) + i
+            self._add_goal_as_axiom(problem, new_problem, goal, j, True)
 
     def _get_object_from_index(self, user_type, index):
         """
@@ -832,12 +774,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             new_to_old[new_action] = original
 
         # ========== Transform Goals ==========
-        actions_before = set(new_problem.actions)
         self._transform_goals(cleaned_problem, new_problem)
-        # Register dummy goal-achievement actions in new_to_old (map to themselves)
-        for action in new_problem.actions:
-            if action not in actions_before and action not in new_to_old:
-                new_to_old[action] = action
 
         # ========== Transform Quality Metrics ==========
         for metric in problem.quality_metrics:
