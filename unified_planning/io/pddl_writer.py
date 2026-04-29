@@ -1106,6 +1106,12 @@ class PDDLWriter:
                             )
                         _update_domain_objects(self.domain_objects, obe.get(e.fluent))
                         _update_domain_objects(self.domain_objects, obe.get(e.value))
+        # Iterate the axioms to retrieve domain objects
+        for axiom in self.problem.axioms:
+            for body_cond in axiom.body:
+                _update_domain_objects(self.domain_objects, obe.get(body_cond))
+            if axiom.head is not None:
+                _update_domain_objects(self.domain_objects, obe.get(axiom.head.fluent))
         for ev in self.problem.events:
             for p in ev.preconditions:
                 _update_domain_objects(self.domain_objects, obe.get(p))
