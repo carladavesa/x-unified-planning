@@ -2,7 +2,7 @@
 import os
 import re
 from typing import Optional
-from unified_planning.model import Object
+from unified_planning.model import Object, MinimizeActionCosts
 from unified_planning.shortcuts import (
     Fluent, IntType, BoolType, UserType,
     InstantaneousAction, Problem,
@@ -160,15 +160,24 @@ class PathwaysDomain(Domain):
 
         # Bounds
         numsubs_ub = len(choosable)
-        avail_ub = numsubs_ub
+        # Per a cada substància, el màxim que pot pujar és la suma de tots els increments possibles
+        max_possible_avail = {}
+        for s in substances:
+            initial = numeric.get(f'available_{s}', 0)
+            max_inc = sum(
+                adata['increases'].get(s, 0)
+                for adata in action_data.values()
+            )
+            # Cota també pel goal
+            goal_threshold = 5  # estimació
+            max_possible_avail[s] = max(initial + max_inc, goal_threshold)
 
-        # Fluents
-        avail = {s: Fluent(f'available_{s}', IntType(0, avail_ub)) for s in substances}
-        numsubs = Fluent('numsubs', IntType(0, numsubs_ub))
+        avail = {s: Fluent(f'available_{s}', IntType(0, max_possible_avail[s])) for s in substances}
+        #numsubs = Fluent('numsubs', IntType(0, numsubs_ub))
         chosen = {s: Fluent(f'chosen_{s}', BoolType()) for s in choosable}
         possible_f = {s: Fluent(f'possible_{s}', BoolType()) for s in choosable}
 
-        for f in list(avail.values()) + [numsubs]:
+        for f in list(avail.values()):
             problem.add_fluent(f, default_initial_value=Int(0))
         for f in list(chosen.values()) + list(possible_f.values()):
             problem.add_fluent(f, default_initial_value=False)
@@ -206,8 +215,8 @@ class PathwaysDomain(Domain):
                     a.add_precondition(chosen[s]())
 
             # Efectes
-            if adata['numsubs_inc']:
-                a.add_increase_effect(numsubs(), 1)
+            #if adata['numsubs_inc']:
+            #    a.add_increase_effect(numsubs(), 1)
             for s in adata['chosen_true']:
                 if s in chosen:
                     a.add_effect(chosen[s](), True)
@@ -244,6 +253,15 @@ class PathwaysDomain(Domain):
                 problem.add_goal(GE(Plus(avail[goal_substs[0]](), avail[goal_substs[1]]()), Int(threshold)))
             elif len(goal_substs) == 1 and goal_substs[0] in avail:
                 problem.add_goal(GE(avail[goal_substs[0]](), Int(threshold)))
+
+        # En lloc de numsubs com a fluent enter:
+        costs = {}
+        for action_name, adata in action_data.items():
+            if adata['numsubs_inc']:
+                costs[problem.action(action_name)] = Int(1)
+            else:
+                costs[problem.action(action_name)] = Int(0)
+        problem.add_quality_metric(MinimizeActionCosts(costs))
 
         return problem
 
