@@ -159,8 +159,7 @@ class PathwaysDomain(Domain):
         problem = Problem('pathways_problem')
 
         # Bounds
-        numsubs_ub = len(choosable)
-        # Per a cada substància, el màxim que pot pujar és la suma de tots els increments possibles
+        # For each substance, the maximum it can increase is the sum of all possible increments
         max_possible_avail = {}
         for s in substances:
             initial = numeric.get(f'available_{s}', 0)
@@ -168,12 +167,10 @@ class PathwaysDomain(Domain):
                 adata['increases'].get(s, 0)
                 for adata in action_data.values()
             )
-            # Cota també pel goal
-            goal_threshold = 5  # estimació
+            goal_threshold = 5
             max_possible_avail[s] = max(initial + max_inc, goal_threshold)
 
         avail = {s: Fluent(f'available_{s}', IntType(0, max_possible_avail[s])) for s in substances}
-        #numsubs = Fluent('numsubs', IntType(0, numsubs_ub))
         chosen = {s: Fluent(f'chosen_{s}', BoolType()) for s in choosable}
         possible_f = {s: Fluent(f'possible_{s}', BoolType()) for s in choosable}
 
@@ -195,16 +192,13 @@ class PathwaysDomain(Domain):
                     problem.set_initial_value(avail[s](), int(val))
 
         # Actions
-
         for action_name, adata in action_data.items():
             a = InstantaneousAction(action_name)
 
-            # Precondicions numèriques
             for subst, val in adata['needs'].items():
                 if subst in avail:
                     a.add_precondition(GE(avail[subst](), Int(val)))
 
-            # Precondicions booleanes
             if action_name.startswith('choose__'):
                 s = action_name[len('choose__'):]
                 if s in possible_f:
@@ -214,9 +208,7 @@ class PathwaysDomain(Domain):
                 if s in chosen:
                     a.add_precondition(chosen[s]())
 
-            # Efectes
-            #if adata['numsubs_inc']:
-            #    a.add_increase_effect(numsubs(), 1)
+            # Effects
             for s in adata['chosen_true']:
                 if s in chosen:
                     a.add_effect(chosen[s](), True)
@@ -254,7 +246,6 @@ class PathwaysDomain(Domain):
             elif len(goal_substs) == 1 and goal_substs[0] in avail:
                 problem.add_goal(GE(avail[goal_substs[0]](), Int(threshold)))
 
-        # En lloc de numsubs com a fluent enter:
         costs = {}
         for action_name, adata in action_data.items():
             if adata['numsubs_inc']:
