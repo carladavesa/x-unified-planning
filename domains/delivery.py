@@ -169,7 +169,6 @@ class DeliveryDomain(Domain):
         mount = Fluent('mount', a=Arm, b=Bot)
         load_limit = Fluent('load_limit', IntType(0, max_load_limit), b=Bot)
         current_load = Fluent('current_load', IntType(0, max_load_limit), b=Bot)
-        weight = Fluent('weight', IntType(0, max_weight), i=Item)
 
         problem.add_fluent(at_bot, default_initial_value=False)
         problem.add_fluent(at, default_initial_value=False)
@@ -180,7 +179,6 @@ class DeliveryDomain(Domain):
         problem.add_fluent(mount, default_initial_value=False)
         problem.add_fluent(load_limit, default_initial_value=0)
         problem.add_fluent(current_load, default_initial_value=0)
-        problem.add_fluent(weight, default_initial_value=0)
 
         # --- Objects ---
         for r in rooms: problem.add_object(Object(r, Room))
@@ -201,8 +199,6 @@ class DeliveryDomain(Domain):
             problem.set_initial_value(mount(obj(arm), obj(bot)), True)
         for r1, r2 in door_init:
             problem.set_initial_value(door(obj(r1), obj(r2)), True)
-        for item, w in weights.items():
-            problem.set_initial_value(weight(obj(item)), w)
         for bot, ll in load_limits.items():
             problem.set_initial_value(load_limit(obj(bot)), ll)
         for bot, cl in current_loads.items():
@@ -217,34 +213,46 @@ class DeliveryDomain(Domain):
         move.add_precondition(door(x, y))
         move.add_effect(at_bot(b, y), True)
         move.add_effect(at_bot(b, x), False)
+        problem.add_action(move)
 
-        pick = InstantaneousAction('pick', i=Item, x=Room, a=Arm, b=Bot)
-        i = pick.parameter('i')
-        x = pick.parameter('x')
-        a = pick.parameter('a')
-        b = pick.parameter('b')
-        pick.add_precondition(at(i, x))
-        pick.add_precondition(at_bot(b, x))
-        pick.add_precondition(free(a))
-        pick.add_precondition(mount(a, b))
-        pick.add_precondition(LE(Plus(current_load(b), weight(i)), load_limit(b)))
-        pick.add_effect(in_arm(i, a), True)
-        pick.add_effect(at(i, x), False)
-        pick.add_effect(free(a), False)
-        pick.add_increase_effect(current_load(b), weight(i))
+        # Create pick actions for each (item, arm, bot) combination
+        # with weight as a constant delta (not a fluent)
+        pick_actions = {}
+        for item in items:
+            w = weights.get(item, 1)  # Get item's weight value
+            pick = InstantaneousAction(f'pick_{item}', x=Room, a=Arm, b=Bot)
+            x = pick.parameter('x')
+            a = pick.parameter('a')
+            b = pick.parameter('b')
+            pick.add_precondition(at(obj(item), x))
+            pick.add_precondition(at_bot(b, x))
+            pick.add_precondition(free(a))
+            pick.add_precondition(mount(a, b))
+            pick.add_precondition(LE(Plus(current_load(b), Int(w)), load_limit(b)))
+            pick.add_effect(in_arm(obj(item), a), True)
+            pick.add_effect(at(obj(item), x), False)
+            pick.add_effect(free(a), False)
+            pick.add_increase_effect(current_load(b), Int(w))
+            problem.add_action(pick)
+            pick_actions[item] = pick
 
-        drop = InstantaneousAction('drop', i=Item, x=Room, a=Arm, b=Bot)
-        i = drop.parameter('i')
-        x = drop.parameter('x')
-        a = drop.parameter('a')
-        b = drop.parameter('b')
-        drop.add_precondition(in_arm(i, a))
-        drop.add_precondition(at_bot(b, x))
-        drop.add_precondition(mount(a, b))
-        drop.add_effect(free(a), True)
-        drop.add_effect(at(i, x), True)
-        drop.add_effect(in_arm(i, a), False)
-        drop.add_decrease_effect(current_load(b), weight(i))
+        # Create drop actions for each (item, arm, bot) combination
+        drop_actions = {}
+        for item in items:
+            w = weights.get(item, 1)  # Get item's weight value
+            drop = InstantaneousAction(f'drop_{item}', x=Room, a=Arm, b=Bot)
+            x = drop.parameter('x')
+            a = drop.parameter('a')
+            b = drop.parameter('b')
+            drop.add_precondition(in_arm(obj(item), a))
+            drop.add_precondition(at_bot(b, x))
+            drop.add_precondition(mount(a, b))
+            drop.add_effect(free(a), True)
+            drop.add_effect(at(obj(item), x), True)
+            drop.add_effect(in_arm(obj(item), a), False)
+            drop.add_decrease_effect(current_load(b), Int(w))
+            problem.add_action(drop)
+            drop_actions[item] = drop
 
         to_tray = InstantaneousAction('to_tray', i=Item, a=Arm, b=Bot)
         i = to_tray.parameter('i')
@@ -255,6 +263,7 @@ class DeliveryDomain(Domain):
         to_tray.add_effect(free(a), True)
         to_tray.add_effect(in_arm(i, a), False)
         to_tray.add_effect(in_tray(i, b), True)
+        problem.add_action(to_tray)
 
         from_tray = InstantaneousAction('from_tray', i=Item, a=Arm, b=Bot)
         i = from_tray.parameter('i')
@@ -266,8 +275,7 @@ class DeliveryDomain(Domain):
         from_tray.add_effect(free(a), False)
         from_tray.add_effect(in_arm(i, a), True)
         from_tray.add_effect(in_tray(i, b), False)
-
-        problem.add_actions([move, pick, drop, to_tray, from_tray])
+        problem.add_action(from_tray)
 
         # --- Goal ---
         print("goals_at", goals_at)
@@ -275,8 +283,13 @@ class DeliveryDomain(Domain):
             problem.add_goal(at(obj(item), obj(room)))
 
         costs: Dict[Action, Expression] = {
-            move: Int(3), pick: Int(2), drop: Int(2), to_tray: Int(1), from_tray: Int(1),
+            move: Int(3), to_tray: Int(1), from_tray: Int(1),
         }
+        # Add costs for pick/drop actions
+        for item in items:
+            costs[pick_actions[item]] = Int(2)
+            costs[drop_actions[item]] = Int(2)
+
         problem.add_quality_metric(MinimizeActionCosts(costs))
         return problem
 
