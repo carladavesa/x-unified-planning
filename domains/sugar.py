@@ -30,7 +30,6 @@ class SugarDomain(Domain):
             content = f.read()
 
         # Parse numeric fluents from init: (= (fluent_name) value)
-        # Handles names with hyphens
         numeric_init = {}
         for match in re.finditer(r'\(=\s*\(([\w\-]+(?:_[\w\-]+)*)\)\s+([\d.]+)\s*\)', content):
             numeric_init[match.group(1)] = int(float(match.group(2)))
@@ -61,11 +60,10 @@ class SugarDomain(Domain):
 
         # Extract predicates
         predicates = []
-        # A _parse_domain, secció predicates:
         preds_section = re.search(r'\(:predicates(.*?)\n\)', content, re.DOTALL)
         if preds_section:
             for match in re.finditer(r'\(([\w][\w\-]*)\)', preds_section.group(1)):
-                predicates.append(match.group(1))  # guarda amb guions originals
+                predicates.append(match.group(1))
 
         # Extract functions
         functions = []
@@ -92,7 +90,6 @@ class SugarDomain(Domain):
 
             prec_str = prec_match.group(1).strip() if prec_match else ''
             eff_str = eff_match.group(1).strip() if eff_match else ''
-            # Remove trailing closing paren from the action block
             if eff_str.endswith('))'):
                 eff_str = eff_str[:-1].strip()
 
@@ -118,24 +115,102 @@ class SugarDomain(Domain):
         path = os.path.join(PDDL_DIR, f"domain_{instance}.pddl")
         return self._parse_domain(path)
 
+    def compute_fluent_bound(self, fname, domain_data, data, dead_counters):
+        """Calcula un bound apretat per a un fluent numèric.
+
+        Optimitzacions:
+        1. Dead counters: bound 1
+        2. Fluents immutables (mai modificats): bound = valor inicial
+        3. Resta: max(initial, goal_threshold, max_operand) + marge de 5
+        """
+        # 1. Dead counter
+        if fname in dead_counters:
+            return 1
+
+        initial = data['numeric_init'].get(fname, 0)
+
+        # 2. Comprovar si el fluent és mai modificat
+        is_modified = False
+        for adata in domain_data['actions']:
+            if re.search(
+                    rf'\(\s*(?:increase|decrease)\s*\(\s*{re.escape(fname)}\s*\)',
+                    adata['effect']
+            ):
+                is_modified = True
+                break
+
+        if not is_modified:
+            return max(initial, 1)
+
+        # 3. Threshold del goal: (>= (+ (* (fluent) coeff) -X) 0.0) → fluent >= X
+        goal_threshold = 0
+        for match in re.finditer(
+                r'\(>=\s*\(\+\s*\(\*\s*\(([\w\-_]+)\)\s*[\d.]+\s*\)\s*-([\d.]+)\s*\)',
+                data['goal_str']
+        ):
+            if match.group(1) == fname:
+                goal_threshold = max(goal_threshold, int(float(match.group(2))))
+
+        # 4. Valor màxim que apareix com a operand a effects o preconditions
+        max_op = 0
+        for adata in domain_data['actions']:
+            # Increases / decreases
+            for match in re.finditer(
+                    r'\((?:increase|decrease)\s*\(([\w\-_]+)\)\s*([\d.]+)\s*\)',
+                    adata['effect']
+            ):
+                if match.group(1) == fname:
+                    max_op = max(max_op, int(float(match.group(2))))
+            # Precondicions tipus (>= (+ (fluent) -X) 0.0)
+            for match in re.finditer(
+                    r'\(>=\s*\(\+\s*\(([\w\-_]+)\)\s*-([\d.]+)\s*\)\s*[\d.]+\s*\)',
+                    adata['precondition']
+            ):
+                if match.group(1) == fname:
+                    max_op = max(max_op, int(float(match.group(2))))
+            # Precondicions tipus (> (fluent) X)
+            for match in re.finditer(
+                    r'\(>\s*\(([\w\-_]+)\)\s*([\d.]+)\s*\)',
+                    adata['precondition']
+            ):
+                if match.group(1) == fname:
+                    max_op = max(max_op, int(float(match.group(2))) + 1)
+
+        return max(initial, goal_threshold, max_op) + 5
+
     def build_problem(self, instance: str | None = None) -> "Problem":
         data = self.get_instance(instance)
         domain_data = self.get_domain(instance)
         problem = Problem("sugar_problem")
 
-        # Compute bounds
-        max_val = max(data['numeric_init'].values(), default=20)
-        int_type = IntType(0, max_val + 50)
+        # Detectar dead counters
+        def is_dead_counter(fname):
+            for adata in domain_data['actions']:
+                if fname in adata['precondition']:
+                    return False
+            if fname in data['goal_str']:
+                return False
+            return True
 
-        # Create fluents from domain functions (numeric)
+        dead_counters = set()
+        for fname in domain_data['functions']:
+            if is_dead_counter(fname):
+                dead_counters.add(fname)
+                print(f"Dead counter: {fname}")
+
+        # Crear fluents numèrics amb bounds calculats per fluent
         numeric_fluents = {}
         for fname in domain_data['functions']:
+            if fname in dead_counters:
+                continue
+
             up_name = _pddl_name(fname)
-            f = Fluent(up_name, int_type)
+            bound = self.compute_fluent_bound(fname, domain_data, data, dead_counters)
+            f = Fluent(up_name, IntType(0, bound))
             problem.add_fluent(f, default_initial_value=0)
             numeric_fluents[fname] = f
 
-        # Create fluents from domain predicates (boolean)
+        # Crear fluents booleans
         bool_fluents = {}
         for pname in domain_data['predicates']:
             up_name = _pddl_name(pname)
@@ -154,25 +229,15 @@ class SugarDomain(Domain):
                 problem.set_initial_value(bool_fluents[pname](), True)
 
         def parse_precondition(prec_str: str):
-            # al principi de parse_precondition
-
             conditions = []
             prec_str = prec_str.strip()
             if prec_str.startswith('(and'):
-                prec_str = prec_str[4:].strip().rstrip(')')
+                prec_str = prec_str[4:].strip()
+                if prec_str.endswith(')'):
+                    prec_str = prec_str[:-1].strip()  # NOMÉS un ')'
 
-            import re
-            # Boolean predicates en precondicions
-            for match in re.finditer(r'\(([\w][.\w-]*)\)', prec_str):
-                pname = match.group(1)
-                if pname in bool_fluents:
-                    conditions.append(bool_fluents[pname]())
-                elif pname in numeric_fluents:
-                    pass
-
-            prec_str = '(and  (at-location_truck2_depot2))'
-
-            for match in re.finditer(r'\(([\w][\w_-]*)\)', prec_str):
+            # Boolean predicates
+            for match in re.finditer(r'\(([\w][\w\-_]*)\)', prec_str):
                 pname = match.group(1)
                 if pname in bool_fluents:
                     conditions.append(bool_fluents[pname]())
@@ -187,6 +252,20 @@ class SugarDomain(Domain):
                 if fname in numeric_fluents and threshold > 0:
                     conditions.append(GE(numeric_fluents[fname](), Int(threshold)))
 
+            # (> (fluent) X) → fluent >= X+1
+            for match in re.finditer(r'\(>\s*\(([\w\-_]+)\)\s*([\d.]+)\s*\)', prec_str):
+                fname = match.group(1)
+                threshold = int(float(match.group(2)))
+                if fname in numeric_fluents:
+                    conditions.append(GE(numeric_fluents[fname](), Int(threshold + 1)))
+
+            # (>= (fluent) X) → fluent >= X (sense + operator)
+            for match in re.finditer(r'\(>=\s*\(([\w\-_]+)\)\s*([\d.]+)\s*\)', prec_str):
+                fname = match.group(1)
+                threshold = int(float(match.group(2)))
+                if fname in numeric_fluents and threshold > 0:
+                    conditions.append(GE(numeric_fluents[fname](), Int(threshold)))
+
             return conditions
 
         def parse_effects(eff_str: str):
@@ -197,39 +276,50 @@ class SugarDomain(Domain):
             if eff_str.endswith(')'):
                 eff_str = eff_str[:-1].strip()
 
-            # increase / decrease primer
+            # Acumular tots els increments i decrements del mateix fluent
+            increases = {}
+            decreases = {}
+
             for match in re.finditer(r'\(increase\s*\(([\w\-_]+)\)\s*([\d.]+)\s*\)', eff_str):
                 fname, val = match.group(1), int(float(match.group(2)))
                 if fname in numeric_fluents:
-                    effects.append(('increase', fname, val))
+                    increases[fname] = increases.get(fname, 0) + val
 
             for match in re.finditer(r'\(decrease\s*\(([\w\-_]+)\)\s*([\d.]+)\s*\)', eff_str):
                 fname, val = match.group(1), int(float(match.group(2)))
                 if fname in numeric_fluents:
-                    effects.append(('decrease', fname, val))
+                    decreases[fname] = decreases.get(fname, 0) + val
 
-            # set false: (not (pred)) — ABANS de set_true per evitar captures incorrectes
-            false_preds = set()
+            # Calcular efecte net: increase - decrease (per evitar conflictes IR)
+            all_fluents = set(increases) | set(decreases)
+            for fname in all_fluents:
+                net = increases.get(fname, 0) - decreases.get(fname, 0)
+                if net > 0:
+                    effects.append(('increase', fname, net))
+                elif net < 0:
+                    effects.append(('decrease', fname, -net))
+                # net == 0 → no-op, ignorat
+
+            # set false: (not (pred))
             for match in re.finditer(r'\(not\s*\(([\w][\w\-_]*)\)\s*\)', eff_str):
                 pname = match.group(1)
                 if pname in bool_fluents:
                     effects.append(('set_false', pname, None))
-                    false_preds.add(pname)
 
-            # set true: (pred) — excloent els que ja són dins de (not (...))
-            # Eliminem tots els (not (...)) del string abans de buscar set_true
-            eff_str_no_not = re.sub(r'\(not\s*\([\w][\w\-_]*\)\s*\)', '', eff_str)
-            for match in re.finditer(r'\(([\w][\w\-_]*)\)', eff_str_no_not):
+            # set true: (pred) — excloent (not ...) i increase/decrease
+            eff_str_clean = re.sub(r'\(not\s*\([\w][\w\-_]*\)\s*\)', '', eff_str)
+            eff_str_clean = re.sub(r'\(increase\s*\([\w\-_]+\)\s*[\d.]+\s*\)', '', eff_str_clean)
+            eff_str_clean = re.sub(r'\(decrease\s*\([\w\-_]+\)\s*[\d.]+\s*\)', '', eff_str_clean)
+
+            for match in re.finditer(r'\(([\w][\w\-_]*)\)', eff_str_clean):
                 pname = match.group(1)
                 if pname in bool_fluents:
                     effects.append(('set_true', pname, None))
 
             return effects
 
+        # Crear accions
         for action_data in domain_data['actions']:
-            precs = parse_precondition(action_data['precondition'])
-            effs = parse_effects(action_data['effect'])
-
             a = InstantaneousAction(_pddl_name(action_data['name']))
 
             # Preconditions
@@ -237,16 +327,11 @@ class SugarDomain(Domain):
                 a.add_precondition(cond)
 
             # Effects
-            seen_fluents = set()
             for (etype, name, val) in parse_effects(action_data['effect']):
                 if etype == 'increase':
-                    if name not in seen_fluents:
-                        a.add_increase_effect(numeric_fluents[name](), val)
-                        seen_fluents.add(name)
+                    a.add_increase_effect(numeric_fluents[name](), val)
                 elif etype == 'decrease':
-                    if name not in seen_fluents:
-                        a.add_decrease_effect(numeric_fluents[name](), val)
-                        seen_fluents.add(name)
+                    a.add_decrease_effect(numeric_fluents[name](), val)
                 elif etype == 'set_true':
                     a.add_effect(bool_fluents[name](), True)
                 elif etype == 'set_false':
@@ -254,15 +339,13 @@ class SugarDomain(Domain):
 
             problem.add_action(a)
 
-        # Goals - parse numeric goal
+        # Goals - parse numeric goal: (>= (+ (* (fluent) coeff) -X) 0.0)
         goal_str = data['goal_str']
         for match in re.finditer(
             r'\(>=\s*\(\+\s*\(\*\s*\(([\w\-_]+)\)\s*([\d.]+)\s*\)\s*(-?[\d.]+)\s*\)\s*([\d.]+)\s*\)',
             goal_str
         ):
             fname = match.group(1)
-            # coeff * fluent + offset >= rhs
-            # 1.0 * fluent - 3.0 >= 0.0 → fluent >= 3
             offset = float(match.group(3))
             threshold = int(-offset)
             if fname in numeric_fluents and threshold > 0:
