@@ -98,6 +98,10 @@ class WateringDomain(Domain):
     def build_problem(self, instance: str | None = None) -> "Problem":
         data = self.get_instance(instance)
 
+        print(data['numeric_global'])
+        print(data['objects'])
+        print(data['poured_goals'])
+
         plants = data['objects']['plant']
         taps = data['objects']['tap']
         agents = data['objects']['agent']
@@ -128,24 +132,16 @@ class WateringDomain(Domain):
         Plant = UserType('Plant', Thing)
         Tap = UserType('Tap', Thing)
 
-        max_x = Fluent('max_x', IntType(max_x_val, max_x_val))
-        max_y = Fluent('max_y', IntType(max_y_val, max_y_val))
-        min_x = Fluent('min_x', IntType(min_x_val, min_x_val))
-        min_y = Fluent('min_y', IntType(min_y_val, min_y_val))
-        max_carry = Fluent('max_carry', IntType(0, max_carry_val), a=Agent)
         water_reserve = Fluent('water_reserve', IntType(0, water_reserve_val))
         x = Fluent('x', IntType(min_x_val, max_x_val), t=Thing)
         y = Fluent('y', IntType(min_y_val, max_y_val), t=Thing)
         carrying = Fluent('carrying', IntType(0, max_carry_val), a=Agent)
-        poured = Fluent('poured', IntType(0, water_reserve_val), p=Plant)
-        total_poured = Fluent('total_poured', IntType(0, water_reserve_val))
-        total_loaded = Fluent('total_loaded', IntType(0, water_reserve_val))
+        max_poured_per_plant = max(poured_goals.values()) if poured_goals else 0
+        poured = Fluent('poured', IntType(0, max_poured_per_plant), p=Plant)
+        max_poured = sum(poured_goals.values())  # suma de tots els goals
+        total_poured = Fluent('total_poured', IntType(0, max_poured))
+        total_loaded = Fluent('total_loaded', IntType(0, max_poured))
 
-        problem.add_fluent(max_x, default_initial_value=Int(max_x_val))
-        problem.add_fluent(max_y, default_initial_value=Int(max_y_val))
-        problem.add_fluent(min_x, default_initial_value=Int(min_x_val))
-        problem.add_fluent(min_y, default_initial_value=Int(min_y_val))
-        problem.add_fluent(max_carry, default_initial_value=0)
         problem.add_fluent(water_reserve, default_initial_value=0)
         problem.add_fluent(x, default_initial_value=Int(min_x_val))
         problem.add_fluent(y, default_initial_value=Int(min_y_val))
@@ -162,16 +158,10 @@ class WateringDomain(Domain):
         def obj(name): return problem.object(name)
 
         # --- Init ---
-        problem.set_initial_value(max_x, max_x_val)
-        problem.set_initial_value(min_x, min_x_val)
-        problem.set_initial_value(max_y, max_y_val)
-        problem.set_initial_value(min_y, min_y_val)
         problem.set_initial_value(water_reserve, water_reserve_val)
         problem.set_initial_value(total_poured, 0)
         problem.set_initial_value(total_loaded, 0)
 
-        for agent, val in max_carry_vals.items():
-            problem.set_initial_value(max_carry(obj(agent)), val)
         for agent, val in carrying_vals.items():
             problem.set_initial_value(carrying(obj(agent)), val)
         for o, val in x_vals.items():
@@ -184,49 +174,49 @@ class WateringDomain(Domain):
         # --- Actions ---
         move_up = InstantaneousAction('move_up', a=Agent)
         a = move_up.parameter('a')
-        move_up.add_precondition(LE(Plus(y(a), 1), max_y))
+        move_up.add_precondition(LE(Plus(y(a), 1), max_y_val))
         move_up.add_increase_effect(y(a), 1)
 
         move_down = InstantaneousAction('move_down', a=Agent)
         a = move_down.parameter('a')
-        move_down.add_precondition(GE(Minus(y(a), 1), min_y))
+        move_down.add_precondition(GE(Minus(y(a), 1), min_y_val))
         move_down.add_decrease_effect(y(a), 1)
 
         move_right = InstantaneousAction('move_right', a=Agent)
         a = move_right.parameter('a')
-        move_right.add_precondition(LE(Plus(x(a), 1), max_x))
+        move_right.add_precondition(LE(Plus(x(a), 1), max_x_val))
         move_right.add_increase_effect(x(a), 1)
 
         move_left = InstantaneousAction('move_left', a=Agent)
         a = move_left.parameter('a')
-        move_left.add_precondition(GE(Minus(x(a), 1), min_x))
+        move_left.add_precondition(GE(Minus(x(a), 1), min_x_val))
         move_left.add_decrease_effect(x(a), 1)
 
         move_up_left = InstantaneousAction('move_up_left', a=Agent)
         a = move_up_left.parameter('a')
-        move_up_left.add_precondition(GE(Minus(x(a), 1), min_x))
-        move_up_left.add_precondition(LE(Plus(y(a), 1), max_y))
+        move_up_left.add_precondition(GE(Minus(x(a), 1), min_x_val))
+        move_up_left.add_precondition(LE(Plus(y(a), 1), max_y_val))
         move_up_left.add_decrease_effect(x(a), 1)
         move_up_left.add_increase_effect(y(a), 1)
 
         move_up_right = InstantaneousAction('move_up_right', a=Agent)
         a = move_up_right.parameter('a')
-        move_up_right.add_precondition(LE(Plus(x(a), 1), max_x))
-        move_up_right.add_precondition(LE(Plus(y(a), 1), max_y))
+        move_up_right.add_precondition(LE(Plus(x(a), 1), max_x_val))
+        move_up_right.add_precondition(LE(Plus(y(a), 1), max_y_val))
         move_up_right.add_increase_effect(x(a), 1)
         move_up_right.add_increase_effect(y(a), 1)
 
         move_down_left = InstantaneousAction('move_down_left', a=Agent)
         a = move_down_left.parameter('a')
-        move_down_left.add_precondition(GE(Minus(x(a), 1), min_x))
-        move_down_left.add_precondition(GE(Minus(y(a), 1), min_y))
+        move_down_left.add_precondition(GE(Minus(x(a), 1), min_x_val))
+        move_down_left.add_precondition(GE(Minus(y(a), 1), min_y_val))
         move_down_left.add_decrease_effect(x(a), 1)
         move_down_left.add_decrease_effect(y(a), 1)
 
         move_down_right = InstantaneousAction('move_down_right', a=Agent)
         a = move_down_right.parameter('a')
-        move_down_right.add_precondition(LE(Plus(x(a), 1), max_x))
-        move_down_right.add_precondition(GE(Minus(y(a), 1), min_y))
+        move_down_right.add_precondition(LE(Plus(x(a), 1), max_x_val))
+        move_down_right.add_precondition(GE(Minus(y(a), 1), min_y_val))
         move_down_right.add_increase_effect(x(a), 1)
         move_down_right.add_decrease_effect(y(a), 1)
 
@@ -235,7 +225,7 @@ class WateringDomain(Domain):
         t = load.parameter('t')
         load.add_precondition(Equals(x(a), x(t)))
         load.add_precondition(Equals(y(a), y(t)))
-        load.add_precondition(LE(Plus(carrying(a), 1), max_carry(a)))
+        load.add_precondition(LE(Plus(carrying(a), 1), max_carry_val))
         load.add_precondition(GE(Minus(water_reserve, 1), 0))
         load.add_increase_effect(carrying(a), 1)
         load.add_increase_effect(total_loaded, 1)
