@@ -63,11 +63,10 @@ class ExpeditionDomain(Domain):
             isnext.append((m.group(1).lower(), m.group(2).lower()))
 
         # Numeric values
-        sledcapacity = {}
         sledsupplies = {}
         waypointsupplies = {}
         for m in re.finditer(r'\(=\s*\(sledcapacity\s+(\S+)\)\s+([\d.]+)\)', init_str):
-            sledcapacity[m.group(1).lower()] = int(float(m.group(2)))
+            sledcapacity = int(float(m.group(2)))
         for m in re.finditer(r'\(=\s*\(sledsupplies\s+(\S+)\)\s+([\d.]+)\)', init_str):
             sledsupplies[m.group(1).lower()] = int(float(m.group(2)))
         for m in re.finditer(r'\(=\s*\(waypointsupplies\s+(\S+)\)\s+([\d.]+)\)', init_str):
@@ -103,21 +102,19 @@ class ExpeditionDomain(Domain):
         waypoints = data['waypoints']
         at_init = data['at_init']
         isnext = data['isnext']
-        sledcapacity_init = data['sledcapacity']
+        sledcapacity = data['sledcapacity']
         sledsupplies_init = data['sledsupplies']
         waypointsupplies_init = data['waypointsupplies']
         goal_at = data['goal_at']
 
         # ==== Bounds ====
         # sledcapacity is static (no effect modifies it)
-        max_capacity = max(sledcapacity_init.values(), default=1)
         # sledsupplies is bounded by sledcapacity
-        sledsupplies_ub = max_capacity
+        sledsupplies_ub = sledcapacity
         # waypointsupplies initial max bounds it (plus accumulation from stores)
         # Total supplies are conserved (retrieve ↔ store are inverse, move consumes)
         # Upper bound: initial total supplies
-        reasonable_supply = len(sleds) * len(waypoints) * 2
-        waypointsupplies_ub = reasonable_supply
+        waypointsupplies_ub = max(waypointsupplies_init.values())
 
         problem = Problem('expedition_problem')
 
@@ -133,13 +130,11 @@ class ExpeditionDomain(Domain):
         at = Fluent('at', BoolType(), s=Sled, w=Waypoint)
         isnext_f = Fluent('isnext', BoolType(), x=Waypoint, y=Waypoint)
         sledsupplies = Fluent('sledsupplies', IntType(0, sledsupplies_ub), s=Sled)
-        sledcapacity = Fluent('sledcapacity', IntType(0, max_capacity), s=Sled)
         waypointsupplies = Fluent('waypointsupplies', IntType(0, waypointsupplies_ub), w=Waypoint)
 
         problem.add_fluent(at, default_initial_value=False)
         problem.add_fluent(isnext_f, default_initial_value=False)
         problem.add_fluent(sledsupplies, default_initial_value=Int(0))
-        problem.add_fluent(sledcapacity, default_initial_value=Int(0))
         problem.add_fluent(waypointsupplies, default_initial_value=Int(0))
 
         # Initial values
@@ -149,9 +144,6 @@ class ExpeditionDomain(Domain):
         for w1, w2 in isnext:
             if w1 in waypoint_objs and w2 in waypoint_objs:
                 problem.set_initial_value(isnext_f(waypoint_objs[w1], waypoint_objs[w2]), True)
-        for s, v in sledcapacity_init.items():
-            if s in sled_objs:
-                problem.set_initial_value(sledcapacity(sled_objs[s]), Int(v))
         for s, v in sledsupplies_init.items():
             if s in sled_objs:
                 problem.set_initial_value(sledsupplies(sled_objs[s]), Int(v))
@@ -198,7 +190,7 @@ class ExpeditionDomain(Domain):
         s, w = retrievesupplies.parameter('s'), retrievesupplies.parameter('w')
         retrievesupplies.add_precondition(at(s, w))
         retrievesupplies.add_precondition(GE(waypointsupplies(w), Int(1)))
-        retrievesupplies.add_precondition(GT(sledcapacity(s), sledsupplies(s)))
+        retrievesupplies.add_precondition(GT(sledcapacity, sledsupplies(s)))
         retrievesupplies.add_decrease_effect(waypointsupplies(w), Int(1))
         retrievesupplies.add_increase_effect(sledsupplies(s), Int(1))
         problem.add_action(retrievesupplies)
