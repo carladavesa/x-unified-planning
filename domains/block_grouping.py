@@ -119,13 +119,12 @@ class BlockGroupingDomain(Domain):
         xy = data['xy']
         maxx, minx = data['maxx'], data['minx']
         maxy, miny = data['maxy'], data['miny']
-        max_int_n = max(maxx, maxy)
 
         problem = Problem('block_grouping_problem')
         Block = UserType('Block')
 
-        x = Fluent('x', IntType(0, max_int_n), b=Block)
-        y = Fluent('y', IntType(0, max_int_n), b=Block)
+        x = Fluent('x', IntType(minx, maxx), b=Block)
+        y = Fluent('y', IntType(miny, maxy), b=Block)
         problem.add_fluent(x)
         problem.add_fluent(y)
 
