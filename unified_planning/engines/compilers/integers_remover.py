@@ -21,7 +21,7 @@ from ortools.sat.python import cp_model
 from unified_planning.engines.compilers.utils import (
     add_cp_constraints, add_effect_bounds_constraints, compute_integer_range, solve_with_cp_sat, requires_arithmetic,
     substitute_modified_fluents, evaluate_goal_in_initial_state, get_fluent_exps_in_expression, evaluate_with_solution,
-    remove_write_only_fluents
+    remove_write_only_fluents, make_cp_signature
 )
 from typing import Any
 from unified_planning.model.expression import ListExpression
@@ -52,6 +52,9 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         engines.engine.Engine.__init__(self)
         CompilerMixin.__init__(self, CompilationKind.INTEGERS_REMOVING)
         self._conditions: Dict[FNode, str] = {}
+        self._cp_cache: Dict[str, list] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
 
     @property
     def name(self):
@@ -454,6 +457,37 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 else:
                     new_action.add_effect(new_fluent, new_value, new_condition, old_effect.forall)
 
+    def _compute_cp_signature(self, action, problem, cp_precs, dependent_effects):
+        """Compute a string signature of the CP-SAT call for caching purposes."""
+        parts = []
+        # Arithmetic preconditions (sorted for stability)
+        for prec in sorted(cp_precs, key=lambda p: str(p)):
+            parts.append(f"P:{str(prec)}")
+        # Dependent effects: full structural representation
+        for effect in dependent_effects:
+            parts.append(
+                f"E:{str(effect.fluent)}|{str(effect.value)}|"
+                f"inc={effect.is_increase()}|dec={effect.is_decrease()}|"
+                f"cond={str(effect.condition)}"
+            )
+        # Bounds of all integer fluents involved
+        fluent_names = set()
+        for prec in cp_precs:
+            for f in get_fluent_exps_in_expression(prec):
+                if f.is_fluent_exp() and f.fluent().type.is_int_type():
+                    fluent_names.add(f.fluent().name)
+        for effect in dependent_effects:
+            for f in get_fluent_exps_in_expression(effect.fluent):
+                if f.is_fluent_exp() and f.fluent().type.is_int_type():
+                    fluent_names.add(f.fluent().name)
+            for f in get_fluent_exps_in_expression(effect.value):
+                if f.is_fluent_exp() and f.fluent().type.is_int_type():
+                    fluent_names.add(f.fluent().name)
+        for fname in sorted(fluent_names):
+            fluent = problem.fluent(fname)
+            parts.append(f"B:{fname}:{fluent.type.lower_bound}:{fluent.type.upper_bound}")
+        return "||".join(parts)
+
     def _transform_action_integers(self, problem, new_problem, old_action):
         params = OrderedDict(((p.name, p.type) for p in old_action.parameters))
         has_arithmetic_preconditions = any(requires_arithmetic(p) for p in old_action.preconditions)
@@ -526,12 +560,8 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         cp_precs = []
         direct_precs = []
         for prec in old_action.preconditions:
-            prec_fluents = {str(f) for f in get_fluent_exps_in_expression(prec)}
-            if prec_fluents & dependent_fluent_strs:
+            if requires_arithmetic(prec):
                 cp_precs.append(prec)
-            elif requires_arithmetic(prec):
-                # Arithmetic precondition but not related to effects: direct disjunction of possible values
-                direct_precs.append(self._add_condition_as_axiom(problem, new_problem, prec))
             else:
                 new_prec = self._transform_node(problem, new_problem, prec)
                 if new_prec and new_prec != TRUE():
@@ -544,17 +574,30 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         cp_model_obj = cp_model.CpModel()
 
         if cp_precs:
-            result_var = add_cp_constraints(problem, And(cp_precs), variables, cp_model_obj, self._object_to_index)
+            result_var = add_cp_constraints(problem, And(cp_precs), variables, cp_model_obj,
+                                            self._object_to_index)
             cp_model_obj.Add(result_var == 1)
 
         if dependent_effects:
-            add_effect_bounds_constraints(problem, variables, cp_model_obj, dependent_effects, self._object_to_index, False)
+            add_effect_bounds_constraints(problem, variables, cp_model_obj, dependent_effects,
+                                          self._object_to_index, False)
 
         # If there's nothing going to cp-sat, we force an empty solution
         if not cp_precs and not dependent_effects:
             solutions = [{}]
         else:
-            solutions = solve_with_cp_sat(variables, cp_model_obj)
+            # Try cache first
+            cp_sig = self._compute_cp_signature(old_action, problem, cp_precs, dependent_effects)
+            if cp_sig in self._cp_cache:
+                solutions = self._cp_cache[cp_sig]
+                self._cache_hits += 1
+            else:
+                solutions = solve_with_cp_sat(variables, cp_model_obj)
+                if solutions is None:
+                    return []
+                self._cp_cache[cp_sig] = solutions
+                self._cache_misses += 1
+
             if not solutions:
                 return []
 
@@ -566,26 +609,6 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             independent_effects=independent_effects,
             direct_precs=direct_precs
         )
-
-    def _add_condition_as_axiom(self, problem: Problem, new_problem: Problem, expr: FNode):
-        if expr in self._conditions:
-            return new_problem.fluent(self._conditions[expr])()
-
-        i = len(self._conditions)
-        fluent_name = f"condition_{i}"
-        from unified_planning.model import Fluent
-        condition_fluent = Fluent(fluent_name, DerivedBoolType())
-        new_problem.add_fluent(condition_fluent, default_initial_value=FALSE())
-
-        self._conditions[expr] = fluent_name
-        self._object_to_index = {}
-        axiom = up.model.Axiom(f"{condition_fluent}")
-        axiom.set_head(condition_fluent())
-
-        axiom_condition = self._expand_condition_with_cp(problem, new_problem, expr, {})
-        axiom.add_body_condition(axiom_condition)
-        new_problem.add_axiom(axiom)
-        return condition_fluent()
 
     def _transform_actions(self, problem: Problem, new_problem: Problem) -> Dict[Action, Action]:
         """Transform all actions by grounding integer parameters into objects."""
@@ -729,6 +752,25 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
         #self._lt_fluent = setup_lt_predicate(new_problem)
 
+    def _compute_needed_values(self, problem: Problem) -> set[int]:
+        """Compute the set of integer values that actually need Number objects."""
+        needed = set()
+
+        for fluent in problem.fluents:
+            if not fluent.type.is_int_type():
+                continue
+            lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
+            needed.update(range(lb, ub + 1))
+        return needed
+
+    def _extract_int_constants(self, expr: FNode) -> set[int]:
+        found = set()
+        if expr.is_int_constant():
+            found.add(expr.constant_value())
+        for arg in expr.args:
+            found.update(self._extract_int_constants(arg))
+        return found
+
     def _compile(
             self,
             problem: "up.model.AbstractProblem",
@@ -751,11 +793,15 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         new_problem.clear_axioms()
         new_problem.initial_values.clear()
         new_problem.clear_quality_metrics()
+        # Reset CP-SAT cache for this compilation
+        self._cp_cache = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
 
         # Compute the range of integer values needed across the entire problem
-        global_lb, global_ub = compute_integer_range(problem)
+        needed_values = self._compute_needed_values(problem)
         ut_number = UserType('Number')
-        for v in range(global_lb, global_ub + 1):
+        for v in sorted(needed_values):
             new_problem.add_object(Object(f'n{v}', ut_number))
 
         # ========== Transform Fluents ==========
@@ -795,6 +841,10 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 )
             else:
                 new_problem.add_quality_metric(metric)
+
+        total = self._cache_hits + self._cache_misses
+        if total > 0:
+            print(f"[IR cache] hits: {self._cache_hits}/{total} ({100 * self._cache_hits / total:.1f}%)")
 
         return CompilerResult(
             new_problem, partial(replace_action, map=new_to_old), self.name

@@ -636,6 +636,16 @@ def compute_integer_range(problem: Problem) -> tuple[int, int]:
             scan(expr)
     return global_lb, global_ub
 
+def make_cp_signature(cp_precs, dependent_effects, fluent_bounds):
+    sig_parts = []
+    for prec in sorted(str(p) for p in cp_precs):
+        sig_parts.append(f"PREC:{prec}")
+    for eff in dependent_effects:
+        sig_parts.append(f"EFF:{eff.fluent}:{eff.value}:{eff.kind}")
+    for fname, (lb, ub) in sorted(fluent_bounds.items()):
+        sig_parts.append(f"BND:{fname}:{lb}:{ub}")
+    return "||".join(sig_parts)
+
 def solve_with_cp_sat(variables, cp_model_obj):
     """
     Use CP-SAT solver to enumerate all valid value assignments.
