@@ -21,7 +21,7 @@ from ortools.sat.python import cp_model
 from unified_planning.engines.compilers.utils import (
     add_cp_constraints, add_effect_bounds_constraints, compute_integer_range, solve_with_cp_sat, requires_arithmetic,
     substitute_modified_fluents, evaluate_goal_in_initial_state, get_fluent_exps_in_expression, evaluate_with_solution,
-    remove_write_only_fluents, make_cp_signature
+    remove_write_only_fluents, make_cp_signature, compute_cp_signature
 )
 from typing import Any
 from unified_planning.model.expression import ListExpression
@@ -457,37 +457,6 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 else:
                     new_action.add_effect(new_fluent, new_value, new_condition, old_effect.forall)
 
-    def _compute_cp_signature(self, action, problem, cp_precs, dependent_effects):
-        """Compute a string signature of the CP-SAT call for caching purposes."""
-        parts = []
-        # Arithmetic preconditions (sorted for stability)
-        for prec in sorted(cp_precs, key=lambda p: str(p)):
-            parts.append(f"P:{str(prec)}")
-        # Dependent effects: full structural representation
-        for effect in dependent_effects:
-            parts.append(
-                f"E:{str(effect.fluent)}|{str(effect.value)}|"
-                f"inc={effect.is_increase()}|dec={effect.is_decrease()}|"
-                f"cond={str(effect.condition)}"
-            )
-        # Bounds of all integer fluents involved
-        fluent_names = set()
-        for prec in cp_precs:
-            for f in get_fluent_exps_in_expression(prec):
-                if f.is_fluent_exp() and f.fluent().type.is_int_type():
-                    fluent_names.add(f.fluent().name)
-        for effect in dependent_effects:
-            for f in get_fluent_exps_in_expression(effect.fluent):
-                if f.is_fluent_exp() and f.fluent().type.is_int_type():
-                    fluent_names.add(f.fluent().name)
-            for f in get_fluent_exps_in_expression(effect.value):
-                if f.is_fluent_exp() and f.fluent().type.is_int_type():
-                    fluent_names.add(f.fluent().name)
-        for fname in sorted(fluent_names):
-            fluent = problem.fluent(fname)
-            parts.append(f"B:{fname}:{fluent.type.lower_bound}:{fluent.type.upper_bound}")
-        return "||".join(parts)
-
     def _transform_action_integers(self, problem, new_problem, old_action):
         params = OrderedDict(((p.name, p.type) for p in old_action.parameters))
         has_arithmetic_preconditions = any(requires_arithmetic(p) for p in old_action.preconditions)
@@ -587,7 +556,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             solutions = [{}]
         else:
             # Try cache first
-            cp_sig = self._compute_cp_signature(old_action, problem, cp_precs, dependent_effects)
+            cp_sig = compute_cp_signature(old_action, problem, cp_precs, dependent_effects)
             if cp_sig in self._cp_cache:
                 solutions = self._cp_cache[cp_sig]
                 self._cache_hits += 1

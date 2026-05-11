@@ -636,6 +636,37 @@ def compute_integer_range(problem: Problem) -> tuple[int, int]:
             scan(expr)
     return global_lb, global_ub
 
+def compute_cp_signature(action, problem, cp_precs, dependent_effects):
+    """Compute a string signature of the CP-SAT call for caching purposes."""
+    parts = []
+    # Arithmetic preconditions (sorted for stability)
+    for prec in sorted(cp_precs, key=lambda p: str(p)):
+        parts.append(f"P:{str(prec)}")
+    # Dependent effects: full structural representation
+    for effect in dependent_effects:
+        parts.append(
+            f"E:{str(effect.fluent)}|{str(effect.value)}|"
+            f"inc={effect.is_increase()}|dec={effect.is_decrease()}|"
+            f"cond={str(effect.condition)}"
+        )
+    # Bounds of all integer fluents involved
+    fluent_names = set()
+    for prec in cp_precs:
+        for f in get_fluent_exps_in_expression(prec):
+            if f.is_fluent_exp() and f.fluent().type.is_int_type():
+                fluent_names.add(f.fluent().name)
+    for effect in dependent_effects:
+        for f in get_fluent_exps_in_expression(effect.fluent):
+            if f.is_fluent_exp() and f.fluent().type.is_int_type():
+                fluent_names.add(f.fluent().name)
+        for f in get_fluent_exps_in_expression(effect.value):
+            if f.is_fluent_exp() and f.fluent().type.is_int_type():
+                fluent_names.add(f.fluent().name)
+    for fname in sorted(fluent_names):
+        fluent = problem.fluent(fname)
+        parts.append(f"B:{fname}:{fluent.type.lower_bound}:{fluent.type.upper_bound}")
+    return "||".join(parts)
+
 def make_cp_signature(cp_precs, dependent_effects, fluent_bounds):
     sig_parts = []
     for prec in sorted(str(p) for p in cp_precs):
