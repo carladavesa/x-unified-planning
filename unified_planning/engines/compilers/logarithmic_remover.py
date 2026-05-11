@@ -44,7 +44,7 @@ from unified_planning.engines.compilers.utils import (
     get_fresh_name,
     replace_action,
     updated_minimize_action_costs, requires_arithmetic, substitute_modified_fluents, evaluate_goal_in_initial_state,
-    get_fluent_exps_in_expression, evaluate_with_solution, remove_write_only_fluents, compute_cp_signature,
+    get_fluent_exps_in_expression, evaluate_with_solution, remove_write_only_fluents
 )
 from unified_planning.exceptions import UPProblemDefinitionError
 from typing import Dict, List, Optional, OrderedDict, Iterable, Tuple
@@ -67,10 +67,6 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
         self.offsets = {}
         self._object_to_index = {}
         self._index_to_object = {}
-        self._conditions: Dict[FNode, str] = {}
-        self._cp_cache: Dict[str, list] = {}
-        self._cache_hits = 0
-        self._cache_misses = 0
 
     @property
     def name(self):
@@ -598,21 +594,9 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                                             self._object_to_index)
             cp_model_obj.Add(result_var == 1)
 
-        add_effect_bounds_constraints(problem, variables, cp_model_obj, dependent_effects,
-                                      self._object_to_index, True)
+        add_effect_bounds_constraints(problem, variables, cp_model_obj, dependent_effects, self._object_to_index, True)
 
-        # Try cache first
-        cp_sig = compute_cp_signature(old_action, problem, cp_precs, dependent_effects)
-        if cp_sig in self._cp_cache:
-            solutions = self._cp_cache[cp_sig]
-            self._cache_hits += 1
-        else:
-            solutions = solve_with_cp_sat(variables, cp_model_obj)
-            if solutions is None:
-                return []
-            self._cp_cache[cp_sig] = solutions
-            self._cache_misses += 1
-
+        solutions = solve_with_cp_sat(variables, cp_model_obj)
         if not solutions:
             return []
 
@@ -819,10 +803,6 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
         new_problem.clear_goals()
         new_problem.clear_quality_metrics()
         new_problem.initial_values.clear()
-        # Reset CP-SAT cache for this compilation
-        self._cp_cache = {}
-        self._cache_hits = 0
-        self._cache_misses = 0
 
         #for action in problem.actions:
         #    if action.parameters:
@@ -881,10 +861,6 @@ class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
                 )
             else:
                 new_problem.add_quality_metric(metric)
-
-        total = self._cache_hits + self._cache_misses
-        if total > 0:
-            print(f"[LR cache] hits: {self._cache_hits}/{total} ({100 * self._cache_hits / total:.1f}%)")
 
         return CompilerResult(
             new_problem, partial(replace_action, map=new_to_old), self.name
