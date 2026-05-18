@@ -6,8 +6,8 @@ from unified_planning.io.up_pddl_reader import UPPDDLReader
 
 reader = UPPDDLReader()
 problem = reader.parse_problem(
-    '/home/isaac/unified-planning/docs/extensions/domains/tests/domain_sets.pddl',
-    '/home/isaac/unified-planning/docs/extensions/domains/tests/problem_sets.pddl',
+    '/home/isaac/unified-planning/docs/extensions/domains/tests/pddl-extension/domain_sets.pddl',
+    '/home/isaac/unified-planning/docs/extensions/domains/tests/pddl-extension/problem_sets.pddl',
 )
 
 print("Problem parsed successfully!")

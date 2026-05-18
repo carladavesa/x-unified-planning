@@ -37,6 +37,8 @@ name, the parent can be a parenthesised constructor expression:
 (:types
     size     - (number 0 3)          ; integer restricted to [0, 3]
     tile     - (number 0 15)         ; integer restricted to [0, 15]
+    temp     - (number 10 40)        ; integer restricted to [10, 40] — non-zero lower bound
+    floor    - (number 2 8)          ; integer restricted to [2, 8]   — non-zero lower bound
     row      - (array 4 tile)        ; 1-D fixed-size array of 4 tile integers
     board    - (array 4 4 tile)      ; 2-D array: 4 rows × 4 columns of tile
     itemset  - (set item)            ; unordered collection of item objects
@@ -47,9 +49,13 @@ Three constructors are available:
 
 | Constructor | Syntax | Meaning |
 |---|---|---|
-| Bounded integer | `(number lo hi)` | Finite integer range `[lo, hi]` (inclusive) |
+| Bounded integer | `(number lo hi)` | Finite integer range `[lo, hi]` (inclusive); `lo` may be any non-negative integer |
 | Array | `(array d₁ d₂ … dₙ T)` | N-dimensional fixed-size array; last token is element type |
 | Set | `(set T)` | Unbounded unordered collection of elements of type `T` |
+
+> **Range bounds:** Both `lo` and `hi` must be non-negative integers (the grammar
+> uses `Word(nums)` which matches decimal digits only). Negative lower bounds such
+> as `(number -5 5)` are not currently supported and will raise a parse error.
 
 Types declared with these constructors can be used as fluent return types, as
 parameter types for actions, and as quantifier variable types.
@@ -77,12 +83,17 @@ all indices) is wrapped in an outer group, because a bare `(write (f) i j v)` wo
 be ambiguous — the parser cannot tell where indices end and the value begins without
 the extra grouping.
 
-Array constants appear in the `:init` section using `array.mk`:
+Array constants appear in the `:init` section using `array.mk`, or with the
+`array.empty` shorthand for the zero-element case:
 
 ```pddl
 (= (stack) (array.mk (3 0 2 1 4)))                    ; 1-D: 5 elements
 (= (board) (array.mk ((0 1 2 3)(4 5 6 7)(8 9 10 11))) ; 2-D: 3 rows of 4
+(= (stack) array.empty)                                ; empty array (shorthand)
 ```
+
+Both shorthands (`array.empty`, `set.empty`) are also valid inside preconditions,
+goals, and effects anywhere the full constructor form is accepted.
 
 ---
 
@@ -112,7 +123,8 @@ value-returning operations:
 
 ; Constant literals
 (= (basket) (set.mk (apple banana)))
-(= (basket) (set.mk ()))          ; empty set
+(= (basket) (set.mk ()))          ; empty set (long form)
+(= (basket) set.empty)            ; empty set (shorthand)
 ```
 
 ---
@@ -151,10 +163,12 @@ action that can change a tracked fluent.
 #### Quantifiers over bounded integer types
 
 When a `forall` or `exists` variable is typed with a bounded integer type, the
-quantifier iterates over every integer in `[lower, upper]` rather than over objects:
+quantifier iterates over every integer in `[lower, upper]` rather than over objects.
+The lower bound can be any non-negative integer — it does not have to be 0:
 
 ```pddl
-(:types idx - (number 0 3))
+(:types idx  - (number 0 3))   ; iterates 0, 1, 2, 3
+(:types midx - (number 2 5))   ; iterates 2, 3, 4, 5  (non-zero lower bound)
 
 ; Precondition: check that no cell in column ?c holds the robot
 (forall (?r - idx)
@@ -237,7 +251,10 @@ type_parent = Group(Suppress("(") + type_constructor + Suppress(")")) | name
   complete token (not as a prefix of a longer word). This is different from
   `Literal("number")`, which would match `"number"` at the start of `"number0"`.
 - `Word(pyparsing.nums)` matches a non-empty sequence of decimal digit characters,
-  producing a single string token like `"0"` or `"15"`.
+  producing a single string token like `"0"`, `"10"`, or `"15"`. Both bounds are
+  matched with this rule, so `lo` can be any non-negative integer — `(number 2 8)`,
+  `(number 10 40)`, etc. are all valid. Negative lower bounds are **not** supported
+  (the `-` sign is not part of `pyparsing.nums`).
 - `Group(...)` wraps all the matched tokens of its content into a **nested**
   `ParseResults` object. Without `Group`, all tokens would be flattened into the
   parent list. With it, `(number 0 4)` produces `[['number', '0', '4']]` instead
@@ -509,7 +526,60 @@ precondition or goal.
 
 ---
 
-### 1.10 Type declaration resolver: compound type parents
+### 1.10 Expression stack machine: inline range types in `forall`/`exists`
+
+The quantifier-variable parser previously rebuilt a flat string from the raw tokens and
+re-ran `_pp_parameters.parseString` on it. That trick worked for named types
+(`?i - pancakes`) but silently broke when the type was a nested group such as
+`(number 0 ?f)` — the `ParseResults` object is not a string, so the join raised a
+`TypeError` at runtime.
+
+The fix replaces all four `vars_string / _pp_parameters.parseString` blocks with a
+single helper `_parse_quantifier_vars` that walks the `CustomParseResults` token list
+directly:
+
+```python
+def _parse_quantifier_vars(self, exp_vars, act, types_map):
+    ...
+    if isinstance(type_tok.value, str):
+        # named type — look up in types_map (unchanged behaviour)
+        t = types_map[type_tok.value]
+        ...
+    else:
+        # inline (number lo hi) — bounds can be literals or ?param references
+        lo = act.parameter(s[1:]) if s.startswith("?") else int(s)
+        hi = ...
+        result[o] = up.model.RangeVariable(o, lo, hi, self._env)
+```
+
+This enables the **inline range-bounded quantifier** syntax:
+
+```pddl
+; Static bounds
+(forall (?i - (number 0 4)) ...)
+
+; Dynamic upper bound — range shrinks to [0, ?f] at ground time
+(forall (?i - (number 0 ?f))
+    (write (stack) (?i) (read (stack) (- ?f ?i)))
+)
+```
+
+`RangeVariable` already accepted `Union[int, Parameter]` bounds; the compiler
+(`IntParameterActionsRemover._update_range_vars`) already substituted parameter names
+into the range strings at instantiation time. The only missing piece was the parser
+creating the `RangeVariable` from an inline type declaration.
+
+**Covered call sites:** precondition/goal quantifiers (`_parse_exp` unsolved pass),
+instantaneous-action effect `forall` (`_add_effect`), durative-action condition
+`forall` (`_add_condition`), and durative-action effect `forall` (`_add_durative_effect`).
+
+**Risk of omitting:** Any domain using `(forall (?x - (number lo hi)) ...)` with an
+inline bounded-integer type (rather than a named type defined in `:types`) raises
+`TypeError: sequence item N: expected str instance, ParseResults found` at parse time.
+
+---
+
+### 1.11 Type declaration resolver: compound type parents
 
 The resolver runs after the grammar has parsed the entire `:types` block into a
 `domain_res["types"]` list. Each element of that list is a `ParseResults` from the
@@ -802,6 +872,67 @@ Python lists and sets for array/set fluent initialisation.
 
 **Risk of omitting:** All problem instances that initialise an array or set fluent
 fail to parse with a mysterious error deep inside the expression resolver.
+
+---
+
+### 1.15 Empty-collection shorthands: `array.empty` and `set.empty`
+
+Both keywords are bare atoms (no parentheses required) and are equivalent to their
+long forms:
+
+| Shorthand | Equivalent |
+|-----------|------------|
+| `array.empty` | `(array.mk ())` |
+| `set.empty` | `(set.mk ())` |
+
+They are valid in every position that accepts a collection literal:
+
+```pddl
+; In :init
+(= (stack) array.empty)
+(= (basket) set.empty)
+
+; In a goal or precondition
+(= (basket) set.empty)
+
+; As an effect value
+(assign (basket) set.empty)
+(assign (stack) array.empty)
+```
+
+**Implementation — two changes in `up_pddl_reader.py`:**
+
+*Expression context (`_parse_exp`, string-handler branch):*
+
+```python
+elif exp.value == "array.empty":
+    solved.append(self._em.Array([]))
+elif exp.value == "set.empty":
+    solved.append(self._em.EMPTY_SET())
+```
+
+This covers all expression positions (preconditions, goals, effect values). The
+tokeniser already accepts the dot-separated name because `.` was added to
+`body_chars` in §1.1.
+
+*Initial-state context (`:init` special-case path):*
+
+```python
+_rhs_is_empty = isinstance(rhs.value, str) and rhs.value in ("array.empty", "set.empty")
+if _rhs_is_constructor or _rhs_is_empty:
+    ...
+    if _rhs_is_empty:
+        value = [] if rhs.value == "array.empty" else set()
+```
+
+The `:init` path is kept separate from `_parse_exp` because `set_initial_value`
+accepts raw Python `list`/`set` values for collection fluents (they bypass the
+FNode type-compatibility check that would otherwise reject an empty constant whose
+element type cannot be inferred).
+
+**Risk of omitting:** Writing `(= (basket) set.empty)` raises a `SyntaxError`
+("Not able to handle…") because `set.empty` is not a registered operator, fluent,
+or object name, so the expression resolver reaches its error fallback.
 
 ---
 
@@ -1393,6 +1524,312 @@ information — it creates a broken node or returns `None`.
 The explicit handler reads the variable from the payload directly and performs the
 substitution.
 
+### 11.6 Bug fix: whole-array fluent references in goals dropped by `_transform_fluent_exp`
+
+#### What broke and when
+
+Commit **`e00fc444`** ("Handling RangeVariables also in goals", Apr 2026) extended
+`_compile` with two changes:
+
+1. `new_problem.clear_goals()` — goals are now explicitly cleared before rewriting.
+2. A new `_transform_goals` method that runs every goal through `_transform_expression`.
+
+**Before this commit**, `_compile` cloned the problem and cleared only actions and
+axioms. Goals survived in the clone unchanged and were passed directly to the next
+stage (`ARRAYS_REMOVING`), which knew how to expand them. The `uti` pipeline (`IPAR →
+ARRAYS_REMOVING → INTEGERS_REMOVING → USERTYPE_FLUENTS_REMOVING`) worked correctly
+for all existing domains.
+
+**After this commit**, every goal is passed through `_transform_expression` inside
+IPAR. For goals that contain array fluents in a *whole-array* role — e.g.,
+
+```pddl
+(:goal (= (pancake_stack) (array.mk (0 1 2 3 4))))
+```
+
+the expression `Equals(pancake_stack(), ArrayConstant(...))` is processed as follows:
+
+1. `_transform_expression` is not `is_constant`, not `is_variable_exp`, not
+   `is_fluent_exp`, not `is_array_read`/`is_array_write`, not a quantifier.
+2. It falls through to `_transform_generic`, which recursively transforms each child.
+3. The first child is `pancake_stack()` — a `FLUENT_EXP`. `_transform_expression`
+   detects `is_fluent_exp()` and delegates to `_transform_fluent_exp`.
+4. Inside `_transform_fluent_exp`, `old_fluent.type.is_array_type()` is `True`.
+5. `_extract_array_indices` is called on `node.fluent()`. The fluent name is
+   `'pancake_stack'` — no `[k]` brackets. The regex `r'\[(.*?)\]'` finds nothing, so
+   `indices = []`.
+6. The bounds check: `tuple([]) = ()` is tested against `self.domains['pancake_stack']`,
+   which contains only element-level tuples like `{(0,), (1,), (2,), (3,), (4,)}`.
+   `() not in valid_accesses` → **`return None`**.
+7. Back in `_transform_generic`, one arg is `None`. `_handle_none_args` for
+   `OperatorKind.EQUALS` with a `None` arg returns `None`.
+8. Back in `_transform_goals`: `transformed is None` → **goal not added**.
+
+The compiled problem has zero goals. The planner trivially reports "goal already
+reached" with an empty plan — or crashes, depending on the solver.
+
+#### Why the commit was needed (but incomplete)
+
+The motivation was correct: PDDL goals *can* contain `RangeVariable`-typed
+`forall`/`exists` quantifiers (e.g., `(forall (?i - (number 0 4)) ...)`) that must
+be expanded by IPAR before reaching `ARRAYS_REMOVING`. Without calling
+`_transform_expression` on goals, those range-variable quantifiers would survive
+unexpanded into later stages that do not understand them.
+
+However, the commit did not account for goals that reference array fluents in a
+*non-indexed* role. Such a goal has no range variables — `_transform_expression`
+has nothing to substitute — yet it was silently destroyed by the bounds check.
+
+Note that **none of the current PDDL extension domains have `RangeVariable`
+quantifiers in their goals**. All existing goals use either:
+- Whole-array equality: `(= (fluent) (array.mk ...))`
+- Indexed reads: `(= (read (fluent) (idx)) value)` — handled by the `is_array_read()`
+  branch, which was not broken
+
+The goal transformation is therefore currently harmless for range-variable goals and
+harmful only for whole-array goals. But the infrastructure is correct in principle
+and should be kept.
+
+#### Why the Python API version was unaffected
+
+In `PancakeSorting.py` (the Python-API equivalent of the same domain):
+
+```python
+for i in range(n):
+    pancake_problem.add_goal(Equals(pancake[i], i))
+```
+
+Goals are added as individual element equalities using the Python subscript operator.
+`pancake[0]` creates a `FLUENT_EXP` whose fluent name is already `'pancake[0]'` — the
+bracket is part of the name at construction time. `_extract_array_indices` finds
+`indices = [0]`, `(0,)` is in the valid domain, and the substitution succeeds.
+
+There are no whole-array fluent references in the Python API goals, so the bug never
+surfaces. This is a consequence of the Python API encouraging element-by-element goal
+construction, while the PDDL surface syntax naturally allows whole-array comparisons
+that are meant to be expanded later.
+
+#### Alternative approaches considered
+
+**Alternative A — Revert `e00fc444` entirely.**  
+Since no current PDDL domain uses `RangeVariable` quantifiers in goals, reverting the
+commit would restore the pre-bug state. Goals would be cloned through unchanged and
+`ARRAYS_REMOVING` would expand them. Downside: the infrastructure for correctly
+handling future domains that *do* use range-variable goal quantifiers would be lost,
+requiring re-implementation at that point. Fragile against future breakage.
+
+**Alternative B — Expand whole-array equality at parse time.**  
+The PDDL reader could recognise `(= (fluent) (array.mk ...))` in the `:goal` block
+and immediately expand it into `n` individual `Equals(read(fluent, k), v_k)` goals,
+matching the Python API style. This would avoid the IPAR issue entirely since each
+goal would only contain indexed reads. Downside: this moves array-expansion logic
+into the parser, breaking the clean separation of concerns (parser produces IR;
+compilers reduce it). It would also make the parser sensitive to the number of array
+dimensions in a way that is currently handled by `ARRAYS_REMOVING`.
+
+**Alternative C — Detect whole-array fluents in `_transform_goals` and pass through.**  
+Check `goal.is_equals() and goal.arg(0).type.is_array_type()` before calling
+`_transform_expression`, and if true, add the goal unchanged. More targeted than the
+chosen fix, but requires duplicating the array-type detection at the call site rather
+than at the point of failure.
+
+#### Chosen fix — guard in `_transform_fluent_exp`
+
+```diff
+ if old_fluent.type.is_array_type():
++    # Whole-array reference (e.g. `pancake_stack()` in a goal equality) — no
++    # indices encoded in the name yet.  IPAR has nothing to substitute here;
++    # let ARRAYS_REMOVING expand it into element-wise comparisons.
++    if '[' not in node.fluent().name:
++        return node.fluent()(*new_args)
+     index_params = self._extract_array_indices(node.fluent(), int_params, instantiations)
+```
+
+**Why this is the right fix:**
+
+- `'[' not in node.fluent().name` is the minimal, unambiguous test for "this fluent
+  has not yet had any array index bound into its name". IPAR encodes each concrete
+  index directly into the fluent name as `fluent[k]` (see `_transform_array_access`
+  and `_extract_array_indices`). A name without brackets means no index has been
+  resolved yet — the fluent is still a whole-array reference.
+
+- Returning the fluent unchanged with its (possibly transformed) args is exactly the
+  right contract: the `new_args` substitution is still applied (for any action-
+  parameter args the fluent might carry), and the rest of the expression tree is
+  rebuilt correctly. `ARRAYS_REMOVING` then sees the whole-array expression and
+  correctly expands it.
+
+- The fix is local to `_transform_fluent_exp`, the precise point of failure, and does
+  not affect any other path. In particular:
+  - Indexed fluents like `pancake_stack[2]()` still go through
+    `_extract_array_indices` as before.
+  - `ARRAY_READ`/`ARRAY_WRITE` nodes are already handled by their own branch in
+    `_transform_expression` before `_transform_fluent_exp` is reached.
+  - Non-array fluents are unaffected (the guard is inside the
+    `if old_fluent.type.is_array_type()` block).
+
+- It is forward-compatible: if a future domain introduces a whole-array fluent as an
+  action parameter (e.g., `(move ?s - stack)` where `stack` is an array type), the
+  guard still correctly passes it through.
+
+### 11.7 Grounding integer-parametered fluents (`_transform_int_param_fluents`)
+
+#### The problem
+
+The PDDL writer (`pddl_writer.py`, line 544) rejects any fluent whose parameters are
+not `UserType`:
+
+```python
+if param.type.is_user_type():
+    out.write(...)
+else:
+    raise UPTypeError("PDDL supports only user type parameters")
+```
+
+This check applies to **every** fluent kind — boolean, numeric, and object-fluent —
+regardless of which compilation stages have already run. The problem arises when a
+PDDL domain uses a `(number lo hi)` type as a fluent parameter type:
+
+```pddl
+(:types idx - (number 0 4))
+(:functions
+    (val ?i - idx) - idx   ; idx resolves to IntType(0,4), not UserType
+    (tmp ?i - idx) - idx
+)
+```
+
+The parser resolves `idx` to `IntType(0, 4)` (see §1.11). The resulting fluents have
+signature `[i: integer[0, 4]]` — an `IntType` parameter, not a `UserType` parameter.
+
+Before this fix, the compilation pipeline for such a domain (`uti` =
+`IPAR → ARRAYS_REMOVING → INTEGERS_REMOVING → USERTYPE_FLUENTS_REMOVING`) silently
+passed the integer-parametered fluents through all four stages:
+
+- **IPAR** grounded integer *action* parameters and expanded range variables in
+  effects, but left fluent signatures unchanged.
+- **ARRAYS_REMOVING** found no array fluents to transform.
+- **INTEGERS_REMOVING** converted fluent *return types* from `IntType` to
+  `UserType('Number')`, but its `_transform_fluents` method copies `fluent.signature`
+  unchanged (line 956 of `integers_remover.py`):
+  ```python
+  new_fluent = Fluent(fluent.name, number_ut, fluent.signature, new_problem.environment)
+  #                                            ↑ integer-typed params survive unchanged
+  ```
+- **USERTYPE_FLUENTS_REMOVING** saw fluents with integer parameters and failed to
+  ground them.
+
+The compiled problem still carried `BOUNDED_INT_FLUENT_PARAMETERS` in its kind —
+flagging the problem. When the planner attempted to write the problem to PDDL, the
+writer crashed at line 544.
+
+#### Why the fix belongs in IPAR, not INTEGERS_REMOVING
+
+`INTEGERS_REMOVING` converts integer-*valued* fluents to `UserType('Number')` fluents.
+Extending it to also enumerate integer-*parametered* fluents would conflate two
+distinct operations: value-type lifting and parameter grounding. More importantly,
+IPAR already has all the machinery needed — it knows the integer domains of every
+parameter type, it enumerates Cartesian products of integer ranges to ground actions,
+and its `_transform_expression` tree walk already substitutes concrete integer values
+into all call sites. Extending IPAR keeps the grounding logic in one place and
+ensures it runs early (before any other compiler sees the integer-parametered fluents).
+
+#### What changed
+
+**New method `_transform_int_param_fluents(problem, new_problem)`:**
+
+For each fluent whose signature contains at least one `IntType` parameter, the method:
+
+1. Collects the indices of integer-typed parameters in the signature.
+2. Enumerates all combinations of concrete integer values for those parameters.
+3. For each combination, creates a new parameterless fluent whose name encodes the
+   integer values: `val[i: int[0,4]]` becomes `val_0`, `val_1`, …, `val_4`.
+   Non-integer parameters (user-type object params) are preserved in the new fluent's
+   signature unchanged — so a mixed fluent like `score[p: player, i: int[0,4]]`
+   becomes `score_0(player p)`, `score_1(player p)`, …, `score_4(player p)`.
+4. Rewrites the explicit initial values from the original problem using the grounded
+   fluent names.
+5. Populates `self._int_param_fluents[fluent.name]` — a dict mapping base fluent name
+   to `(int_param_indices, {int_vals_tuple → grounded_fluent})`.
+
+Fluents without integer parameters and array fluents are copied unchanged.
+
+**Modified `_transform_fluent_exp`:**
+
+After the existing array-fluent branch, a new check looks up the base fluent name in
+`_int_param_fluents`. If found, it extracts the concrete integer values from the
+(already-evaluated) transformed arguments and returns the corresponding grounded
+fluent:
+
+```python
+if fluent_base_name in self._int_param_fluents:
+    int_param_indices, grounded = self._int_param_fluents[fluent_base_name]
+    int_vals = tuple(new_args[i].constant_value() for i in int_param_indices)
+    int_param_set = set(int_param_indices)
+    non_int_args = [new_args[i] for i in range(len(new_args)) if i not in int_param_set]
+    grounded_fluent = grounded.get(int_vals)
+    if grounded_fluent is None:
+        return None
+    return grounded_fluent(*non_int_args)
+```
+
+**Why `new_args` are always concrete constants at this point:**
+
+`_transform_fluent_exp` transforms its children first (the `for arg in node.args` loop
+at the top). For an integer-typed argument, the child is either:
+- A parameter expression `?f` — substituted to `Int(v)` by the `is_parameter_exp`
+  branch of `_transform_expression`.
+- A range variable `?i` — substituted to `Int(v)` by the `is_range_variable_exp`
+  branch.
+- An arithmetic expression `(f - i)` — its children are recursively substituted,
+  and `_transform_generic` calls `.simplify()` on the result, collapsing `Int(3) -
+  Int(1)` to `Int(2)`.
+
+By the time `_transform_fluent_exp` runs, every integer-typed argument is guaranteed
+to be an `Int` constant.
+
+**Modified `resulting_problem_kind`:**
+
+```python
+new_kind.unset_parameters("BOUNDED_INT_FLUENT_PARAMETERS")
+```
+
+Added alongside the existing `unset_parameters("BOUNDED_INT_ACTION_PARAMETERS")`.
+After IPAR, no fluent retains an integer-typed parameter, so the kind flag is
+correctly cleared.
+
+**Modified `_compile`:**
+
+Following the same pattern as `ArraysRemover._compile`, the method now clears fluents
+and initial values from the cloned problem before calling `_transform_int_param_fluents`
+to rebuild them:
+
+```python
+new_problem.clear_fluents()
+...
+new_problem.initial_values.clear()
+...
+self._transform_int_param_fluents(problem, new_problem)
+```
+
+This ensures the grounded fluents replace the originals cleanly, rather than coexisting
+with them in the cloned state.
+
+#### Concrete result for `domain_full_bounds.pddl`
+
+The domain declares `val[i: int[0,4]]` and `tmp[i: int[0,4]]` and uses
+`forall (?i - (number 0 ?f))` in effects. After IPAR with the new extension:
+
+| Before IPAR | After IPAR |
+|---|---|
+| `integer[0,4] val[i=integer[0,4]]` | `val_0`, `val_1`, `val_2`, `val_3`, `val_4` (all parameterless) |
+| `integer[0,4] tmp[i=integer[0,4]]` | `tmp_0`, `tmp_1`, `tmp_2`, `tmp_3`, `tmp_4` (all parameterless) |
+| 2 actions with forall range effects | 10 grounded actions; `flip-copy_3` has effects `tmp_0 := val_3`, `tmp_1 := val_2`, `tmp_2 := val_1`, `tmp_3 := val_0` |
+| `val(0) := 3` in init | `val_0 := 3` in init |
+
+The subsequent stages (INTEGERS_REMOVING, USERTYPE_FLUENTS_REMOVING) see only
+parameterless fluents with bounded integer *return* types, which they already handle
+correctly. The PDDL writer no longer encounters any `IntType` parameter and succeeds.
+
 ### 11.5 `is_constant()` guard in `_add_single_effect`
 
 ```python
@@ -1430,10 +1867,15 @@ All new domains are placed under `docs/extensions/domains/`. Each domain has a
 
 ### 12.1 Pancake sorting (`pancake-sorting/pddl-extension/`)
 
+> **Note:** This subsection describes the *initial* formulation of the domain (5
+> pancakes, conditional `when` guard). The domain was later extended to 10 pancakes
+> and the `forall` effect was simplified to use an **inline range type**; see §12.5
+> for the current state.
+
 - **Types:** `pancakes - (number 0 4)` (bounded integer), `stack - (array 5 pancakes)`.
 - **State:** a single fluent `(pancake_stack) - stack`.
 - **Action:** `flip ?f` reverses the prefix of length `?f + 1` in one shot using a
-  `forall (?i - pancakes)` effect:
+  `forall (?i - pancakes)` effect with a conditional write:
 
   ```pddl
   (forall (?i - pancakes)
@@ -1506,7 +1948,47 @@ All new domains are placed under `docs/extensions/domains/`. Each domain has a
 
 - **Instance:** `i0.pddl`.
 
-### 12.5 Count test — party lights (`tests/pddl-extension/`)
+- **Syntax corrections applied:**
+  - `domain.pddl`: The `unload_truck` effect changed empty-set assignment from `(assign (package_in ?t) ())` to `(assign (package_in ?t) (set.mk ()))`. The bare `()` form was not parseable by the extension grammar; the `set.mk` constructor must be used explicitly.
+  - `i0.pddl`: Empty-set initialization lines for `(package_at l2)`, `(package_in t1)`, and `(package_in t2)` were commented out in the original. They are now restored, using the `(set.mk ())` form.
+
+### 12.5 Pancake sorting (`pancake-sorting/pddl-extension/`) — current formulation
+
+The domain was extended from 5 to 10 pancakes and the `forall` effect was simplified
+to use an **inline range type** instead of a named type plus `when` guard (see §12.1
+for the earlier formulation).
+
+- **Types:** `pancakes - (number 0 9)` (bounded integer 0–9), `stack - (array 10 pancakes)`.
+- **Domain:** `domain.pddl` — one action `flip(?f - pancakes)` that reverses the
+  sub-stack from position 0 up to position `?f`:
+  ```pddl
+  (:action flip
+      :parameters (?f - pancakes)
+      :effect (forall (?i - (number 0 ?f))
+          (write (pancake_stack) (?i) (read (pancake_stack) (- ?f ?i)))
+      )
+  )
+  ```
+  The forall variable `?i` uses an **inline range type** `(number 0 ?f)` whose upper
+  bound is the action parameter `?f`. At compile time `IntParameterActionsRemover`
+  grounds `flip` once per value in `[0, 9]`, each time instantiating the forall over
+  the correct sub-range — producing 10 grounded `flip_0` … `flip_9` actions.
+
+  This replaces the earlier `(forall (?i - pancakes) (when (<= ?i ?f) ...))` pattern:
+  using the inline range type makes the bound explicit at the type level rather than
+  encoding it as a conditional guard, and avoids the need for a separate named type
+  `pancakes` to serve as the iteration domain.
+
+- **Instances:** `i0`–`i4` (five shuffle permutations of a 10-element stack).
+
+- **`long.pddl`:** A dedicated 10-element problem instance with a harder initial
+  permutation `[1, 8, 9, 6, 7, 5, 3, 0, 2, 4]` and goal `[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]`.
+
+- **Test:** `test_pancake.py` parses instances and compiles through the
+  `up` pipeline (`INT_PARAMETER_ACTIONS_REMOVING` → `ARRAYS_REMOVING`), asserting
+  10 grounded `flip_k` actions are produced.
+
+### 12.6 Count test — party lights (`tests/pddl-extension/`)
 
 - **Files:** `domain_count.pddl`, `problem_count.pddl`, `test_count.py`.
 - **Purpose:** Minimal domain that exercises the `count` expression in an action
@@ -1543,20 +2025,166 @@ All new domains are placed under `docs/extensions/domains/`. Each domain has a
 
 ### 13.1 `docs/extensions/domains/tests/pddl-extension/`
 
-Ten new files: four PDDL domains (`domain.pddl`, `domain2d.pddl`,
-`domain_sets.pddl`, `domain_sets2.pddl`, `domain_count.pddl`) and five corresponding
-problem files, plus three Python test scripts (`test_2d.py`, `test_sets.py`,
-`test_count.py`).
+Integration test files for the extension. Placed inside `docs/` rather than `tests/`
+because they were written incrementally during development and exercise the
+extension-specific pipeline rather than the main test suite.
 
-These are minimal, self-contained integration tests that verify:
-- 1-D and 2-D array read/write roundtrips through the full compilation pipeline.
-- Set `member`/`cardinality`/`union`/`intersect`/`difference` in preconditions and
-  effects.
-- `count` expression parsing and `COUNT_REMOVING` compilation.
+#### PDDL domain and problem files
 
-They are placed inside the `docs/` tree rather than `tests/` because they were
-written incrementally during development and exercise the extension-specific pipeline
-rather than the main test suite.
+| Current filename | Previous filename | Contents |
+|---|---|---|
+| `domain_array.pddl` | `domain.pddl` (renamed) | 1-D array read/write test domain |
+| `domain_arrays2d.pddl` | `domain2d.pddl` (renamed) | 2-D array read/write test domain |
+| `domain_sets.pddl` | — | Set `member`/`cardinality`/`union`/`intersect`/`difference` test domain |
+| `domain_sets2.pddl` | — | Second set test domain (additional set operators) |
+| `domain_count.pddl` | — | `count` expression test domain (party lights, see §12.6) |
+| `domain_bounded.pddl` | — | Bounded-integer type test domain (thermostat, see §13.2) |
+| `domain_full_bounds.pddl` | — | Integer-parametered fluents without arrays (see §11.7) |
+
+Corresponding problem files follow the same naming: `problem_array.pddl`,
+`problem_arrays2d.pddl`, `problem_count.pddl`, `problem_bounded.pddl`,
+`problem_full_bounds.pddl`.
+
+**Rename rationale:** `domain.pddl` / `domain2d.pddl` were renamed to
+`domain_array.pddl` / `domain_arrays2d.pddl` (and similarly for problem files) to
+make the file names self-describing and consistent with the growing set of
+`domain_{feature}.pddl` test files. The test scripts `test_2d.py` and `test_sets.py`
+were updated to reference the new paths.
+
+**`domain_sets.pddl` correction:** The `dump_basket` action effect was simplified
+from `(assign (basket) (difference (basket) (basket)))` to `(assign (basket) set.empty)`,
+using the shorthand that was already implemented in the parser.
+
+**`domain_full_bounds.pddl`:** A minimal domain with integer-parametered fluents
+`(val ?i - idx)` and `(tmp ?i - idx)` (both of type `idx = integer[0,9]`) and two
+actions using `forall (?i - (number 0 ?f))` range effects. This domain exists
+specifically to validate the `IntParameterActionsRemover` grounding path described
+in §11.7 — it is NOT an array domain, so `ARRAYS_REMOVING` is a no-op, and the
+interesting work happens entirely in IPAR.
+
+#### Python test scripts
+
+| Script | What it tests |
+|---|---|
+| `test_2d.py` | 2-D array parse roundtrip |
+| `test_sets.py` | Set operator parse roundtrip |
+| `test_count.py` | `count` expression parse + `COUNT_REMOVING` compilation (see §12.6) |
+| `test_bounded.py` | Bounded-integer type parse + `BOUNDED_TYPES_REMOVING` compilation (see §13.2) |
+
+### 13.2 Bounded-integer type test — thermostat (`tests/pddl-extension/`)
+
+New files: `domain_bounded.pddl`, `problem_bounded.pddl`, `test_bounded.py`.
+
+**Domain:** a thermostat domain exercising `(number lo hi)` types with a *non-zero*
+lower bound:
+- `temp - (number 15 25)` — current temperature, range `[15, 25]`.
+- `setpoint - (number 18 22)` — target temperature, range `[18, 22]`.
+- Fluents: `(current-temp ?r - room) - temp`, `(target-temp ?r - room) - setpoint`.
+- Actions: `heat-up ?r` (increments `current-temp` by 1), `cool-down ?r` (decrements
+  by 1).
+
+**Problem:** 2 rooms (`kitchen`, `living-room`); kitchen starts at 16 (target 20),
+living-room starts at 25 (target 22). Minimal plan: heat kitchen four times, cool
+living-room three times.
+
+**Test assertions (`test_bounded.py`):**
+1. Parser resolves `(number 15 25)` to `IntType(15, 25)` with the correct bounds.
+2. `problem.kind.has_bounded_types()` returns `True` before compilation.
+3. `BOUNDED_TYPES_REMOVING` compilation succeeds.
+4. `compiled.kind.has_bounded_types()` returns `False` after compilation.
+5. Compiled `heat-up` preconditions contain explicit range guards for both the lower
+   bound (`15`) and the upper bound (`25`).
+
+This domain specifically tests that *non-zero* lower bounds (here `15`, not `0`) are
+preserved correctly through the type resolver and the compilation stage.
+
+---
+
+## 14. `unified_planning/engines/compilers/sets_remover.py`
+
+Two bugs in `SetsRemover` were discovered and fixed in commit **`fe37f780`**
+("Fixed recursive call for non-set equality expressions", Apr 2026).
+
+### 14.1 Bug fix: `fluent_name` crashes on fluents with more than one argument
+
+**Location:** `_get_cardinality_fluent` (the helper that mints or retrieves the
+`card_X` fluent for `cardinality(f(...))` expressions).
+
+**Original code:**
+```python
+fluent_name = f'card_{old_fluent.name}_{str(*set_expr.args)}' \
+    if set_expr.args else f'card_{old_fluent.name}'
+```
+
+`str(*set_expr.args)` unpacks the args tuple as positional arguments to `str()`.
+Python's built-in `str()` accepts at most one positional argument; passing two or more
+raises `TypeError: str expected at most 1 argument, got N`. The conditional `if
+set_expr.args` meant the crash path was only exercised for fluents with *at least one*
+argument, while zero-argument fluents used the safe branch.
+
+**Fix:**
+```python
+fluent_name = f'card_{old_fluent.name}_{"_".join(str(a) for a in set_expr.args)}'
+```
+
+Joining with `"_"` handles 0, 1, or N arguments consistently. For a single-argument
+fluent the result is identical to the old code.
+
+**Risk of omitting:** Any domain that calls `cardinality` on a set fluent with two or
+more parameters (e.g., `(cardinality (connections ?a ?b))`) raises `TypeError` inside
+`SetsRemover._compile`.
+
+---
+
+### 14.2 Bug fix: overly restrictive assert and missing recursion in `_transform_equality`
+
+**Location:** `_transform_equality`, which handles the case where the `=` operator
+appears in an expression that `SetsRemover` is transforming.
+
+**Original code:**
+```python
+# Guard before dispatching on set vs. non-set equality
+assert (left.is_fluent_exp() and (right.is_fluent_exp() or right.is_parameter_exp() or right.is_constant()) or
+        (right.is_fluent_exp() and (left.is_fluent_exp() or left.is_parameter_exp() or left.is_constant()))), \
+    f"Expression of the form {node} not supported"
+```
+
+This assert required at least one side of the equality to be a fluent expression. It
+fires for any non-set equality where neither operand is a fluent — for example:
+
+- Object-parameter equality: `(= ?a ?b)` (the "all distinct" guards in §12.6's
+  `start-party` action).
+- Pure numeric comparisons: `(= ?i (+ ?j 1))`.
+
+When `SetsRemover` is compiling a problem that *also* uses sets elsewhere, these
+innocent equalities reach `_transform_equality` through the recursive `_transform_expression`
+walk and trigger the assert.
+
+Additionally, the original `else` branch (reached for non-set equalities after the
+assert) simply returned the node unchanged without recursing into its children. This
+meant that a sub-expression like `(= ?a (count ...))` — where the right side was a
+`Count` node that needed transformation — would be silently passed through without
+being expanded.
+
+**Fix:**
+```python
+# No sets equality — remove the assert, recurse into both operands
+else:
+    new_left = self._transform_expression(old_problem, new_problem, left)
+    new_right = self._transform_expression(old_problem, new_problem, right)
+    return em.Equals(new_left, new_right)
+```
+
+The assert is removed entirely. The else branch now calls `_transform_expression`
+recursively on both sides, which is the correct behaviour: any sub-expression that
+uses sets (or any other extension feature handled by the walker) will be properly
+expanded, while purely numeric or object expressions are returned unchanged by their
+own handlers.
+
+**Risk of omitting:** Any problem that uses sets *and* contains at least one plain
+`(= expr expr)` equality where neither operand is a set fluent raises `AssertionError`
+during compilation. For the `dump-trucks` domain this manifests when an action
+compares object parameters (e.g., checking `?t ≠ ?t2`).
 
 ---
 
@@ -1564,7 +2192,7 @@ rather than the main test suite.
 
 | File | Change type | Justification |
 |---|---|---|
-| `io/up_pddl_reader.py` | Feature | Full PDDL surface syntax for arrays, sets, bounded integers, and `count` (§1.9) |
+| `io/up_pddl_reader.py` | Feature | Full PDDL surface syntax for arrays, sets, bounded integers, `count`, and inline range quantifiers (§1.9–§1.10) |
 | `model/operators.py` | Feature | New `ARRAY_READ` / `ARRAY_WRITE` operator kinds |
 | `model/expression.py` | Feature | Factory methods for the two new FNode types |
 | `model/fnode.py` | Feature | String repr + predicate methods for the new node types |
@@ -1575,6 +2203,9 @@ rather than the main test suite.
 | `model/walkers/simplifier.py` | Feature | Walk handlers for `ARRAY_READ` / `ARRAY_WRITE` |
 | `model/walkers/type_checker.py` | Feature | Type-inference handlers for `ARRAY_READ` / `ARRAY_WRITE` |
 | `engines/compilers/arrays_remover.py` | Feature + Bug fix | N-D array access transformation; guard against misrouting (see §"Why the compilers…") |
-| `engines/compilers/int_parameter_actions_remover.py` | Feature + Bug fix | Integer-range variable substitution in array indices; `is_constant()` guard (see §"Why the compilers…") |
-| `docs/extensions/domains/*/pddl-extension/` | Domains | New representative benchmark domains |
-| `docs/extensions/domains/tests/pddl-extension/` | Tests | Minimal integration tests for array, set, and count pipelines |
+| `engines/compilers/int_parameter_actions_remover.py` | Feature + Bug fix | Integer-range variable substitution in array indices; `is_constant()` guard; whole-array goal pass-through (§11.6); grounding of integer-parametered fluents into parameterless variants (§11.7) |
+| `engines/compilers/sets_remover.py` | Bug fix | Fluent name crash on multi-argument fluents (§14.1); removed overly restrictive assert and added recursive transformation for non-set equalities (§14.2) |
+| `docs/extensions/domains/pancake-sorting/pddl-extension/` | Domain + Test | Pancake-sorting domain extended to 10 elements; `forall` uses inline range type (§12.5); new `long.pddl` instance |
+| `docs/extensions/domains/dump-trucks/pddl-extension/` | Bug fix | Empty-set syntax corrected to `(set.mk ())` in domain and problem files (§12.4) |
+| `docs/extensions/domains/tests/pddl-extension/` | Tests | Renamed array test files; new `domain_full_bounds.pddl`, `test_bounded.py`, and thermostat domain files (§13.1–§13.2) |
+| `docs/extensions/domains/pddl_reader.py` | Fix | Use `UPPDDLReader` directly for extension domains instead of relying on `PDDLReader` fallback |

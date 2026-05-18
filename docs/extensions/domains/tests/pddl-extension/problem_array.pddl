@@ -28,8 +28,9 @@
     (:goal
         (and
             ;; Array goal: check individual slots via read
-            (= (read (slots player1) (1)) 2)
-            (= (read (slots player1) (2)) 3)
+            ;(= (read (slots player1) (1)) 2)
+            ;(= (read (slots player1) (2)) 3)
+            (= (slots player1) (array.mk (1 0 4)))
 
             ;; Array goal: compare whole array to a constant
             (= (slots player2) (array.mk (1 0 4)))

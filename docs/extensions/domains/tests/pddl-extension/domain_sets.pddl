@@ -28,6 +28,6 @@
     (:action dump_basket
         :parameters ()
         :precondition ()
-        :effect (assign (basket) (difference (basket) (basket)))
+        :effect (assign (basket) set.empty)
     )
 )

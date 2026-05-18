@@ -441,6 +441,55 @@ class UPPDDLReader:
         self._fve = self._env.free_vars_extractor
         self._totalcost: typing.Optional[up.model.FNode] = None
 
+    def _parse_quantifier_vars(
+        self,
+        exp_vars: "CustomParseResults",
+        act: typing.Optional[up.model.Transition],
+        types_map: "TypesMap",
+    ) -> Dict[str, typing.Union[up.model.Variable, "up.model.RangeVariable"]]:
+        """Parse forall/exists variable declarations, supporting inline (number lo hi) range types."""
+        result: Dict[str, typing.Union[up.model.Variable, "up.model.RangeVariable"]] = {}
+        i = 0
+        n = len(exp_vars)
+        while i < n:
+            var_names = []
+            while i < n:
+                tok = exp_vars[i]
+                if isinstance(tok.value, str) and tok.value.startswith("?"):
+                    var_names.append(tok.value[1:])
+                    i += 1
+                elif isinstance(tok.value, str) and tok.value == "-":
+                    i += 1
+                    break
+                else:
+                    i += 1
+            if not var_names:
+                break
+            if i >= n:
+                for o in var_names:
+                    result[o] = up.model.Variable(o, types_map[Object], self._env)
+                break
+            type_tok = exp_vars[i]
+            i += 1
+            if isinstance(type_tok.value, str):
+                t = types_map[type_tok.value]
+                for o in var_names:
+                    if t.is_int_type() and t.lower_bound is not None and t.upper_bound is not None:
+                        result[o] = up.model.RangeVariable(o, t.lower_bound, t.upper_bound, self._env)
+                    else:
+                        result[o] = up.model.Variable(o, t, self._env)
+            else:
+                # Inline (number lo hi) — bounds may be integer literals or ?param references.
+                if type_tok[0].value != "number":
+                    raise SyntaxError(f"Unsupported inline quantifier type: ({type_tok[0].value} ...)")
+                def _bound(s):
+                    return act.parameter(s[1:]) if s.startswith("?") else int(s)
+                lo = _bound(type_tok[1].value)
+                hi = _bound(type_tok[2].value)
+                for o in var_names:
+                    result[o] = up.model.RangeVariable(o, lo, hi, self._env)
+        return result
+
     def _parse_exp(
         self,
         problem: up.model.Problem,
@@ -557,30 +606,7 @@ class UPPDDLReader:
                         for i in range(1, len(exp)):
                             stack.append((var, exp[i], False))
                     elif exp[0].value in ["exists", "forall"]:  # quantifier operators
-                        vars_string = " ".join([e.value for e in exp[1]])
-                        vars_res = self._pp_parameters.parseString(vars_string)
-                        new_vars = {}
-                        for g in vars_res["params"]:
-                            try:
-                                t = types_map[
-                                    g.value[1] if len(g.value) > 1 else Object
-                                ]
-                            except KeyError:
-                                g_start_line, g_start_col = lineno(
-                                    g.locn_start, complete_str
-                                ), col(g.locn_start, complete_str)
-                                g_end_line, g_end_col = lineno(
-                                    g.locn_end, complete_str
-                                ), col(g.locn_end, complete_str)
-                                raise SyntaxError(
-                                    f"Undefined variable's type: {g[1]}."
-                                    + f"\nError from line: {g_start_line}, col: {g_start_col} to line: {g_end_line}, col: {g_end_col}."
-                                )
-                            for o in g.value[0]:
-                                if t.is_int_type() and t.lower_bound is not None and t.upper_bound is not None:
-                                    new_vars[o] = up.model.RangeVariable(o, t.lower_bound, t.upper_bound, self._env)
-                                else:
-                                    new_vars[o] = up.model.Variable(o, t, self._env)
+                        new_vars = self._parse_quantifier_vars(exp[1], act, types_map)
                         # new_vars are the variables defined by the quantifier currently being solved
                         # all_vars are the variables defined by all the quantifiers around this expression
                         stack.append((new_vars, exp, True))
@@ -612,14 +638,15 @@ class UPPDDLReader:
                             elements = [_parse_array_content(exp[k]) for k in range(1, len(exp))]
                         solved.append(self._em.Array(elements))
                     elif exp[0].value == "set.mk":
-                        elems_group = exp[1]
                         elements = set()
-                        for i in range(len(elems_group)):
-                            token = elems_group[i].value
-                            if isinstance(token, str) and problem.has_object(token):
-                                elements.add(self._em.ObjectExp(problem.object(token)))
-                            else:
-                                elements.add(int(token))
+                        if len(exp) > 1:
+                            elems_group = exp[1]
+                            for i in range(len(elems_group)):
+                                token = elems_group[i].value
+                                if isinstance(token, str) and problem.has_object(token):
+                                    elements.add(self._em.ObjectExp(problem.object(token)))
+                                else:
+                                    elements.add(int(token))
                         solved.append(self._em.Set(elements))
                     elif exp[0].value in (
                         "member", "subset", "disjoint",
@@ -670,6 +697,10 @@ class UPPDDLReader:
                                 f"Undefined name found: {exp.value[1:]}.\nError in expression from"
                                 + f" line: {start_line}, col {start_col} to line: {end_line}, col {end_col}"
                             )
+                    elif exp.value == "array.empty":
+                        solved.append(self._em.Array([]))
+                    elif exp.value == "set.empty":
+                        solved.append(self._em.EMPTY_SET())
                     elif problem.has_fluent(exp.value):  # fluent
                         solved.append(self._em.FluentExp(problem.fluent(exp.value)))
                     elif problem.has_object(exp.value):  # object
@@ -1093,15 +1124,7 @@ class UPPDDLReader:
                         "Nested forall on effects are not supported."
                     )
                 forall_variables = forall_variables.copy()
-                vars_string = " ".join([e.value for e in exp[1]])
-                vars_res = self._pp_parameters.parseString(vars_string)
-                for g in vars_res["params"]:
-                    t = types_map[g.value[1] if len(g.value) > 1 else Object]
-                    for o in g.value[0]:
-                        if t.is_int_type() and t.lower_bound is not None and t.upper_bound is not None:
-                            forall_variables[o] = up.model.RangeVariable(o, t.lower_bound, t.upper_bound)
-                        else:
-                            forall_variables[o] = up.model.Variable(o, t)
+                forall_variables.update(self._parse_quantifier_vars(exp[1], act, types_map))
                 to_add.append((exp[2], cond, forall_variables))
             else:
                 eff = (
@@ -1132,26 +1155,9 @@ class UPPDDLReader:
                 for i in range(1, len(exp)):
                     to_add.append((exp[i], vars))
             elif op == "forall":
-                vars_string = " ".join([e.value for e in exp[1]])
-                vars_res = self._pp_parameters.parseString(vars_string)
                 if vars is None:
                     vars = {}
-                for g in vars_res["params"]:
-                    try:
-                        t = types_map[g.value[1] if len(g.value) > 1 else Object]
-                    except KeyError:
-                        g_start_line, g_start_col = lineno(
-                            g.locn_start, complete_str
-                        ), col(g.locn_start, complete_str)
-                        g_end_line, g_end_col = lineno(g.locn_end, complete_str), col(
-                            g.locn_end, complete_str
-                        )
-                        raise SyntaxError(
-                            f"Undefined variable's type: {g[1]}."
-                            + f"\nError from line: {g_start_line}, col: {g_start_col} to line: {g_end_line}, col: {g_end_col}."
-                        )
-                    for o in g.value[0]:
-                        vars[o] = up.model.Variable(o, t, self._env)
+                vars.update(self._parse_quantifier_vars(exp[1], act, types_map))
                 to_add.append((exp[2], vars))
             elif len(exp) == 3 and op == "at" and exp[1].value == "start":
                 cond = self._parse_exp(
@@ -1334,15 +1340,7 @@ class UPPDDLReader:
                         "Nested forall on effects are not supported."
                     )
                 forall_variables = forall_variables.copy()
-                vars_string = " ".join([e.value for e in eff[1]])
-                vars_res = self._pp_parameters.parseString(vars_string)
-                for g in vars_res["params"]:
-                    t = types_map[g.value[1] if len(g.value) > 1 else Object]
-                    for o in g.value[0]:
-                        if t.is_int_type() and t.lower_bound is not None and t.upper_bound is not None:
-                            forall_variables[o] = up.model.RangeVariable(o, t.lower_bound, t.upper_bound)
-                        else:
-                            forall_variables[o] = up.model.Variable(o, t)
+                forall_variables.update(self._parse_quantifier_vars(eff[1], act, types_map))
                 to_add.append((eff[2], forall_variables))
             else:
                 start_line, start_col = eff.line_start(complete_str), eff.col_start(
@@ -1742,7 +1740,10 @@ class UPPDDLReader:
             if n == "total-cost":
                 has_actions_cost = True
                 self._totalcost = cast(up.model.FNode, self._em.FluentExp(f))
-            problem.add_fluent(f)
+            if fluent_type.is_set_type():
+                problem.add_fluent(f, default_initial_value=self._em.EMPTY_SET())
+            else:
+                problem.add_fluent(f)
 
         for g in domain_res.get("constants", []):
             try:
@@ -2115,20 +2116,26 @@ class UPPDDLReader:
                 operator = init[0].value
                 if operator == "=":
                     rhs = init[2]
-                    if isinstance(rhs.value, ParseResults) and len(rhs) > 0 and rhs[0].value in ("array.mk", "set.mk"):
+                    _rhs_is_constructor = (
+                        isinstance(rhs.value, ParseResults)
+                        and len(rhs) > 0
+                        and rhs[0].value in ("array.mk", "set.mk")
+                    )
+                    _rhs_is_empty = (
+                        isinstance(rhs.value, str)
+                        and rhs.value in ("array.empty", "set.empty")
+                    )
+                    if _rhs_is_constructor or _rhs_is_empty:
                         lhs = self._parse_exp(problem, None, types_map, {}, init[1], problem_str)
-                        constructor = rhs[0].value
-                        if constructor == "array.mk":
-                            # Parse array.mk supporting N-D arrays.
-                            # 1D: (array.mk (e1 e2 ... en)) — rhs has 2 elements: token + one group
-                            # ND: (array.mk row0 row1 ...) — rhs has token + N groups (one per row)
+                        if _rhs_is_empty:
+                            value = [] if rhs.value == "array.empty" else set()
+                        elif rhs[0].value == "array.mk":
                             def _parse_array_mk(group):
                                 """Recursively parse array.mk content group."""
                                 if len(group) == 0:
                                     return []
                                 if isinstance(group[0].value, ParseResults):
                                     return [_parse_array_mk(group[k]) for k in range(len(group))]
-                                # Fill array with declared objects
                                 result = []
                                 for k in range(len(group)):
                                     token = group[k].value
@@ -2138,10 +2145,8 @@ class UPPDDLReader:
                                         result.append(int(token))
                                 return result
                             if len(rhs) == 2:
-                                # 1D: single content group
                                 value = _parse_array_mk(rhs[1])
                             else:
-                                # ND: multiple row groups follow the token
                                 value = [_parse_array_mk(rhs[k]) for k in range(1, len(rhs))]
                         else:  # set.mk
                             elems_group = rhs[1]

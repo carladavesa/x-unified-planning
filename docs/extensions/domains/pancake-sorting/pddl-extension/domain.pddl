@@ -3,8 +3,8 @@
     (:requirements :typing :arrays :bounded-integers)
 
     (:types
-        pancakes - (number 0 4)
-        stack    - (array 5 pancakes)
+        pancakes - (number 0 9)
+        stack    - (array 10 pancakes)
     )
 
     (:functions
@@ -15,12 +15,10 @@
         :parameters (?f - pancakes)
         :precondition ()
         :effect (and
-            (forall (?i - pancakes)
-                (when (<= ?i ?f)
-                    (write
-                        (pancake_stack) (?i)
-                        (read (pancake_stack) (- ?f ?i))
-                    )
+            (forall (?i - (number 0 ?f))
+                (write
+                    (pancake_stack) (?i)
+                    (read (pancake_stack) (- ?f ?i))
                 )
             )
         )

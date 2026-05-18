@@ -3,9 +3,6 @@
 ;;   - bounded integers  (number lo hi)
 ;;   - arrays            (array N elem-type) / array.mk / read / write
 ;;
-;; Note: sets (set elem-type / set.mk) parse correctly but SETS_REMOVING
-;;       does not yet support integer-element sets, so they are omitted here.
-;;
 
 (define (domain test-features)
 

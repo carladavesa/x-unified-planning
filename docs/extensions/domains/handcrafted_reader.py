@@ -2,7 +2,7 @@ from docs.code_snippets.pddl_interop import domain_filename
 from docs.extensions.domains import compilation_solving
 from unified_planning.io import PDDLReader
 
-'''domain = '15-puzzle'
+domain = 'dump-trucks'
 instance = 'korf1'
 solving = 'fast-downward'
 
@@ -12,22 +12,5 @@ problem_filename = f'docs/extensions/domains/{domain}/handcrafted/{instance}.pdd
 
 problem = reader.parse_problem(domain_filename, problem_filename)
 
-compilation_solving.compile_and_solve(problem, solving, compilation='up') #,compilation_kinds_to_apply=[]
-'''
+compilation_solving.compile_and_solve(problem, solving, compilation='scin') #,compilation_kinds_to_apply=[]
 
-domain = '15-puzzle'
-instance = 'korf1'
-solving = 'fast-downward'
-extension = False
-ext = 'pddl-extension' if extension else 'handcrafted'
-
-reader = PDDLReader()
-domain_filename = f'docs/extensions/domains/{domain}/{ext}/domain.pddl'
-problem_filename = f'docs/extensions/domains/{domain}/{ext}/{instance}.pddl'
-
-problem = reader.parse_problem(domain_filename, problem_filename)
-
-print(problem)
-
-#['up', 'int', 'uti', 'log', 'c', 'ci', 'cin', 'sc', 'sci', 'scin', 'None']
-compilation_solving.compile_and_solve(problem, solving, compilation='up')
