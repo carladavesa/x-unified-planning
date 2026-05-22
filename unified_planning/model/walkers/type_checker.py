@@ -19,7 +19,7 @@ import unified_planning.model.types
 import unified_planning.environment
 import unified_planning.model.walkers as walkers
 from unified_planning.model import Fluent
-from unified_planning.model.types import BOOL, DERIVED_BOOL, TIME, _UserType, _IntType, _ArrayType, is_compatible_type
+from unified_planning.model.types import BOOL, DERIVED_BOOL, TIME, _UserType, _IntType, _ArrayType, _SetType, is_compatible_type
 from unified_planning.model.fnode import FNode
 from unified_planning.model.operators import OperatorKind
 from unified_planning.exceptions import UPTypeError
@@ -65,6 +65,15 @@ def combine_types(types: List["unified_planning.model.types.Type"]) -> "unified_
                     if len(str(ct)) > len(str(global_user_type)):
                         global_user_type = ct
         return global_user_type
+    elif x.is_set_type():
+        all_elem_types = []
+        for t in types:
+            assert t.is_set_type()
+            if t.elements_type is not None:
+                all_elem_types.append(t.elements_type)
+        if not all_elem_types:
+            return _SetType(None)
+        return _SetType(combine_types(all_elem_types))
     elif x.is_bool_type():
         for t in types:
             assert t.is_bool_type()

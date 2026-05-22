@@ -629,7 +629,14 @@ class UPPDDLReader:
                                 return []
                             if isinstance(group[0].value, ParseResults):
                                 return [_parse_array_content(group[k]) for k in range(len(group))]
-                            return [int(group[k].value) for k in range(len(group))]
+                            result = []
+                            for k in range(len(group)):
+                                token = group[k].value
+                                if isinstance(token, str) and problem.has_object(token):
+                                    result.append(problem.object(token))
+                                else:
+                                    result.append(int(token))
+                            return result
                         if len(exp) == 2:
                             # (array.mk (e1 e2 ...)) or (array.mk ((row0) (row1) ...))
                             elements = _parse_array_content(exp[1])
@@ -2135,7 +2142,22 @@ class UPPDDLReader:
                                 if len(group) == 0:
                                     return []
                                 if isinstance(group[0].value, ParseResults):
-                                    return [_parse_array_mk(group[k]) for k in range(len(group))]
+                                    result = []
+                                    for k in range(len(group)):
+                                        sub = group[k]
+                                        if sub[0].value == "set.mk":
+                                            elems_group = sub[1]
+                                            elements = set()
+                                            for i in range(len(elems_group)):
+                                                tok = elems_group[i].value
+                                                if isinstance(tok, str) and problem.has_object(tok):
+                                                    elements.add(problem.object(tok))
+                                                else:
+                                                    elements.add(int(tok))
+                                            result.append(elements)
+                                        else:
+                                            result.append(_parse_array_mk(sub))
+                                    return result
                                 result = []
                                 for k in range(len(group)):
                                     token = group[k].value
@@ -2152,11 +2174,27 @@ class UPPDDLReader:
                             elems_group = rhs[1]
                             elements = set()
                             for i in range(len(elems_group)):
-                                token = elems_group[i].value
-                                if isinstance(token, str) and problem.has_object(token):
-                                    elements.add(problem.object(token))
+                                sub = elems_group[i]
+                                if isinstance(sub.value, ParseResults):
+                                    if sub[0].value == "set.mk":
+                                        inner = set()
+                                        for j in range(len(sub[1])):
+                                            tok = sub[1][j].value
+                                            if isinstance(tok, str) and problem.has_object(tok):
+                                                inner.add(problem.object(tok))
+                                            else:
+                                                inner.add(int(tok))
+                                        elements.add(frozenset(inner))
+                                    elif sub[0].value == "array.mk":
+                                        elements.add(tuple(_parse_array_mk(sub[1])))
+                                    else:
+                                        raise ValueError(f"Unexpected sub-constructor in set.mk: {sub[0].value}")
                                 else:
-                                    elements.add(int(token))
+                                    token = sub.value
+                                    if isinstance(token, str) and problem.has_object(token):
+                                        elements.add(problem.object(token))
+                                    else:
+                                        elements.add(int(token))
                             value = elements
                         problem.set_initial_value(lhs, value)
                     else:

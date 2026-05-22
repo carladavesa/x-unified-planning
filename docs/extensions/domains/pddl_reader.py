@@ -14,9 +14,9 @@ problem = reader.parse_problem(domain_filename, problem_filename)
 compilation_solving.compile_and_solve(problem, solving, compilation='up') #,compilation_kinds_to_apply=[]
 '''
 
-domain = 'dump-trucks'
+domain = 'labyrinth'
 tests = False
-instance = 'i0'
+instance = 'i1'
 solving = 'fast-downward'      # requires numeric planner: sci/INTEGERS_REMOVING breaks on cardinality fluents
 
 
@@ -39,4 +39,4 @@ print(f" -->> {problem}")
 #['up', 'int', 'uti', 'log', 'c', 'ci', 'cin', 'sc', 'sci', 'scin', 'None']
 # sci breaks: INTEGERS_REMOVING encodes card fluents as object types → OBJECT_FLUENTS → PDDL writer crash
 # scin keeps card fluents as PDDL numeric functions, requires a numeric planner (enhsp)
-compilation_solving.compile_and_solve(problem, solving, compilation='sci', verbose=True)
+compilation_solving.compile_and_solve(problem, solving, compilation='uti', verbose=True)

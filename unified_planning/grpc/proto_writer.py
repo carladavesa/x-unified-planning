@@ -969,6 +969,49 @@ class ProtobufWriter(Converter):
             type=proto_type(variable.type),
         )
 
+    @handles(model.range_variable.RangeVariable)
+    def _convert_range_variable(
+        self, rv: model.range_variable.RangeVariable
+    ) -> proto.Expression:
+        # RangeVariable (bounded-int forall variable) — encode as FUNCTION_APPLICATION
+        # "range_var(var, lo, hi)" so the C++ ForallGrounderPass can expand it.
+        conservative_type = proto_type(rv.type)
+
+        var_expr = proto.Expression(
+            atom=proto.Atom(symbol=rv.name),
+            list=[],
+            kind=proto.ExpressionKind.Value("VARIABLE"),
+            type=conservative_type,
+        )
+
+        def _bound_expr(bound) -> proto.Expression:
+            if isinstance(bound, int):
+                return proto.Expression(
+                    atom=proto.Atom(int=bound),
+                    list=[],
+                    kind=proto.ExpressionKind.Value("CONSTANT"),
+                    type="up:integer",
+                )
+            return proto.Expression(
+                atom=proto.Atom(symbol=bound),
+                list=[],
+                kind=proto.ExpressionKind.Value("PARAMETER"),
+                type=conservative_type,
+            )
+
+        func_sym = proto.Expression(
+            atom=proto.Atom(symbol="range_var"),
+            list=[],
+            kind=proto.ExpressionKind.Value("FUNCTION_SYMBOL"),
+            type="up:integer",
+        )
+
+        return proto.Expression(
+            list=[func_sym, var_expr, _bound_expr(rv.initial), _bound_expr(rv.last)],
+            kind=proto.ExpressionKind.Value("FUNCTION_APPLICATION"),
+            type=conservative_type,
+        )
+
     @handles(unified_planning.plans.ActionInstance)
     def _convert_action_instance(
         self,
