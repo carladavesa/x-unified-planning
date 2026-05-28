@@ -415,6 +415,9 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
                 return None
             new_args.append(transformed)
 
+        # If the array fluent is not being indexed - return the full array fluent
+        if not int_params and not instantiations:
+            return node
         fluent_base_name = node.fluent().name.split('[')[0]
         old_fluent = old_problem.fluent(fluent_base_name)
         # Array fluent: extract indices from name
@@ -458,12 +461,14 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
     ) -> Union[FNode, None]:
         """Generic recursive transformation."""
         em = old_problem.environment.expression_manager
-
+        print("transform generic", node)
         new_args = [
             self._transform_expression(old_problem, new_problem, arg, int_params, instantiations)
             for arg in node.args
         ]
+        print(new_args)
         new_args = self._handle_none_args(node.node_type, new_args)
+        print(new_args, "after _handle_none_args")
         if new_args is None or new_args == []:
             return None
         return em.create_node(node.node_type, tuple(new_args)).simplify()
@@ -508,6 +513,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             return node
 
         if node.is_fluent_exp():
+            print("fluent", node)
             result = self._transform_fluent_exp(old_problem, new_problem, node, int_params, instantiations)
             self._expression_cache[cache_key] = result
             if result is None:
@@ -799,7 +805,9 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
     # ==================== GOALS TRANSFORMATION ====================
     def _transform_goals(self, problem: Problem, new_problem: Problem):
         for goal in problem.goals:
+            print("goal", goal)
             transformed = self._transform_expression(problem, new_problem, goal)
+            print("transformed", transformed)
             if transformed is not None and transformed != FALSE():
                 new_problem.add_goal(transformed)
 
