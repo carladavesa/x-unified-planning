@@ -4,10 +4,118 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7c60bccf-105d-46ba-a2c0-79b47893c82f" name="Changes" comment="All features ready">
+    <list default="true" id="7c60bccf-105d-46ba-a2c0-79b47893c82f" name="Changes" comment="Petit canvi a parser i proto">
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/Labyrinth.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/domain.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-10-3.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-10-4.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-10-5.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-15-1.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-15-2.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-15-3.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-15-4.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-15-5.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-20-1.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-20-2.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-20-3.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-20-4.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-20-5.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-5-1.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-5-2.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-5-3.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-5-4.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-5-5.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-10-1.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-10-2.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-10-3.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-10-4.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-10-5.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-15-1.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-15-2.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-15-3.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-15-4.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-15-5.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-20-1.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-20-2.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-20-3.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-20-4.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-20-5.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-5-1.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-5-2.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-5-3.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-5-4.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p5-5-5.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/instances.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/pddl-extension/domain.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/pddl-extension/i1.pddl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_10_1.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_10_2.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_10_3.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_10_4.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_10_5.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_15_1.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_15_2.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_15_3.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_15_4.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_15_5.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_20_1.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_20_2.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_20_3.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_20_4.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_20_5.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_5_2.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_5_3.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_5_4.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p4_5_5.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_10_1.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_10_2.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_10_3.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_10_4.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_10_5.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_15_1.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_15_2.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_15_3.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_15_4.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_15_5.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_20_1.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_20_2.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_20_3.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_20_4.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_20_5.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_5_1.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_5_2.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_5_3.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_5_4.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p5_5_5.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p_4_5_1.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/up-format-instances/p_4_5_2.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/test_domains.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/compilation_solving.py" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/compilation_solving.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/labyrinth/pddl-extension/1_domain.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/labyrinth/pddl-extension/1_i1.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/labyrinth/pddl-extension/domain.pddl" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth/pddl-extension/domain.pddl" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/labyrinth/pddl-extension/i1.pddl" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth/pddl-extension/i1.pddl" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/pancake-sorting/pddl-extension/domain.pddl" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/pancake-sorting/pddl-extension/domain.pddl" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/extensions/domains/pddl_reader.py" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/pddl_reader.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/unified_planning/grpc/proto_writer.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/grpc/proto_writer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-10-1.pddl" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth_v2/handcrafted/p4-10-2.pddl" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/domain_array.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/domain_arrays2d.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/domain_full_bounds.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/domain_sets.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/domain_sets2.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/problem_array.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/problem_arrays2d.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/problem_full_bounds.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/problem_sets.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/problem_sets2.pddl" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/test_2d.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/test_dump_trucks.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/tests/pddl-extension/test_sets.py" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/engines/compilers/arrays_remover.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/engines/compilers/arrays_remover.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/engines/compilers/integers_remover.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/engines/compilers/integers_remover.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/engines/compilers/sets_remover.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/engines/compilers/sets_remover.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/unified_planning/io/up_pddl_reader.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/io/up_pddl_reader.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/unified_planning/model/walkers/type_checker.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/walkers/type_checker.py" afterDir="false" />
     </list>
@@ -458,7 +566,9 @@
       <workItem from="1776702004510" duration="79174000" />
       <workItem from="1777905397272" duration="47388000" />
       <workItem from="1779124196127" duration="5052000" />
-      <workItem from="1779290578362" duration="6744000" />
+      <workItem from="1779290578362" duration="44449000" />
+      <workItem from="1779694363948" duration="8319000" />
+      <workItem from="1779782738200" duration="19778000" />
     </task>
     <task id="LOCAL-00001" summary="Commit hanoi">
       <option name="closed" value="true" />
@@ -524,7 +634,15 @@
       <option name="project" value="LOCAL" />
       <updated>1779125963128</updated>
     </task>
-    <option name="localTasksCounter" value="9" />
+    <task id="LOCAL-00009" summary="Petit canvi a parser i proto">
+      <option name="closed" value="true" />
+      <created>1779460654844</created>
+      <option name="number" value="00009" />
+      <option name="presentableId" value="LOCAL-00009" />
+      <option name="project" value="LOCAL" />
+      <updated>1779460654844</updated>
+    </task>
+    <option name="localTasksCounter" value="10" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -584,7 +702,8 @@
     <MESSAGE value="Canvis + implementació labyrinth" />
     <MESSAGE value="Mes res" />
     <MESSAGE value="All features ready" />
-    <option name="LAST_COMMIT_MESSAGE" value="All features ready" />
+    <MESSAGE value="Petit canvi a parser i proto" />
+    <option name="LAST_COMMIT_MESSAGE" value="Petit canvi a parser i proto" />
   </component>
   <component name="com.intellij.coverage.CoverageDataManagerImpl">
     <SUITE FILE_PATH="coverage/unified_planning$arrays_and_integers_remover.coverage" NAME="arrays_and_integers_remover Coverage Results" MODIFIED="1727965353909" SOURCE_PROVIDER="com.intellij.coverage.DefaultCoverageFileProvider" RUNNER="coverage.py" COVERAGE_BY_TEST_ENABLED="true" COVERAGE_TRACING_ENABLED="false" WORKING_DIRECTORY="$PROJECT_DIR$/unified_planning/engines/compilers" />

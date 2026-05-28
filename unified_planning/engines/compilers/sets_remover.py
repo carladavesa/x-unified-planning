@@ -146,14 +146,46 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
         param_values = [problem.objects(param.type) for param in signature]
         return list(product(*param_values))
 
+    def _get_elements_for_type(self, elements_type, problem: Problem):
+        """Return the universe of elements for a set's element type as FNodes.
+
+        For UserTypes: ObjectExp FNodes for each object.
+        For bounded integers: Int FNodes for each value in [lb, ub].
+        """
+        em = problem.environment.expression_manager
+        if elements_type.is_user_type():
+            return [em.ObjectExp(obj) for obj in problem.objects(elements_type)]
+        elif elements_type.is_int_type():
+            lb = elements_type.lower_bound
+            ub = elements_type.upper_bound
+            assert lb is not None and ub is not None, (
+                f"set element type {elements_type} must be a bounded integer"
+            )
+            return [em.Int(i) for i in range(lb, ub + 1)]
+        else:
+            raise NotImplementedError(
+                f"set element type {elements_type} is not supported (expected UserType or bounded IntType)"
+            )
+
     def _add_set_as_boolean_fluent(self, problem: Problem, new_problem: Problem, fluent: Fluent, default_value):
         """Encode a set fluent as a Boolean fluent with an extra element parameter."""
         elements_type = fluent.type.elements_type
-        assert elements_type.is_user_type(), "Only UserType types are supported"
-        element_param = model.Parameter(
-            str(elements_type)[0].lower(),
-            elements_type
-        )
+        if elements_type.is_user_type():
+            element_param = model.Parameter(
+                str(elements_type)[0].lower(),
+                elements_type
+            )
+        elif elements_type.is_int_type():
+            lb = elements_type.lower_bound
+            ub = elements_type.upper_bound
+            assert lb is not None and ub is not None, (
+                f"set element type {elements_type} must be a bounded integer"
+            )
+            element_param = model.Parameter("i", elements_type)
+        else:
+            raise NotImplementedError(
+                f"set element type {elements_type} is not supported"
+            )
 
         new_signature = [element_param] + list(fluent.signature)
         new_fluent = model.Fluent(
@@ -250,6 +282,40 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
         else:
             return None
 
+    def _set_membership_expr(self, new_problem: Problem, elem: FNode, set_expr: FNode) -> FNode:
+        """
+        Return the boolean expression for 'elem ∈ set_expr' in the compiled problem.
+        Handles fluents, set constants, and nested union/intersect/difference nodes.
+        """
+        if set_expr.is_fluent_exp():
+            fluent = self._fluent_mapping[set_expr.fluent().name]
+            return fluent(elem, *set_expr.args)
+        elif set_expr.is_set_union():
+            s1, s2 = set_expr.args
+            return Or(
+                self._set_membership_expr(new_problem, elem, s1),
+                self._set_membership_expr(new_problem, elem, s2),
+            )
+        elif set_expr.is_set_intersect():
+            s1, s2 = set_expr.args
+            return And(
+                self._set_membership_expr(new_problem, elem, s1),
+                self._set_membership_expr(new_problem, elem, s2),
+            )
+        elif set_expr.is_set_difference():
+            s1, s2 = set_expr.args
+            return And(
+                self._set_membership_expr(new_problem, elem, s1),
+                Not(self._set_membership_expr(new_problem, elem, s2)),
+            )
+        elif set_expr.is_constant():
+            constant_values = set_expr.constant_value()
+            return Or([Equals(elem, e) for e in constant_values]) if constant_values else FALSE()
+        else:
+            raise NotImplementedError(
+                f"_set_membership_expr: unsupported set expression type {set_expr.node_type}"
+            )
+
     def _transform_member(self, node: FNode) -> FNode:
         """
         Transform: element in set_fluent(params)
@@ -270,27 +336,25 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
                 or_expr.append(Equals(element, element_set))
             return Or(*or_expr)
 
-    def _transform_subseteq(self, node: FNode) -> FNode:
+    def _transform_subseteq(self, new_problem: Problem, node: FNode) -> FNode:
         """
-        Transform: set in set_fluent(params)
-        Into: set_fluent(element, params)
+        Transform: subset(set1, set2)  →  ∀e: (e ∈ set1) → (e ∈ set2)
+        i.e. And([Or(Not(member_in_1(e)), member_in_2(e)) for e in all_elements])
+        Handles fluent-fluent, constant-fluent, and fluent-constant cases.
         """
         set_expr_1 = node.args[0]
         set_expr_2 = node.args[1]
         assert set_expr_1.type.is_set_type() and set_expr_2.type.is_set_type(), "Args must be sets"
-        assert set_expr_1.is_fluent_exp() or set_expr_1.is_constant(), "First set expression must be a fluent or a constant"
-        assert set_expr_2.is_fluent_exp() or set_expr_2.is_constant(), "Second set expression must be a fluent or a constant"
 
-        if set_expr_2.is_fluent_exp():
-            new_fluent = self._fluent_mapping[set_expr_2.fluent().name]
-            if set_expr_1.constant_value():
-                set_elements = set_expr_1.constant_value()
-                and_expr = []
-                for e in set_elements:
-                    new_args = [e] + list(set_expr_2.args)
-                    and_expr.append(new_fluent(*new_args))
-                return And(*and_expr)
-        raise NotImplementedError(f"Case of Subseteq not implemented yet")
+        elements_type = set_expr_1.type.elements_type
+        elements = self._get_elements_for_type(elements_type, new_problem)
+
+        and_expr = []
+        for e in elements:
+            member_in_1 = self._set_membership_expr(new_problem, e, set_expr_1)
+            member_in_2 = self._set_membership_expr(new_problem, e, set_expr_2)
+            and_expr.append(Or(Not(member_in_1), member_in_2).simplify())
+        return And(*and_expr).simplify() if and_expr else TRUE()
 
     def _transform_disjoint(self, new_problem: Problem, node: FNode) -> FNode:
         """
@@ -304,7 +368,7 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
         assert set2.is_fluent_exp() or set2.is_constant(), "Set expression must be a fluent or a constant"
 
         elements_type = set1.type.elements_type if set1.is_fluent_exp() else set2.type.elements_type
-        elements = list(new_problem.objects(elements_type))
+        elements = self._get_elements_for_type(elements_type, new_problem)
         and_expr = []
 
         if set1.is_fluent_exp() and set2.is_fluent_exp():
@@ -325,7 +389,7 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
         """
         set_expr = node.args[0]
         elements_type = set_expr.type.elements_type if set_expr.is_fluent_exp() else set_expr.args[0].type.elements_type
-        elements = list(new_problem.objects(elements_type))
+        elements = self._get_elements_for_type(elements_type, new_problem)
 
         if set_expr.is_fluent_exp():
             # Create an integer helper fluent (same parameters as the source fluent)
@@ -344,7 +408,8 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             if card_parameters:
                 # New cardinality fluent contains a value from 0 to the number of objects of the type it contains in the problem
                 new_fluent = Fluent(fluent_name, IntType(0, len(elements)), card_parameters)
-                default_initial_value = len(old_problem.fluents_defaults[old_fluent].constant_value())
+                _def = old_problem.fluents_defaults.get(old_fluent)
+                default_initial_value = len(_def.constant_value()) if _def is not None else 0
 
                 self._cardinality_registry[fluent_name] = set_expr
                 new_problem.add_fluent(new_fluent, default_initial_value=default_initial_value)
@@ -368,7 +433,8 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
                     return new_problem.fluent(fluent_name)(*set_expr.args)
 
                 new_fluent = Fluent(fluent_name, IntType(0, len(elements)))
-                default_initial_value = len(old_problem.fluents_defaults[old_fluent].constant_value())
+                _def = old_problem.fluents_defaults.get(old_fluent)
+                default_initial_value = len(_def.constant_value()) if _def is not None else 0
                 new_problem.add_fluent(new_fluent, default_initial_value=default_initial_value)
 
                 # Initialize with arguments parameters (if so)
@@ -478,7 +544,6 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
         """
         left = node.arg(0)
         right = node.arg(1)
-        em = new_problem.environment.expression_manager
 
         set_fluent = None
         constant_set = None
@@ -501,21 +566,20 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
         if set_fluent and constant_set:
             fluent_name = set_fluent.fluent().name
             fluent_args = set_fluent.args
-            constant_elements = list(o.object() for o in constant_set.constant_value())
-            # Get all possible elements for this set type
+            # constant_value() returns FNodes (ObjectExp or Int)
+            constant_elements = list(constant_set.constant_value())
+            # Get all possible elements for this set type as FNodes
             elements_type = set_fluent.fluent().type.elements_type
-            all_elements = list(new_problem.objects(elements_type))
+            all_elements = self._get_elements_for_type(elements_type, new_problem)
             clauses = []
             # All elements in constant must be in the set
             for elem in constant_elements:
-                elem_exp = em.ObjectExp(elem)
-                member_fluent = new_problem.fluent(fluent_name)(elem_exp, *fluent_args)
+                member_fluent = new_problem.fluent(fluent_name)(elem, *fluent_args)
                 clauses.append(member_fluent)
             # All elements NOT in constant must NOT be in the set
-            for obj in all_elements:
-                if obj not in constant_elements:
-                    elem_exp = em.ObjectExp(obj)
-                    member_fluent = new_problem.fluent(fluent_name)(elem_exp, *fluent_args)
+            for elem in all_elements:
+                if elem not in constant_elements:
+                    member_fluent = new_problem.fluent(fluent_name)(elem, *fluent_args)
                     clauses.append(Not(member_fluent))
             return And(clauses).simplify() if clauses else TRUE()
 
@@ -526,17 +590,16 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             fluent2_name = other_set_fluent.fluent().name
             fluent2_args = other_set_fluent.args
 
-            # Get all possible elements
+            # Get all possible elements as FNodes
             elements_type = set_fluent.fluent().type.elements_type
-            all_elements = new_problem.objects(elements_type)
+            all_elements = self._get_elements_for_type(elements_type, new_problem)
 
             clauses = []
 
             # For each element: it's in set1 IFF it's in set2
-            for obj in all_elements:
-                elem_exp = em.ObjectExp(obj)
-                member1 = new_problem.fluent(fluent1_name)(elem_exp, *fluent1_args)
-                member2 = new_problem.fluent(fluent2_name)(elem_exp, *fluent2_args)
+            for elem in all_elements:
+                member1 = new_problem.fluent(fluent1_name)(elem, *fluent1_args)
+                member2 = new_problem.fluent(fluent2_name)(elem, *fluent2_args)
 
                 # member1 <-> member2 (biconditional)
                 clauses.append(Iff(member1, member2))
@@ -561,7 +624,7 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
         elif node.is_set_member():
             return self._transform_member(node)
         elif node.is_set_subseteq():
-            return self._transform_subseteq(node)
+            return self._transform_subseteq(new_problem, node)
         elif node.is_set_disjoint():
             return self._transform_disjoint(new_problem, node)
         elif node.is_set_cardinality():
@@ -600,6 +663,8 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             return self._transform_difference_effect(new_problem, effect)
         elif effect.value.is_set_constant():
             return self._transform_set_constant_effect(new_problem, effect)
+        elif effect.value.is_fluent_exp() and effect.value.type.is_set_type():
+            return self._transform_set_copy_effect(old_problem, new_problem, effect)
         else:
             # Non-set value: transform recursively.
             new_fluent = self._transform_expression(old_problem, new_problem, effect.fluent)
@@ -633,28 +698,21 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
     def _transform_union_effect(self, old_problem: Problem, new_problem: Problem, effect: Effect) -> Union[Effect, List[Effect], None]:
         """
         Transform: result_set := set1 ∪ set2
-        Into: for each object o: result_set(o) := set1(o) || set2(o)
+        Into: for each element e: result_set(e) := (e ∈ set1) OR (e ∈ set2)
+        Handles nested union trees recursively via _set_membership_expr.
         """
         new_effects = []
         set1, set2 = effect.value.args
 
-        # No nested expressions allowed
-        assert set1.is_fluent_exp() or set1.is_constant() or set1.is_parameter_exp(), \
-            "Nesting of Set methods not supported!"
-        assert set2.is_fluent_exp() or set2.is_constant() or set2.is_parameter_exp(), \
-            "Nesting of Set methods not supported!"
-
-        elements_type = set1.type.elements_type
-        elements = list(new_problem.objects(elements_type))
+        elements_type = effect.value.type.elements_type
+        elements = self._get_elements_for_type(elements_type, new_problem)
 
         new_fluent = self._fluent_mapping[effect.fluent.fluent().name]
-        fluent1 = self._fluent_mapping[set1.fluent().name]
-        fluent2 = self._fluent_mapping[set2.fluent().name]
 
         for elem in elements:
             new_condition = Or(
-                fluent1(elem, *set1.args),
-                fluent2(elem, *set2.args)
+                self._set_membership_expr(new_problem, elem, set1),
+                self._set_membership_expr(new_problem, elem, set2),
             )
             new_fluent_expr = new_fluent(elem, *effect.fluent.args)
             new_effects.append(Effect(new_fluent_expr, TRUE(), new_condition, effect.kind, effect.forall))
@@ -675,7 +733,7 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             "Nesting of Set methods not supported!"
 
         elements_type = set1.type.elements_type
-        elements = list(new_problem.objects(elements_type))
+        elements = self._get_elements_for_type(elements_type, new_problem)
         new_fluent = self._fluent_mapping[effect.fluent.fluent().name]
 
         if set1.is_fluent_exp() and set2.is_fluent_exp():
@@ -684,21 +742,22 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             for elem in elements:
                 new_condition = And(fluent1(elem, *set1.args), fluent2(elem, *set2.args))
                 new_fluent_expr = new_fluent(elem, *effect.fluent.args)
-                new_effects.append(Effect(new_fluent_expr, True, new_condition, effect.kind, effect.forall))
+                new_effects.append(Effect(new_fluent_expr, TRUE(), new_condition, effect.kind, effect.forall))
         else:
             fluent, constant = (set1, set2.constant_value()) if set1.is_fluent_exp() else (set2, set1.constant_value())
             new_fluent_value = self._fluent_mapping[fluent.fluent().name]
             for elem in constant:
                 new_condition = new_fluent_value(elem, *fluent.args)
                 new_fluent_expr = new_fluent(elem, *effect.fluent.args)
-                new_effects.append(Effect(new_fluent_expr, True, new_condition, effect.kind, effect.forall))
+                new_effects.append(Effect(new_fluent_expr, TRUE(), new_condition, effect.kind, effect.forall))
         return new_effects
 
-    def _transform_difference_effect(self, new_problem: Problem, new_action: Action, effect: Effect):
+    def _transform_difference_effect(self, new_problem: Problem, effect: Effect) -> List[Effect]:
         """
-        Transform: result_set := set1 \ set2
-        Into: for each object o: result_set(o) := set1(o) & ¬set2(o)
+        Transform: result_set := set1 \\ set2
+        Into: for each object o: result_set(o) := set1(o) & NOT set2(o)
         """
+        new_effects = []
         set1, set2 = effect.value.args
 
         # No nested expressions allowed
@@ -708,7 +767,7 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             "Nesting of Set methods not supported!"
 
         elements_type = set1.type.elements_type
-        elements = list(new_problem.objects(elements_type))
+        elements = self._get_elements_for_type(elements_type, new_problem)
         new_fluent = self._fluent_mapping[effect.fluent.fluent().name]
 
         if set1.is_fluent_exp() and set2.is_fluent_exp():
@@ -717,7 +776,7 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             for elem in elements:
                 new_condition = And(fluent1(elem, *set1.args), Not(fluent2(elem, *set2.args)))
                 new_fluent_expr = new_fluent(elem, *effect.fluent.args)
-                new_action.add_effect(new_fluent_expr, True, new_condition, effect.forall)
+                new_effects.append(Effect(new_fluent_expr, TRUE(), new_condition, effect.kind, effect.forall))
 
         elif set1.is_constant():
             # Constant-first case: include each constant element only if absent in the second operand.
@@ -726,7 +785,7 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             for elem in constant:
                 new_condition = Not(new_fluent_value(elem, *fluent.args))
                 new_fluent_expr = new_fluent(elem, *effect.fluent.args)
-                new_action.add_effect(new_fluent_expr, True, new_condition, effect.forall)
+                new_effects.append(Effect(new_fluent_expr, TRUE(), new_condition, effect.kind, effect.forall))
         else:
             # Constant-second case: keep elements from the first operand that are not in the constant second set.
             fluent, constant = set1, [o.object() for o in list(set2.constant_value())]
@@ -734,7 +793,8 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             for elem in [e for e in elements if e not in constant]:
                 new_condition = new_fluent_value(elem, *fluent.args)
                 new_fluent_expr = new_fluent(elem, *effect.fluent.args)
-                new_action.add_effect(new_fluent_expr, True, new_condition, effect.forall)
+                new_effects.append(Effect(new_fluent_expr, TRUE(), new_condition, effect.kind, effect.forall))
+        return new_effects
 
     def _transform_set_constant_effect(self, new_problem: Problem, effect: Effect):
         """
@@ -744,15 +804,39 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
         """
         new_effects = []
         elements_type = effect.fluent.type.elements_type
-        all_elements = list(new_problem.objects(elements_type))
+        all_elements = self._get_elements_for_type(elements_type, new_problem)
 
         new_fluent = self._fluent_mapping[effect.fluent.fluent().name]
-        constant_elements = [e.object() for e in effect.value.constant_value()]
+        constant_elements = list(effect.value.constant_value())
 
         for elem in all_elements:
             value = TRUE() if elem in constant_elements else FALSE()
             fluent_expr = new_fluent(elem, *effect.fluent.args)
             new_effects.append(Effect(fluent_expr, value, TRUE(), effect.kind, effect.forall))
+        return new_effects
+
+    def _transform_set_copy_effect(self, old_problem: Problem, new_problem: Problem, effect: Effect) -> List[Effect]:
+        """
+        Transform: target_set_fluent := source_set_fluent
+        Into per-element conditional effects (avoids non-constant boolean assignment):
+          when (condition AND source_elem): target_elem := true
+          when (condition AND NOT source_elem): target_elem := false
+        """
+        elements_type = effect.value.type.elements_type
+        all_elements = self._get_elements_for_type(elements_type, new_problem)
+
+        target_fluent = self._fluent_mapping[effect.fluent.fluent().name]
+        source_fluent = self._fluent_mapping[effect.value.fluent().name]
+        new_condition = self._transform_expression(old_problem, new_problem, effect.condition)
+
+        new_effects = []
+        for elem in all_elements:
+            target_expr = target_fluent(elem, *effect.fluent.args)
+            source_expr = source_fluent(elem, *effect.value.args)
+            cond_true = And(new_condition, source_expr)
+            cond_false = And(new_condition, Not(source_expr))
+            new_effects.append(Effect(target_expr, TRUE(), cond_true, effect.kind, effect.forall))
+            new_effects.append(Effect(target_expr, FALSE(), cond_false, effect.kind, effect.forall))
         return new_effects
 
     def _evaluate_expression(
@@ -813,22 +897,23 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
         return combinations
 
     def _add_card_effect_to_action(
-            self, new_problem, action: Action, card: FNode, old_value: FNode, new_effects: List[Effect], equality_conditions: List[FNode] = True
+            self, new_problem, action: Action, card: FNode, old_value: FNode, new_effects: List[Effect], equality_conditions: List[FNode] = None
     ):
         """Add conditional effects to maintain cardinality helper fluents."""
+        if equality_conditions is None:
+            equality_conditions = []
         card_expr = self._cardinality_registry[card.fluent().name]
-        # Assumes effects are unconditional in this branch.
+
+        # --- constant set assignment: cardinality is always the constant's size ---
         if old_value.is_constant():
             if card_expr.is_fluent_exp():
-                # effect condition + equality conditions
                 n_elements = len(old_value.constant_value())
-                action.add_effect(card, n_elements, And(equality_conditions).simplify())
+                cond = And(equality_conditions).simplify() if equality_conditions else TRUE()
+                action.add_effect(card, n_elements, cond)
                 return
 
             elif card_expr.is_set_union():
-                # Enumerate combinations to compute updated union cardinality.
                 for equality in equality_conditions:
-                    # Identify the other union operand for this equality branch.
                     other_fluent = card_expr.arg(1) if card_expr.arg(0).arg(0) == equality.arg(1) else card_expr.arg(0)
                     new_other_fluent = new_problem.fluent(other_fluent.fluent().name)
                     all_elements = set(new_problem.objects(card_expr.arg(0).fluent().type.elements_type))
@@ -836,77 +921,86 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
                     constant_len = len(constant_set)
                     remaining_elements = all_elements - constant_set
                     new_other_fluents = [new_other_fluent(e, *other_fluent.args) for e in remaining_elements]
-
-                    # Enumerate possible counts from remaining elements.
-                    # Elements already in the constant set are always counted.
                     if remaining_elements:
                         for i in range(constant_len, len(remaining_elements) + 1):
                             combinations = self._exactly_k_combinations(new_other_fluents, i)
-
-                            new_condition = And(
-                                equality,
-                                Or(*combinations)
-                            ).simplify()
+                            new_condition = And(equality, Or(*combinations)).simplify()
                             action.add_effect(card, i + constant_len, new_condition)
                     else:
-                        new_condition = And(equality).simplify()
-                        action.add_effect(card, constant_len, new_condition)
+                        action.add_effect(card, constant_len, And(equality).simplify())
+                return
 
-                    return
-
+        # --- add: increase by 1 if element not already present ---
         elif old_value.is_set_add():
             if len(new_effects) == 1:
                 new_effect = new_effects[0]
                 if card_expr.is_fluent_exp():
-                    new_condition = And(
-                        new_effect.condition,
-                        equality_conditions,
-                        Not(new_effect.fluent)
-                    ).simplify()
-                    action.add_increase_effect(card, 1, new_condition)
+                    base_cond = And(new_effect.condition, Not(new_effect.fluent)).simplify()
+                    if equality_conditions:
+                        for equality in equality_conditions:
+                            action.add_increase_effect(card, 1, And(equality, base_cond).simplify())
+                    else:
+                        action.add_increase_effect(card, 1, base_cond)
                     return
 
                 elif card_expr.is_set_union():
-                    if equality_conditions:
-                        # Process each instantiated equality branch independently.
-                        for equality in equality_conditions:
-                            # Ensure the updated element is also absent from the other union operand.
-                            other_fluent = card_expr.arg(1) if card_expr.arg(0).arg(0) == equality.arg(1) else card_expr.arg(0)
-                            new_other_fluent = new_problem.fluent(other_fluent.fluent().name)
-                            element = old_value.arg(0)
-
-                            new_condition = And(
-                                equality,
-                                new_effect.condition,
-                                Not(new_effect.fluent),
-                                Not(new_other_fluent(element, *other_fluent.args))
-                            ).simplify()
-                            action.add_increase_effect(card, 1, new_condition)
+                    for equality in equality_conditions:
+                        other_fluent = card_expr.arg(1) if card_expr.arg(0).arg(0) == equality.arg(1) else card_expr.arg(0)
+                        new_other_fluent = new_problem.fluent(other_fluent.fluent().name)
+                        element = old_value.arg(0)
+                        new_condition = And(
+                            equality, new_effect.condition,
+                            Not(new_effect.fluent),
+                            Not(new_other_fluent(element, *other_fluent.args))
+                        ).simplify()
+                        action.add_increase_effect(card, 1, new_condition)
                     return
 
-        elif old_value.is_set_union():
+        # --- remove: decrease by 1 if element was present ---
+        elif old_value.is_set_remove():
+            if len(new_effects) == 1:
+                new_effect = new_effects[0]
+                if card_expr.is_fluent_exp():
+                    base_cond = And(new_effect.condition, new_effect.fluent).simplify()
+                    if equality_conditions:
+                        for equality in equality_conditions:
+                            action.add_decrease_effect(card, 1, And(equality, base_cond).simplify())
+                    else:
+                        action.add_decrease_effect(card, 1, base_cond)
+                    return
+
+        # --- union / intersect / difference / set-copy: enumerate cardinalities ---
+        elif (old_value.is_set_union() or old_value.is_set_intersect() or
+              old_value.is_set_difference() or
+              (old_value.is_fluent_exp() and old_value.type.is_set_type())):
             if card_expr.is_fluent_exp():
-                # Find all combinations per possible number of objects
-                for equality in equality_conditions:
-                    condition_effects = [effect.condition for effect in new_effects]
+                # For set-copy, _transform_set_copy_effect generates both TRUE and FALSE effects;
+                # only the TRUE effects represent elements that end up in the result.
+                true_effects = [e for e in new_effects if not e.value.is_false()]
+                condition_effects = [e.condition for e in true_effects]
+
+                equalities = equality_conditions if equality_conditions else [None]
+                for equality in equalities:
+                    # Build card args with variable substitution when equality present
+                    new_args = []
+                    for arg in card.args:
+                        if (equality is not None and arg.is_variable_exp()
+                                and equality.arg(1).is_variable_exp()
+                                and arg == equality.arg(1)):
+                            arg = equality.arg(0)
+                        new_args.append(arg)
 
                     for i in range(0, len(condition_effects) + 1):
                         combinations = self._exactly_k_combinations(condition_effects, i)
-                        new_condition = And(
-                            equality if not equality.arg(1).is_variable_exp() else True,
-                            Or(*combinations)
-                        ).simplify()
-                        # Replace the variable for the parameter
-                        new_args = []
-                        for arg in card.args:
-                            if arg.is_variable_exp() and arg == equality.arg(1):
-                                arg = equality.arg(0)
-                            new_args.append(arg)
-
-                        action.add_effect(card.fluent()(*new_args), i, new_condition)
+                        result_cond = Or(*combinations).simplify() if combinations else TRUE()
+                        if equality is not None and not equality.arg(1).is_variable_exp():
+                            final_cond = And(equality, result_cond).simplify()
+                        else:
+                            final_cond = result_cond
+                        action.add_effect(card.fluent()(*new_args), i, final_cond)
                 return
 
-        raise NotImplementedError(f"Not implemented yet")
+        raise NotImplementedError(f"Unsupported cardinality update: old_value={old_value.node_type}")
 
     def _generate_card_effects(self, old_problem: Problem, new_problem: Problem, action: Action) -> Action:
         """
@@ -924,7 +1018,12 @@ class SetsRemover(engines.engine.Engine, CompilerMixin):
             if not isinstance(new_effects, list):
                 new_effects = [new_effects]
             for new_effect in new_effects:
-                new_action.add_effect(new_effect.fluent, new_effect.value, new_effect.condition, new_effect.forall)
+                if new_effect.is_increase():
+                    new_action.add_increase_effect(new_effect.fluent, new_effect.value, new_effect.condition, new_effect.forall)
+                elif new_effect.is_decrease():
+                    new_action.add_decrease_effect(new_effect.fluent, new_effect.value, new_effect.condition, new_effect.forall)
+                else:
+                    new_action.add_effect(new_effect.fluent, new_effect.value, new_effect.condition, new_effect.forall)
             for card_name, card_expr in self._cardinality_registry.items():
                 # Find which fluents in card_expr are affected by action
                 affected_fluents = self._find_affected_fluents(card_expr)

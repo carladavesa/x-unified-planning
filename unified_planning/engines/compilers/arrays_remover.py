@@ -27,7 +27,7 @@ from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_V
 from unified_planning.engines.compilers.utils import replace_action, updated_minimize_action_costs, get_fresh_name
 from typing import Dict, List, Optional, Tuple, OrderedDict, Union
 from functools import partial
-from unified_planning.shortcuts import FALSE, UserType, And, TRUE
+from unified_planning.shortcuts import FALSE, UserType, And, TRUE, EMPTY_SET
 import re
 
 class ArraysRemover(engines.engine.Engine, CompilerMixin):
@@ -548,7 +548,17 @@ class ArraysRemover(engines.engine.Engine, CompilerMixin):
                          for dim in range(len(n_elements))] + list(fluent.signature)
 
         new_fluent = Fluent(fluent.name, element_type, new_signature, fluent.environment)
-        new_problem.add_fluent(new_fluent, default_initial_value=default_value)
+        # When multiple dimensions share one Index type, some index combinations are
+        # out-of-bounds (e.g. a 2×3 grid uses indices i0..i2 but row i2 is invalid).
+        # Those out-of-bounds slots have no explicit initial value. To avoid triggering
+        # UNDEFINED_INITIAL_NUMERIC / UNDEFINED_INITIAL_SYMBOLIC, use a type-appropriate
+        # default (0 for integers, empty-set for set types).
+        effective_default = default_value
+        if effective_default is None and element_type.is_int_type():
+            effective_default = 0
+        elif effective_default is None and element_type.is_set_type():
+            effective_default = EMPTY_SET()
+        new_problem.add_fluent(new_fluent, default_initial_value=effective_default)
 
         # Set initial values
         for f, v in problem.explicit_initial_values.items():

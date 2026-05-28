@@ -41,11 +41,13 @@ COMPILATION_PIPELINES = {
         CompilationKind.COUNT_INT_REMOVING,
     ],
     'sc' : [
+        CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
         CompilationKind.SETS_REMOVING,
         CompilationKind.COUNT_REMOVING,
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     'sci' : [
+        CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
         CompilationKind.SETS_REMOVING,
         CompilationKind.COUNT_INT_REMOVING,
         CompilationKind.INTEGERS_REMOVING,
@@ -57,10 +59,19 @@ COMPILATION_PIPELINES = {
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     'all' : [
+        CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
         CompilationKind.SETS_REMOVING,
         CompilationKind.COUNT_REMOVING,
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
         CompilationKind.INTEGERS_REMOVING,
+    ],
+    'iasciu': [  # arrays-of-sets + bounded-int fluents (no card objects)
+        CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
+        CompilationKind.ARRAYS_REMOVING,
+        CompilationKind.SETS_REMOVING,
+        CompilationKind.COUNT_REMOVING,
+        CompilationKind.INTEGERS_REMOVING,
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     'None': []
 }

@@ -25,7 +25,7 @@
         (connections card_8  N) (connections card_8  S) (connections card_8  E)
         (connections card_13 S) (connections card_13 W)
         (connections card_14 N) (connections card_14 S) (connections card_14 E)
-        (connections card_11 W) (connections card_11 E)
+        (connections card_11 S) (connections card_11 E)
         (connections card_12 N) (connections card_12 W)
         (connections card_1  N) (connections card_1  W) (connections card_1  S)
         (connections card_2  N) (connections card_2  S)

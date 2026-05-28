@@ -749,6 +749,9 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         new_to_old = {}
         for action in problem.actions:
             new_action = self._transform_action_integers(problem, new_problem, action)
+            if not new_action:
+                # CP-SAT found no solutions: action is always infeasible, skip it.
+                continue
             new_problem.add_action(new_action)
             new_to_old[new_action] = action
         return new_to_old

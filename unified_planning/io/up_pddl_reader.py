@@ -1670,7 +1670,6 @@ class UPPDDLReader:
             # The object type is needed, but has not been defined explicitly. We manually define it
             types_map[Object] = self._env.type_manager.UserType("object", None)
 
-        print(f"\n\n  {types_map}\n")
         has_actions_cost = False
 
         for p in domain_res.get("predicates", []):

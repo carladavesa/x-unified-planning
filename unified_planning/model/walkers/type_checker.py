@@ -533,7 +533,14 @@ class TypeChecker(walkers.dag.DagWalker):
         set_type = args[1]
         if element_type is None:
             return None
-        if not is_compatible_type(element_type, set_type.elements_type):
+        set_elem_type = set_type.elements_type
+        # For integer-to-integer membership, range overlap is too strict:
+        # asking whether value 6 is in a set{integer[0,5]} is well-formed
+        # (it always evaluates to False, but the query itself is valid).
+        # Only require that both sides are integer types.
+        if element_type.is_int_type() and set_elem_type.is_int_type():
+            return BOOL
+        if not is_compatible_type(element_type, set_elem_type):
             return None
         return BOOL
 

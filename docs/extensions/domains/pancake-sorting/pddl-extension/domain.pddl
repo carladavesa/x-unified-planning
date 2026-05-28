@@ -3,8 +3,8 @@
     (:requirements :typing :arrays :bounded-integers)
 
     (:types
-        pancakes - (number 0 9)
-        stack    - (array 10 pancakes)
+        pancakes - (number 0 4)
+        stack    - (array 5 pancakes)
     )
 
     (:functions
