@@ -175,7 +175,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         if all(n is o for n, o in zip(new_args, node.args)):
             return node
         em = node.environment.expression_manager
-        return em.create_node(node.node_type, tuple(new_args)).simplify()
+        return em.create_node(node.node_type, tuple(new_args), payload=node._content.payload).simplify()
 
     def _get_number_object(self, problem: Problem, value: int) -> FNode:
         """Get or create object representing numeric value (e.g., n5 for 5)."""
@@ -575,7 +575,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 return None
             new_args.append(transformed)
 
-        return em.create_node(node.node_type, tuple(new_args)).simplify()
+        return em.create_node(node.node_type, tuple(new_args), payload=node._content.payload).simplify()
 
     # ==================== EFFECT TRANSFORMATION ====================
 

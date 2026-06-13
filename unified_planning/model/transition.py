@@ -29,8 +29,41 @@ from unified_planning.exceptions import (
 )
 from unified_planning.model.mixins.timed_conds_effs import TimedCondsEffs
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Set, Union, Optional, Iterable
+from typing import Any, Dict, List, Optional, Set, Union, Iterable
 from collections import OrderedDict
+
+
+def _find_nested_fluent(
+    node: "up.model.fnode.FNode",
+    inside_fluent: bool = False,
+    outer_is_bool: bool = False,
+) -> "Optional[up.model.fnode.FNode]":
+    """[XTS] Return the first nested non-boolean FluentExp found inside node, or None.
+
+    A 'nested fluent' is a FluentExp that appears as a (direct or indirect)
+    argument of a non-boolean FluentExp — i.e. true function composition that
+    the C++ backend cannot encode.  Fluents appearing inside *boolean*
+    predicates (e.g. connections(card_at[r][c], dir)) are allowed: the encoder
+    expands them via ITE chains.
+    """
+    if node.is_fluent_exp():
+        if inside_fluent and not outer_is_bool:
+            return node
+        try:
+            this_is_bool = node.type.is_bool_type()
+        except Exception:
+            this_is_bool = False
+        for arg in node.args:
+            result = _find_nested_fluent(arg, inside_fluent=True,
+                                         outer_is_bool=this_is_bool)
+            if result is not None:
+                return result
+        return None
+    for arg in node.args:
+        result = _find_nested_fluent(arg, inside_fluent, outer_is_bool)
+        if result is not None:
+            return result
+    return None
 
 
 class Transition(ABC):
@@ -200,6 +233,13 @@ class PreconditionMixin:
             raise UPUnboundedVariablesError(
                 f"The precondition {str(precondition_exp)} has unbounded variables:\n{str(free_vars)}"
             )
+        # [XTS check] Reject function composition (nested non-boolean fluents).
+        nested = _find_nested_fluent(precondition_exp)
+        if nested is not None:
+            raise UPProblemDefinitionError(
+                f"Function composition (nested fluent terms) is not supported. "
+                f"Precondition of '{self.name}' contains nested fluent: {nested}. "
+                "Rewrite using auxiliary parameters or boolean predicates.")
         if precondition_exp not in self._preconditions:
             self._preconditions.append(precondition_exp)
 
@@ -289,6 +329,56 @@ class UntimedEffectMixin:
             raise UPTypeError(
                 f"InstantaneousAction effect has an incompatible value type. Fluent type: {fluent_exp.type} // Value type: {value_exp.type}"
             )
+        # [XTS check #7] Type-narrowing assignment: source fluent's bounded-int
+        # range is not a subrange of the destination's range.
+        # Only checked for direct fluent-to-fluent assigns; arithmetic
+        # expressions naturally widen types (e.g. score+1 : int[1,6]) and are
+        # safe as long as preconditions guard the actual runtime value.
+        if value_exp.is_fluent_exp():
+            _dest_t = fluent_exp.type
+            _val_t  = value_exp.type
+            if (
+                _dest_t.is_int_type() and _val_t.is_int_type()
+                and _dest_t.lower_bound is not None and _dest_t.upper_bound is not None
+                and _val_t.lower_bound  is not None and _val_t.upper_bound  is not None
+                and (_val_t.lower_bound < _dest_t.lower_bound
+                     or _val_t.upper_bound > _dest_t.upper_bound)
+            ):
+                raise UPTypeError(
+                    f"Type-narrowing assignment: source type {_val_t} "
+                    f"[{_val_t.lower_bound}, {_val_t.upper_bound}] is not a subrange of "
+                    f"destination type {_dest_t} [{_dest_t.lower_bound}, {_dest_t.upper_bound}]"
+                )
+        # [XTS set-element range check] SET_ADD/SET_REMOVE element interval must fit
+        # within the declared element type bounds (e.g. adding ?i+1 to set{int[0,4]}
+        # with ?i : int[0,4] gives upper bound 5 > 4 → error).
+        if (value_exp.is_set_add() or value_exp.is_set_remove()) and fluent_exp.type.is_set_type():
+            _elem_type = fluent_exp.type.elements_type
+            if (_elem_type is not None
+                    and _elem_type.is_int_type()
+                    and _elem_type.lower_bound is not None
+                    and _elem_type.upper_bound is not None):
+                from unified_planning.model.walkers.index_interval import _index_interval
+                _iv = _index_interval(value_exp.arg(0))
+                if _iv is not None:
+                    if _iv[1] > _elem_type.upper_bound:
+                        raise UPTypeError(
+                            f"Set element expression upper bound {_iv[1]} exceeds "
+                            f"declared element type upper bound {_elem_type.upper_bound} "
+                            f"(element type range [{_elem_type.lower_bound}, {_elem_type.upper_bound}])")
+                    if _iv[0] < _elem_type.lower_bound:
+                        raise UPTypeError(
+                            f"Set element expression lower bound {_iv[0]} is below "
+                            f"declared element type lower bound {_elem_type.lower_bound} "
+                            f"(element type range [{_elem_type.lower_bound}, {_elem_type.upper_bound}])")
+        # [XTS check] Reject function composition in effect fluent and value.
+        for _expr, _role in ((fluent_exp, "fluent"), (value_exp, "value")):
+            _nested = _find_nested_fluent(_expr)
+            if _nested is not None:
+                raise UPProblemDefinitionError(
+                    f"Function composition (nested fluent terms) is not supported. "
+                    f"Effect {_role} of '{self.name}' contains nested fluent: {_nested}. "
+                    "Rewrite using auxiliary parameters or boolean predicates.")
         self._add_effect_instance(
             up.model.effect.Effect(fluent_exp, value_exp, condition_exp, forall=forall)
         )

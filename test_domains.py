@@ -207,11 +207,11 @@ def _fmt(r: TestResult, compile_only: bool) -> str:
     name = f"{r.name:<32}"
 
     if not r.compile_ok:
-        tag = _col("COMPILE_ERR", _RED)
+        tag = _col("COMPILE_ERR", _RED if name[0:2] != "X_" else _GREEN)
         return f"  [{tag}] {name}  compile={r.compile_ms:.0f}ms"
 
     if compile_only:
-        tag = _col("PASS", _GREEN)
+        tag = _col("PASS", _GREEN if name[0:2] != "X_" else _RED)
         return f"  [{tag}]       {name}  compile={r.compile_ms:.0f}ms"
 
     if r.timed_out:
@@ -219,12 +219,12 @@ def _fmt(r: TestResult, compile_only: bool) -> str:
         return f"  [{tag}]   {name}  (wall-clock timeout)"
 
     if r.solve_err:
-        tag = _col("SOLVE_ERR", _RED)
+        tag = _col("SOLVE_ERR", _RED if name[0:2] != "X_" else _GREEN)
         return (f"  [{tag}] {name}  "
                 f"compile={r.compile_ms:.0f}ms  solve={r.solve_ms:.0f}ms")
 
     if r.solve_ok:
-        tag = _col("SOLVED", _GREEN)
+        tag = _col("SOLVED", _GREEN if name[0:2] != "X_" else _RED)
         plan_info = f"  plan={r.plan_len}" if r.plan_len is not None else ""
         return (f"  [{tag}]  {name}  "
                 f"compile={r.compile_ms:.0f}ms  solve={r.solve_ms:.0f}ms"

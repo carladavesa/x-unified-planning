@@ -3,6 +3,11 @@ import time
 from unified_planning.shortcuts import *
 from unified_planning.engines import CompilationKind
 
+try:
+    import rantanplan  # registers RantanPlan / RantanPlan-optimal / RantanPlan-anytime engines
+except ImportError:
+    pass
+
 COMPILATION_PIPELINES = {
     'up': [
         CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
@@ -72,6 +77,9 @@ COMPILATION_PIPELINES = {
         CompilationKind.COUNT_REMOVING,
         CompilationKind.INTEGERS_REMOVING,
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    'ipar': [
+        CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,
     ],
     'None': []
 }

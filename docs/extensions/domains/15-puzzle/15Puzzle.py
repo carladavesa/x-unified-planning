@@ -75,6 +75,6 @@ costs: Dict[Action, Expression] = {
 npuzzle_problem.add_quality_metric(MinimizeActionCosts(costs))
 
 # --- Compile and Solve ---
-assert compilation in ['int', 'uti', 'log'], f"Unsupported compilation type: {compilation} for this domain!"
+assert compilation in ['int', 'uti', 'log', 'None'], f"Unsupported compilation type: {compilation} for this domain!"
 
 compilation_solving.compile_and_solve(npuzzle_problem, solving, compilation)

@@ -21,6 +21,7 @@ from unified_planning.model.effect import EffectKind
 import unified_planning.model.tamp
 from unified_planning.model import Fluent
 from unified_planning.model.abstract_problem import AbstractProblem
+from unified_planning.model.transition import _find_nested_fluent
 from unified_planning.model.mixins import (
     ActionsSetMixin,
     AxiomsSetMixin,
@@ -422,6 +423,7 @@ class Problem(  # type: ignore[misc]
         """
         return self._get_static_and_unused_fluents()[1]
 
+
     @property
     def timed_goals(
         self,
@@ -637,6 +639,13 @@ class Problem(  # type: ignore[misc]
                 self._env.type_checker.get_type(goal_exp).is_bool_type()
                 or self._env.type_checker.get_type(goal_exp).is_derived_bool_type()
         )
+        # [XTS check] Reject function composition (nested non-boolean fluents).
+        nested = _find_nested_fluent(goal_exp)
+        if nested is not None:
+            raise UPProblemDefinitionError(
+                f"Function composition (nested fluent terms) is not supported. "
+                f"Goal contains nested fluent: {nested}. "
+                "Rewrite using auxiliary parameters or boolean predicates.")
         if goal_exp != self._env.expression_manager.TRUE():
             self._goals.append(goal_exp)
 

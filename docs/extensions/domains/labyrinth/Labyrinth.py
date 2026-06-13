@@ -142,6 +142,6 @@ costs: Dict[Action, Expression] = {
 labyrinth.add_quality_metric(MinimizeActionCosts(costs))
 
 # --- Compile and Solve ---
-assert compilation in ['up'], f"Unsupported compilation type: {compilation} for this domain!"
+#assert compilation in ['up'], f"Unsupported compilation type: {compilation} for this domain!"
 
 compilation_solving.compile_and_solve(labyrinth, solving, compilation)

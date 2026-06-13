@@ -656,7 +656,7 @@ class ProtobufWriter(Converter):
             is_left_open=interval.is_left_open(),
             lower=self.convert(interval.lower()),
             is_right_open=interval.is_right_open(),
-            upper=self.convert(interval.lower()),
+            upper=self.convert(interval.upper()),
         )
 
     @handles(model.TimeInterval)
