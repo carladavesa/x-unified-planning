@@ -19,9 +19,9 @@ import unified_planning.engines as engines
 from bidict import bidict
 from ortools.sat.python import cp_model
 from unified_planning.engines.compilers.utils import (
-    add_cp_constraints, add_effect_bounds_constraints, compute_integer_range, solve_with_cp_sat, requires_arithmetic,
+    add_cp_constraints, add_effect_bounds_constraints, solve_with_cp_sat,
     substitute_modified_fluents, evaluate_goal_in_initial_state, get_fluent_exps_in_expression, evaluate_with_solution,
-    remove_write_only_fluents
+    remove_write_only_fluents, requires_csp, is_complex_goal
 )
 from typing import Any
 from unified_planning.model.expression import ListExpression
@@ -336,22 +336,25 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             # Independent effects:
             for effect in independent_effects:
                 if effect.is_increase() or effect.is_decrease():
-                    if requires_arithmetic(effect.condition):
+                    if requires_csp(effect.condition):
                         raise NotImplementedError(
                             f"increase/decrease effect with arithmetic condition not yet supported: "
                             f"{effect} in action {old_action.name}"
                         )
                     for new_eff in self._transform_increase_decrease_effect(effect, problem, new_problem):
                         new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
-                elif requires_arithmetic(effect.condition):
+                elif requires_csp(effect.condition):
                     new_fluent = self._transform_node(problem, new_problem, effect.fluent)
                     new_value = self._transform_node(problem, new_problem, effect.value)
-                    if not new_fluent or not new_value:
+                    if not new_fluent or not new_value or not effect.condition:
                         continue
-                    expansions = self._expand_condition_with_cp(
-                        problem, new_problem, effect.condition, solution
-                    )
-                    new_action.add_effect(new_fluent, new_value, expansions, effect.forall)
+                    if effect.condition:
+                        new_action.add_effect(new_fluent, new_value, True, effect.forall)
+                    else:
+                        expansions = self._expand_condition_with_cp(
+                            problem, new_problem, effect.condition, solution
+                        )
+                        new_action.add_effect(new_fluent, new_value, expansions, effect.forall)
                 else:
                     new_fluent = self._transform_node(problem, new_problem, effect.fluent)
                     new_value = self._transform_node(problem, new_problem, effect.value)
@@ -423,7 +426,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
                 next_val = (cur_val + delta) if old_effect.is_increase() else (cur_val - delta)
                 new_obj = self._get_number_object(new_problem, next_val)
-                if not new_condition.is_true() and requires_arithmetic(new_condition):
+                if not new_condition.is_true() and requires_csp(new_condition):
                     expansions = self._expand_condition_with_cp(problem, new_problem, new_condition, solution)
                     new_action.add_effect(new_fluent, new_obj, expansions, old_effect.forall)
                 else:
@@ -436,7 +439,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 new_value = self._transform_node(problem, new_problem, evaluated_val)
                 if not new_fluent or not new_value:
                     continue
-                if not new_condition.is_true() and requires_arithmetic(new_condition):
+                if not new_condition.is_true() and requires_csp(new_condition):
                     expansions = self._expand_condition_with_cp(problem, new_problem, new_condition, solution)
                     new_action.add_effect(new_fluent, new_value, expansions, old_effect.forall)
                 else:
@@ -448,7 +451,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 new_value = self._transform_node(problem, new_problem, old_effect.value)
                 if not new_fluent or not new_value:
                     continue
-                if not new_condition.is_true() and requires_arithmetic(new_condition):
+                if not new_condition.is_true() and requires_csp(new_condition):
                     expansions = self._expand_condition_with_cp(problem, new_problem, new_condition, solution)
                     new_action.add_effect(new_fluent, new_value, expansions, old_effect.forall)
                 else:
@@ -456,11 +459,11 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
     def _transform_action_integers(self, problem, new_problem, old_action):
         params = OrderedDict(((p.name, p.type) for p in old_action.parameters))
-        has_arithmetic_preconditions = any(requires_arithmetic(p) for p in old_action.preconditions)
+        has_arithmetic_preconditions = any(requires_csp(p) for p in old_action.preconditions)
         has_arithmetic_effects = any(
             effect.value.node_type in self.ARITHMETIC_OPS
             or effect.is_increase() or effect.is_decrease()
-            or requires_arithmetic(effect.condition)
+            or requires_csp(effect.condition)
             for effect in old_action.effects
         )
 
@@ -497,7 +500,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                     dependent_effects.append(effect)
                 else:
                     independent_effects.append(effect)
-            elif requires_arithmetic(effect.value):
+            elif requires_csp(effect.value):
                 value_vars = get_fluent_exps_in_expression(effect.value)
                 if any(str(v) in prec_vars for v in value_vars):
                     dependent_effects.append(effect)
@@ -526,7 +529,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         cp_precs = []
         direct_precs = []
         for prec in old_action.preconditions:
-            if requires_arithmetic(prec):
+            if requires_csp(prec):
                 cp_precs.append(prec)
             else:
                 new_prec = self._transform_node(problem, new_problem, prec)
@@ -633,25 +636,34 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         Transform goals: separate arithmetic and non-arithmetic.
         Create an auxiliary axiom por each goal.
         """
-        non_arithmetic_goals = []
-        arithmetic_goals = []
+        csp_goals = []
+        axiom_only_goals = []
+        direct_goals = []
+        goals = problem.goals
+        if len(goals) == 1 and goals[0].is_and():
+            goals = problem.goals[0].args
 
-        for goal in problem.goals:
-            if requires_arithmetic(goal):
-                arithmetic_goals.append(goal)
+        for goal in goals:
+            if requires_csp(goal):
+                csp_goals.append(goal)
+            elif is_complex_goal(goal):
+                axiom_only_goals.append(goal)
             else:
-                non_arithmetic_goals.append(goal)
+                direct_goals.append(goal)
 
-        # Non-arithmetic goals - direct transformation
-        for i, goal in enumerate(non_arithmetic_goals):
-            if goal.is_fluent_exp():
-                new_problem.add_goal(goal)
-            else:
-                self._add_goal_as_axiom(problem, new_problem, goal, i, False)
+        # 1. Direct goals: translate and add directly
+        for goal in direct_goals:
+            translated_goal = self._transform_node(problem, new_problem, goal)
+            new_problem.add_goal(translated_goal)
 
-        # Create a predicate for each arithmetic goal
-        for i, goal in enumerate(arithmetic_goals):
-            j = len(non_arithmetic_goals) + i
+        # 2. Axiom-only goals: wrap in axiom for structural simplification (no CP-SAT needed)
+        for i, goal in enumerate(axiom_only_goals):
+            j = len(direct_goals) + i
+            self._add_goal_as_axiom(problem, new_problem, goal, j, False)
+
+        # 3. CSP goals: each becomes an axiom whose body is solved by CP-SAT
+        for i, goal in enumerate(csp_goals):
+            j = len(direct_goals) + len(axiom_only_goals) + i
             self._add_goal_as_axiom(problem, new_problem, goal, j, True)
 
     def _get_object_from_index(self, user_type, index):

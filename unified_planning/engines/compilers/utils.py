@@ -577,12 +577,79 @@ class CPSolutionCollector(cp_model.CpSolverSolutionCallback):
     def solutions(self) -> list[dict[str, int]]:
         return self.__solutions
 
-def requires_arithmetic(node: FNode) -> bool:
-    ARITHMETIC_OPS = {OperatorKind.PLUS, OperatorKind.MINUS, OperatorKind.TIMES, OperatorKind.DIV}
-    if (node.node_type in ARITHMETIC_OPS or node.is_lt() or node.is_le() or
-        (node.is_equals() and (node.arg(0).is_int_constant() or node.arg(1).is_int_constant()))):
+
+def requires_csp(node: FNode) -> bool:
+    """
+    Determines if a goal/precondition needs CP-SAT (axiom).
+
+    Returns False for:
+    - direct Boolean fluent
+    - (= fluent constant)
+    - (= fluent1 fluent2)
+    - Boolean combinations (and/or/not)
+
+    Returns True for:
+    - Arithmetic operations (+, -, *, /)
+    - Comparisons <, <=, >, >=
+    - Any other that contains the previous ones
+    """
+    if node.is_fluent_exp():
+        return False
+
+    if node.is_equals():
+        left, right = node.arg(0), node.arg(1)
+        # (= fluent constant)
+        if (left.is_fluent_exp() and right.is_int_constant()) or \
+                (right.is_fluent_exp() and left.is_int_constant()):
+            return False
+        # (= fluent1 fluent2)
+        if left.is_fluent_exp() and right.is_fluent_exp():
+            return False
+        # Any other form with expressions
         return True
-    return any(requires_arithmetic(arg) for arg in node.args)
+
+    # Boolean combinations: recursive
+    if node.is_and() or node.is_or() or node.is_not():
+        return any(requires_csp(arg) for arg in node.args)
+
+    # The rest (arithmetic, <, <=, >, >=)
+    return True
+
+def count_subexpressions(node):
+    """Counts the total number of subexpressions of a node."""
+    count = 1
+    for arg in node.args:
+        count += count_subexpressions(arg)
+    return count
+
+
+def is_complex_goal(node):
+    """
+    True if the goal benefits from being wrapped in an axiom, either because:
+    - It would generate Exists quantifiers when translated (e.g., fluent-fluent equality).
+    - It is structurally complex (large or/and combinations).
+    """
+    # Fluent-fluent equality
+    if node.is_equals():
+        left, right = node.arg(0), node.arg(1)
+        if left.is_fluent_exp() and right.is_fluent_exp():
+            return True
+
+    # Structural complexity
+    if node.is_or() and len(node.args) >= 2:
+        return True
+    if node.is_and() and len(node.args) >= 2:
+        return True
+    return any(is_complex_goal(arg) for arg in node.args)
+
+def needs_axiom(node):
+    """
+    Decides if a goal needs an axiom. If:
+    1. Has arithmetic/comparisons that require CP-SAT
+    2. Its structure is complex (multiple boolean operators)
+    """
+    return requires_csp(node) or is_complex_goal(node)
+
 def compute_integer_range(problem: Problem) -> tuple[int, int]:
     """
     Scan the entire problem to find the full range of integer values needed.
@@ -873,7 +940,7 @@ def add_effect_bounds_constraints(
             written_fluents = {str(effect.fluent) for effect in effects}
 
             if effect.condition is not None and not effect.condition.is_true():
-                if requires_arithmetic(effect.condition):
+                if requires_csp(effect.condition):
                     # Only adding variables that aren't written by the action
                     for fnode in get_fluent_exps_in_expression(effect.condition):
                         if str(fnode) not in written_fluents:
