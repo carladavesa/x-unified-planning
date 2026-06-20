@@ -1,7 +1,7 @@
-# CARLA: Compiling Abstractions for Richer Languages in Automated planning
+# XUP: eXpressive Unified Planning
 
 > **Note:** This repository is a fork of the [Unified Planning (UP)](https://github.com/aiplan4eu/unified-planning) framework.
-> CARLA extends the UP framework with high-level modelling constructs - arrays, sets, bounded integer parameters in actions, integer range variables, and Boolean counting expressions - along with a pipeline of composable compilers for automated compilation to PDDL.
+> XUP extends the UP framework with high-level modelling constructs - arrays, sets, bounded integer parameters in actions, integer range variables, and Boolean counting expressions - along with a pipeline of composable compilers for automated compilation to PDDL.
 > For the original Unified Planning framework documentation, please see [README_UP_ORIGINAL.md](README_UP_ORIGINAL.md).
 
 ## Publication
