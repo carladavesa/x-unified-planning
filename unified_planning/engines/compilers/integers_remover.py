@@ -343,12 +343,12 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                         )
                     for new_eff in self._transform_increase_decrease_effect(effect, problem, new_problem):
                         new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
-                elif requires_csp(effect.condition):
+                elif effect.condition != TRUE() and requires_csp(effect.condition):
                     new_fluent = self._transform_node(problem, new_problem, effect.fluent)
                     new_value = self._transform_node(problem, new_problem, effect.value)
                     if not new_fluent or not new_value or not effect.condition:
                         continue
-                    if effect.condition:
+                    if effect.condition is True:
                         new_action.add_effect(new_fluent, new_value, True, effect.forall)
                     else:
                         expansions = self._expand_condition_with_cp(

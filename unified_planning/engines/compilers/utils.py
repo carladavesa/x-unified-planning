@@ -605,8 +605,42 @@ def requires_csp(node: FNode) -> bool:
         # (= fluent1 fluent2)
         if left.is_fluent_exp() and right.is_fluent_exp():
             return False
+        # (= fluent param)
+        if left.is_fluent_exp() and right.is_parameter_exp():
+            return False
+        # (= param fluent)
+        if left.is_parameter_exp() and right.is_fluent_exp():
+            return False
+        # (= param constant)
+        if (left.is_parameter_exp() and right.is_constant()) or \
+                (right.is_parameter_exp() and left.is_constant()):
+            return False
         # Any other form with expressions
         return True
+
+    if node.is_not():
+        inner = node.arg(0)
+        if inner.is_equals():
+            left, right = inner.arg(0), inner.arg(1)
+            # (= fluent constant)
+            if (left.is_fluent_exp() and right.is_int_constant()) or \
+                    (right.is_fluent_exp() and left.is_int_constant()):
+                return False
+            # (= fluent1 fluent2)
+            if left.is_fluent_exp() and right.is_fluent_exp():
+                return False
+            # (= fluent param)
+            if left.is_fluent_exp() and right.is_parameter_exp():
+                return False
+            # (= param fluent)
+            if left.is_parameter_exp() and right.is_fluent_exp():
+                return False
+            # (= param constant)
+            if (left.is_parameter_exp() and right.is_constant()) or \
+                    (right.is_parameter_exp() and left.is_constant()):
+                return False
+            # Any other form with expressions
+            return True
 
     # Boolean combinations: recursive
     if node.is_and() or node.is_or() or node.is_not():
@@ -771,11 +805,11 @@ def add_cp_constraints(
     if node.is_constant():
         return node.constant_value()
 
-    # -- Fluents --
-    if node.is_fluent_exp():
+    # -- Fluents or Parameters --
+    if node.is_fluent_exp() or node.is_parameter_exp():
         if node in variables:
             return variables[node]
-        fluent = node.fluent()
+        fluent = node.fluent() if node.is_fluent_exp() else node.parameter()
         if fluent.type.is_int_type():
             var = model.NewIntVar(fluent.type.lower_bound, fluent.type.upper_bound, str(node))
         elif fluent.type.is_user_type():
