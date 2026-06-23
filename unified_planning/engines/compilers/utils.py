@@ -13,10 +13,11 @@
 # limitations under the License.
 #
 """This module defines different utility functions for the compilers."""
-
+import bidict
+from ortools.sat.python import cp_model
 from fractions import Fraction
 import unified_planning as up
-from unified_planning.exceptions import UPConflictingEffectsException, UPUsageError
+from unified_planning.exceptions import UPConflictingEffectsException, UPUsageError, UPProblemDefinitionError
 from unified_planning.environment import Environment
 from unified_planning.model import (
     FNode,
@@ -39,7 +40,7 @@ from unified_planning.model import (
     MaximizeExpressionOnFinalState,
     Oversubscription,
     TemporalOversubscription,
-    AbstractProblem,
+    AbstractProblem, OperatorKind,
 )
 from unified_planning.plans import ActionInstance
 from typing import (
@@ -54,7 +55,6 @@ from typing import (
     Union,
     cast,
 )
-
 
 def check_and_simplify_conditions(
     problem: AbstractProblem, action: DurativeAction, simplifier
@@ -298,12 +298,21 @@ def replace_action(
             "The Action of the given ActionInstance does not have a valid replacement."
         )
     if replaced_action is not None:
-        return ActionInstance(
-            replaced_action,
-            action_instance.actual_parameters,
-            action_instance.agent,
-            action_instance.motion_paths,
-        )
+        if type(replaced_action) is tuple:
+            non_number_param = [a for a in action_instance.actual_parameters if str(a.type) != 'Number']
+            return ActionInstance(
+                replaced_action[0],
+                non_number_param,
+                action_instance.agent,
+                action_instance.motion_paths,
+            )
+        else:
+            return ActionInstance(
+                replaced_action,
+                action_instance.actual_parameters,
+                action_instance.agent,
+                action_instance.motion_paths,
+            )
     else:
         return None
 
@@ -543,3 +552,745 @@ def split_all_ands(exp_list: List[FNode]) -> List[FNode]:
                 end_list.append(exp)
         start_list = temp_list
     return end_list
+
+
+# --- INTEGERS UTILS ---
+
+class CPSolutionCollector(cp_model.CpSolverSolutionCallback):
+    """Collects all unique solutions from CP-SAT solver."""
+
+    def __init__(self, variables: list[cp_model.IntVar]):
+        cp_model.CpSolverSolutionCallback.__init__(self)
+        self.__variables = variables
+        self.__solutions = []
+        self.__seen = set()  # To detect duplicates
+
+    def on_solution_callback(self):
+        solution = {str(v): self.Value(v) for v in self.__variables}
+        sol_tuple = tuple(sorted(solution.items()))
+
+        if sol_tuple not in self.__seen:
+            self.__seen.add(sol_tuple)
+            self.__solutions.append(solution)
+
+    @property
+    def solutions(self) -> list[dict[str, int]]:
+        return self.__solutions
+
+
+def requires_csp(node: FNode) -> bool:
+    """
+    Determines if a goal/precondition needs CP-SAT (axiom).
+
+    Returns False for:
+    - direct Boolean fluent
+    - (= fluent constant)
+    - (= fluent1 fluent2)
+    - Boolean combinations (and/or/not)
+
+    Returns True for:
+    - Arithmetic operations (+, -, *, /)
+    - Comparisons <, <=, >, >=
+    - Any other that contains the previous ones
+    """
+    if node.is_fluent_exp():
+        return False
+
+    if node.is_equals():
+        left, right = node.arg(0), node.arg(1)
+        # (= fluent constant)
+        if (left.is_fluent_exp() and right.is_int_constant()) or \
+                (right.is_fluent_exp() and left.is_int_constant()):
+            return False
+        # (= fluent1 fluent2)
+        if left.is_fluent_exp() and right.is_fluent_exp():
+            return False
+        # (= fluent param)
+        if left.is_fluent_exp() and right.is_parameter_exp():
+            return False
+        # (= param fluent)
+        if left.is_parameter_exp() and right.is_fluent_exp():
+            return False
+        # (= param constant)
+        if (left.is_parameter_exp() and right.is_constant()) or \
+                (right.is_parameter_exp() and left.is_constant()):
+            return False
+        # Any other form with expressions
+        return True
+
+    if node.is_not():
+        inner = node.arg(0)
+        if inner.is_equals():
+            left, right = inner.arg(0), inner.arg(1)
+            # (= fluent constant)
+            if (left.is_fluent_exp() and right.is_int_constant()) or \
+                    (right.is_fluent_exp() and left.is_int_constant()):
+                return False
+            # (= fluent1 fluent2)
+            if left.is_fluent_exp() and right.is_fluent_exp():
+                return False
+            # (= fluent param)
+            if left.is_fluent_exp() and right.is_parameter_exp():
+                return False
+            # (= param fluent)
+            if left.is_parameter_exp() and right.is_fluent_exp():
+                return False
+            # (= param constant)
+            if (left.is_parameter_exp() and right.is_constant()) or \
+                    (right.is_parameter_exp() and left.is_constant()):
+                return False
+            # Any other form with expressions
+            return True
+
+    # Boolean combinations: recursive
+    if node.is_and() or node.is_or() or node.is_not():
+        return any(requires_csp(arg) for arg in node.args)
+
+    # The rest (arithmetic, <, <=, >, >=)
+    return True
+
+def count_subexpressions(node):
+    """Counts the total number of subexpressions of a node."""
+    count = 1
+    for arg in node.args:
+        count += count_subexpressions(arg)
+    return count
+
+
+def is_complex_goal(node):
+    """
+    True if the goal benefits from being wrapped in an axiom, either because:
+    - It would generate Exists quantifiers when translated (e.g., fluent-fluent equality).
+    - It is structurally complex (large or/and combinations).
+    """
+    # Fluent-fluent equality
+    if node.is_equals():
+        left, right = node.arg(0), node.arg(1)
+        if left.is_fluent_exp() and right.is_fluent_exp():
+            return True
+
+    # Structural complexity
+    if node.is_or() and len(node.args) >= 2:
+        return True
+    if node.is_and() and len(node.args) >= 2:
+        return True
+    return any(is_complex_goal(arg) for arg in node.args)
+
+def needs_axiom(node):
+    """
+    Decides if a goal needs an axiom. If:
+    1. Has arithmetic/comparisons that require CP-SAT
+    2. Its structure is complex (multiple boolean operators)
+    """
+    return requires_csp(node) or is_complex_goal(node)
+
+def compute_integer_range(problem: Problem) -> tuple[int, int]:
+    """
+    Scan the entire problem to find the full range of integer values needed.
+
+    The range is determined by:
+    - Bounds of all integer fluents (lb, ub)
+    - Integer constants appearing in expressions (e.g. the 6 in a+b <= 6),
+      because these constants become Number objects in lt(val, n6).
+
+    We do NOT consider the possible values of arithmetic sub-expressions
+    (sums, differences, etc.) because those are always assigned to fluents
+    whose domain already bounds the result.
+
+    Returns (global_lb, global_ub).
+    """
+    global_lb = 0
+    global_ub = 0
+
+    # 1. Bounds from integer fluents
+    for fluent in problem.fluents:
+        if fluent.type.is_int_type():
+            lb = fluent.type.lower_bound
+            ub = fluent.type.upper_bound
+            if lb is not None:
+                global_lb = min(global_lb, lb)
+            if ub is not None:
+                global_ub = max(global_ub, ub)
+
+    # 2. Integer constants in expressions (e.g. comparisons like count <= 1)
+    all_expressions = []
+    for action in problem.actions:
+        all_expressions.extend(action.preconditions)
+        for effect in action.effects:
+            all_expressions.append(effect.value)
+            all_expressions.append(effect.condition)
+    all_expressions.extend(problem.goals)
+
+    def scan(node: FNode):
+        if node is None:
+            return
+        if node.is_int_constant():
+            v = node.constant_value()
+            nonlocal global_lb, global_ub
+            global_lb = min(global_lb, v)
+            global_ub = max(global_ub, v)
+        for arg in node.args:
+            scan(arg)
+
+    for expr in all_expressions:
+        if expr is not None:
+            scan(expr)
+    return global_lb, global_ub
+
+def compute_cp_signature(action, problem, cp_precs, dependent_effects):
+    """Compute a string signature of the CP-SAT call for caching purposes."""
+    parts = []
+    # Arithmetic preconditions (sorted for stability)
+    for prec in sorted(cp_precs, key=lambda p: str(p)):
+        parts.append(f"P:{str(prec)}")
+    # Dependent effects: full structural representation
+    for effect in dependent_effects:
+        parts.append(
+            f"E:{str(effect.fluent)}|{str(effect.value)}|"
+            f"inc={effect.is_increase()}|dec={effect.is_decrease()}|"
+            f"cond={str(effect.condition)}"
+        )
+    # Bounds of all integer fluents involved
+    fluent_names = set()
+    for prec in cp_precs:
+        for f in get_fluent_exps_in_expression(prec):
+            if f.is_fluent_exp() and f.fluent().type.is_int_type():
+                fluent_names.add(f.fluent().name)
+    for effect in dependent_effects:
+        for f in get_fluent_exps_in_expression(effect.fluent):
+            if f.is_fluent_exp() and f.fluent().type.is_int_type():
+                fluent_names.add(f.fluent().name)
+        for f in get_fluent_exps_in_expression(effect.value):
+            if f.is_fluent_exp() and f.fluent().type.is_int_type():
+                fluent_names.add(f.fluent().name)
+    for fname in sorted(fluent_names):
+        fluent = problem.fluent(fname)
+        parts.append(f"B:{fname}:{fluent.type.lower_bound}:{fluent.type.upper_bound}")
+    return "||".join(parts)
+
+def make_cp_signature(cp_precs, dependent_effects, fluent_bounds):
+    sig_parts = []
+    for prec in sorted(str(p) for p in cp_precs):
+        sig_parts.append(f"PREC:{prec}")
+    for eff in dependent_effects:
+        sig_parts.append(f"EFF:{eff.fluent}:{eff.value}:{eff.kind}")
+    for fname, (lb, ub) in sorted(fluent_bounds.items()):
+        sig_parts.append(f"BND:{fname}:{lb}:{ub}")
+    return "||".join(sig_parts)
+
+def solve_with_cp_sat(variables, cp_model_obj):
+    """
+    Use CP-SAT solver to enumerate all valid value assignments.
+
+    Returns a list of solutions, where each solution is a dictionary
+    mapping variable names to their assigned values.
+    """
+    solver = cp_model.CpSolver()
+    collector = CPSolutionCollector(list(variables.values()))
+    solver.parameters.enumerate_all_solutions = True
+    status = solver.Solve(cp_model_obj, collector)
+    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+        return None
+    solutions = collector.solutions
+    return solutions
+
+def add_cp_constraints(
+    problem: Problem,
+    node: FNode,
+    variables: bidict,
+    model: cp_model.CpModel,
+    object_to_index: dict,
+) -> any:
+    # -- Constants --
+    if node.is_constant():
+        return node.constant_value()
+
+    # -- Fluents or Parameters --
+    if node.is_fluent_exp() or node.is_parameter_exp():
+        if node in variables:
+            return variables[node]
+        fluent = node.fluent() if node.is_fluent_exp() else node.parameter()
+        if fluent.type.is_int_type():
+            var = model.NewIntVar(fluent.type.lower_bound, fluent.type.upper_bound, str(node))
+        elif fluent.type.is_user_type():
+            objects = list(problem.objects(fluent.type))
+            if not objects:
+                raise UPProblemDefinitionError(
+                    f"User type {fluent.type} has no objects, cannot create variable for fluent {fluent}"
+                )
+            var = model.NewIntVar(0, len(objects) - 1, str(node))
+            for idx, obj in enumerate(objects):
+                object_to_index[(fluent.type, obj)] = idx
+        else:
+            var = model.NewBoolVar(str(node))
+        variables[node] = var
+        return var
+
+    # -- Parameters --
+    if node.is_parameter_exp():
+        if node in variables:
+            return variables[node]
+        param = node.parameter()
+        assert param.type.is_user_type(), f"Parameter type {param.type} not supported"
+        objects = list(problem.objects(param.type))
+        if not objects:
+            raise UPProblemDefinitionError(
+                f"User type {param.type} has no objects, cannot create variable for parameter {param}"
+            )
+        var = model.NewIntVar(0, len(objects) - 1, str(node))
+        variables[node] = var
+        return var
+
+    # -- Equality --
+    if node.is_equals():
+        left_node, right_node = node.arg(0), node.arg(1)
+        if left_node.type.is_user_type():
+            left_var = add_cp_constraints(problem, left_node, variables, model, object_to_index)
+            if right_node.is_object_exp():
+                obj = right_node.object()
+                idx = object_to_index.get((left_node.type, obj))
+                if idx is not None:
+                    eq_var = model.NewBoolVar(f"eq_{id(node)}")
+                    model.Add(left_var == idx).OnlyEnforceIf(eq_var)
+                    model.Add(left_var != idx).OnlyEnforceIf(eq_var.Not())
+                    return eq_var
+            else:
+                right_var = add_cp_constraints(problem, right_node, variables, model, object_to_index)
+                eq_var = model.NewBoolVar(f"eq_{id(node)}")
+                model.Add(left_var == right_var).OnlyEnforceIf(eq_var)
+                model.Add(left_var != right_var).OnlyEnforceIf(eq_var.Not())
+                return eq_var
+        else:
+            left  = add_cp_constraints(problem, node.arg(0), variables, model, object_to_index)
+            right = add_cp_constraints(problem, node.arg(1), variables, model, object_to_index)
+            eq_var = model.NewBoolVar(f"eq_{id(node)}")
+            model.Add(left == right).OnlyEnforceIf(eq_var)
+            model.Add(left != right).OnlyEnforceIf(eq_var.Not())
+            return eq_var
+
+    # -- AND --
+    if node.is_and():
+        children = [add_cp_constraints(problem, a, variables, model, object_to_index) for a in node.args]
+        and_var = model.NewBoolVar(f"and_{id(node)}")
+        model.AddBoolAnd(*children).OnlyEnforceIf(and_var)
+        for child in children:
+            model.AddImplication(and_var, child)
+        return and_var
+
+    # -- OR --
+    if node.is_or():
+        children = [add_cp_constraints(problem, a, variables, model, object_to_index) for a in node.args]
+        or_var = model.NewBoolVar(f"or_{id(node)}")
+        model.AddBoolOr(*children).OnlyEnforceIf(or_var)
+        for child in children:
+            model.AddImplication(child, or_var)
+        return or_var
+
+    # -- IMPLIES --
+    if node.is_implies():
+        left  = add_cp_constraints(problem, node.arg(0), variables, model, object_to_index)
+        right = add_cp_constraints(problem, node.arg(1), variables, model, object_to_index)
+        impl_var = model.NewBoolVar(f"impl_{id(node)}")
+        model.AddBoolOr(left.Not(), right).OnlyEnforceIf(impl_var)
+        model.Add(left  == 1).OnlyEnforceIf(impl_var.Not())
+        model.Add(right == 0).OnlyEnforceIf(impl_var.Not())
+        return impl_var
+
+    # -- NOT --
+    if node.is_not():
+        inner = add_cp_constraints(problem, node.arg(0), variables, model, object_to_index)
+        not_var = model.NewBoolVar(f"not_{id(node)}")
+        model.Add(not_var == (1 - inner))
+        return not_var
+
+    # -- LT --
+    if node.is_lt():
+        left  = add_cp_constraints(problem, node.arg(0), variables, model, object_to_index)
+        right = add_cp_constraints(problem, node.arg(1), variables, model, object_to_index)
+        lt_var = model.NewBoolVar(f"lt_{id(node)}")
+        model.Add(left <  right).OnlyEnforceIf(lt_var)
+        model.Add(left >= right).OnlyEnforceIf(lt_var.Not())
+        return lt_var
+
+    # -- LE --
+    if node.is_le():
+        left  = add_cp_constraints(problem, node.arg(0), variables, model, object_to_index)
+        right = add_cp_constraints(problem, node.arg(1), variables, model, object_to_index)
+        le_var = model.NewBoolVar(f"le_{id(node)}")
+        model.Add(left <=  right).OnlyEnforceIf(le_var)
+        model.Add(left  > right).OnlyEnforceIf(le_var.Not())
+        return le_var
+
+    # -- PLUS --
+    if node.is_plus():
+        return sum(
+            add_cp_constraints(problem, a, variables, model, object_to_index)
+            for a in node.args
+        )
+
+    # -- MINUS --
+    if node.is_minus():
+        args = [add_cp_constraints(problem, a, variables, model, object_to_index) for a in node.args]
+        return args[0] if len(args) == 1 else args[0] - sum(args[1:])
+
+    # -- TIMES --
+    if node.is_times():
+        args = [add_cp_constraints(problem, a, variables, model, object_to_index) for a in node.args]
+        result = args[0]
+        for arg in args[1:]:
+            if isinstance(result, int) and isinstance(arg, int):
+                result = result * arg
+            elif isinstance(result, int):
+                result = arg * result
+            elif isinstance(arg, int):
+                result = result * arg
+            else:
+                lb = min(result.Proto().domain[0] * arg.Proto().domain[0],
+                         result.Proto().domain[0] * arg.Proto().domain[-1],
+                         result.Proto().domain[-1] * arg.Proto().domain[0],
+                         result.Proto().domain[-1] * arg.Proto().domain[-1])
+                ub = max(result.Proto().domain[0] * arg.Proto().domain[0],
+                         result.Proto().domain[0] * arg.Proto().domain[-1],
+                         result.Proto().domain[-1] * arg.Proto().domain[0],
+                         result.Proto().domain[-1] * arg.Proto().domain[-1])
+                temp = model.NewIntVar(lb, ub, f"mult_{id(node)}")
+                model.AddMultiplicationEquality(temp, result, arg)
+                result = temp
+        return result
+
+    raise NotImplementedError(f"Node type {node.node_type} not implemented in CP-SAT translation")
+
+def add_effect_bounds_constraints(
+        problem: Problem,
+        variables: bidict,
+        model: cp_model.CpModel,
+        effects: List[Effect],
+        object_to_index: dict,
+        register_condition_vars: bool = False,
+):
+    for effect in effects:
+        if register_condition_vars:
+            # Fluents written by the action - don't want them as free variables
+            written_fluents = {str(effect.fluent) for effect in effects}
+
+            if effect.condition is not None and not effect.condition.is_true():
+                if requires_csp(effect.condition):
+                    # Only adding variables that aren't written by the action
+                    for fnode in get_fluent_exps_in_expression(effect.condition):
+                        if str(fnode) not in written_fluents:
+                            add_cp_constraints(problem, fnode, variables, model, object_to_index)
+
+        fluent = effect.fluent.fluent()
+        if not fluent.type.is_int_type():
+            continue
+
+        lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
+        # Registers the fluent variable
+        fluent_var = add_cp_constraints(problem, effect.fluent, variables, model, object_to_index)
+
+        if effect.is_increase() or effect.is_decrease():
+            try:
+                delta = effect.value.constant_value()
+                result_expr = fluent_var + delta if effect.is_increase() else fluent_var - delta
+            except:
+                delta_expr = add_cp_constraints(problem, effect.value, variables, model, object_to_index)
+                result_expr = fluent_var + delta_expr if effect.is_increase() else fluent_var - delta_expr
+
+            if effect.condition is not None and not effect.condition.is_true():
+                cond_var = add_cp_constraints(problem, effect.condition, variables, model, object_to_index)
+                model.Add(result_expr >= lb).OnlyEnforceIf(cond_var)
+                model.Add(result_expr <= ub).OnlyEnforceIf(cond_var)
+            else:
+                model.Add(result_expr >= lb)
+                model.Add(result_expr <= ub)
+
+        else:
+            if effect.value.node_type not in {OperatorKind.PLUS, OperatorKind.MINUS, OperatorKind.DIV, OperatorKind.TIMES}:
+                continue
+            expr = add_cp_constraints(problem, effect.value, variables, model, object_to_index)
+            if effect.condition is not None and not effect.condition.is_true():
+                if effect.condition.is_false():
+                    continue
+                cond_var = add_cp_constraints(problem, effect.condition, variables, model, object_to_index)
+                model.Add(expr >= lb).OnlyEnforceIf(cond_var)
+                model.Add(expr <= ub).OnlyEnforceIf(cond_var)
+            else:
+                model.Add(expr >= lb)
+                model.Add(expr <= ub)
+
+def register_fluent_variables(
+    problem: Problem, node: FNode, variables: bidict, model: cp_model.CpModel, object_to_index: dict,
+) -> None:
+    """Register fluent variables from an expression without adding any constraints."""
+    if node.is_fluent_exp():
+        if node not in variables:
+            fluent = node.fluent()
+            if fluent.type.is_int_type():
+                var = model.NewIntVar(
+                    fluent.type.lower_bound, fluent.type.upper_bound, str(node)
+                )
+                variables[node] = var
+        return
+    for arg in node.args:
+        register_fluent_variables(problem, arg, variables, model, object_to_index)
+
+def evaluate_with_solution(
+        problem,
+        expr: FNode,
+        solution: dict,
+) -> Optional[FNode]:
+    """Evaluate expression with a specific variable assignment.
+    Returns TRUE/FALSE if fully evaluated, partially evaluated expression otherwise."""
+    em = problem.environment.expression_manager
+
+    if expr.is_constant():
+        return expr
+
+    if expr.is_fluent_exp():
+        var_name = str(expr)
+        if var_name in solution:
+            return em.Int(solution[var_name])
+        return expr  # retorna l'expressió original si no és a la solució
+
+    if expr.is_plus():
+        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
+        if all(a.is_int_constant() for a in args):
+            return em.Int(sum(a.constant_value() for a in args))
+        return em.Plus(args)
+
+    if expr.is_minus():
+        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
+        if all(a.is_int_constant() for a in args):
+            result = args[0].constant_value() - sum(a.constant_value() for a in args[1:]) if len(args) > 1 else -args[0].constant_value()
+            return em.Int(result)
+        return em.Minus(args[0], args[1]) if len(args) == 2 else em.Minus(args[0], em.Plus(args[1:]))
+
+    if expr.is_times():
+        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
+        if all(a.is_int_constant() for a in args):
+            result = 1
+            for a in args:
+                result *= a.constant_value()
+            return em.Int(result)
+        return em.Times(args)
+
+    if expr.is_div():
+        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
+        if all(a.is_int_constant() for a in args) and args[1].constant_value() != 0:
+            return em.Int(args[0].constant_value() // args[1].constant_value())
+        return em.Div(args[0], args[1])
+
+    if expr.is_le():
+        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
+        if all(a.is_int_constant() for a in args):
+            return em.TRUE() if args[0].constant_value() <= args[1].constant_value() else em.FALSE()
+        return em.LE(args[0], args[1])
+
+    if expr.is_lt():
+        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
+        if all(a.is_int_constant() for a in args):
+            return em.TRUE() if args[0].constant_value() < args[1].constant_value() else em.FALSE()
+        return em.LT(args[0], args[1])
+
+    if expr.is_equals():
+        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
+        if all(a.is_int_constant() for a in args):
+            return em.TRUE() if args[0].constant_value() == args[1].constant_value() else em.FALSE()
+        return em.Equals(args[0], args[1])
+
+    if expr.is_not():
+        v = evaluate_with_solution(problem, expr.arg(0), solution)
+        if v == em.TRUE(): return em.FALSE()
+        if v == em.FALSE(): return em.TRUE()
+        return em.Not(v)
+
+    if expr.is_and():
+        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
+        if any(a == em.FALSE() for a in args):
+            return em.FALSE()
+        remaining = [a for a in args if a != em.TRUE()]
+        if not remaining:
+            return em.TRUE()
+        return em.And(remaining) if len(remaining) > 1 else remaining[0]
+
+    if expr.is_or():
+        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
+        if any(a == em.TRUE() for a in args):
+            return em.TRUE()
+        remaining = [a for a in args if a != em.FALSE()]
+        if not remaining:
+            return em.FALSE()
+        return em.Or(remaining) if len(remaining) > 1 else remaining[0]
+
+    return expr
+
+def substitute_modified_fluents(action: Action, expr: FNode) -> FNode:
+    """
+    Substitute fluents modified by the action with their 'after' expression.
+
+    For increase(f, d): f → f + d
+    For decrease(f, d): f → f - d
+    For assign(f, v):   f → v
+    """
+    em = expr.environment.expression_manager
+
+    # Build map: fluent → after expression
+    after_map = {}
+    for effect in action.effects:
+        if not effect.fluent.is_fluent_exp():
+            continue
+        if effect.is_increase():
+            after_map[effect.fluent] = em.Plus(effect.fluent, effect.value)
+        elif effect.is_decrease():
+            after_map[effect.fluent] = em.Minus(effect.fluent, effect.value)
+        else:
+            after_map[effect.fluent] = effect.value
+
+    def substitute(node: FNode) -> FNode:
+        if node.is_fluent_exp() and node in after_map:
+            return after_map[node]
+        if not node.args:
+            return node
+        new_args = [substitute(arg) for arg in node.args]
+        if all(n is o for n, o in zip(new_args, node.args)):
+            return node
+        return em.create_node(node.node_type, tuple(new_args))
+
+    return substitute(expr)
+
+def evaluate_goal_in_initial_state(problem: Problem, goal: FNode) -> bool:
+    """Evaluates the goal initial value."""
+
+    def eval_node(node):
+        if node.is_int_constant():
+            return node.constant_value()
+        if node.is_fluent_exp():
+            val = problem.initial_values.get(node)
+            if val is None:
+                for f, v in problem.initial_values.items():
+                    if str(f) == str(node):
+                        return v.constant_value() if v.is_constant() else None
+            return val.constant_value() if val is not None and val.is_constant() else None
+        if node.is_lt():
+            l, r = eval_node(node.arg(0)), eval_node(node.arg(1))
+            return (l < r) if l is not None and r is not None else None
+        if node.is_le():
+            l, r = eval_node(node.arg(0)), eval_node(node.arg(1))
+            return (l <= r) if l is not None and r is not None else None
+        if node.is_plus():
+            vals = [eval_node(a) for a in node.args]
+            return sum(vals) if all(v is not None for v in vals) else None
+        if node.is_minus():
+            vals = [eval_node(a) for a in node.args]
+            if all(v is not None for v in vals):
+                return vals[0] - sum(vals[1:])
+        if node.is_equals():
+            l, r = eval_node(node.arg(0)), eval_node(node.arg(1))
+            return (l == r) if l is not None and r is not None else None
+        return None
+
+    result = eval_node(goal)
+    return bool(result) if result is not None else False
+
+def get_fluent_exps_in_expression(node: FNode) -> set:
+    """Get all fluent expressions that appear in an expression."""
+    result = set()
+    if node.is_fluent_exp():
+        result.add(node)
+    for arg in node.args:
+        result.update(get_fluent_exps_in_expression(arg))
+    return result
+
+
+def remove_write_only_fluents(problem: Problem) -> Problem:
+    """
+    Remove fluents that never appear in preconditions or goals.
+    """
+    read_fluent_names = set()
+    for action in problem.actions:
+        for prec in action.preconditions:
+            for f in get_fluent_exps_in_expression(prec):
+                read_fluent_names.add(f.fluent().name)
+    for goal in problem.goals:
+        for f in get_fluent_exps_in_expression(goal):
+            read_fluent_names.add(f.fluent().name)
+
+    write_only_names = {
+        fluent.name for fluent in problem.fluents
+        if fluent.name not in read_fluent_names
+    }
+
+    if not write_only_names:
+        return problem
+
+    new_problem = problem.clone()
+    new_problem.clear_fluents()
+    new_problem.clear_actions()
+    new_problem.initial_values.clear()
+
+    for fluent in problem.fluents:
+        if fluent.name not in write_only_names:
+            default = problem.fluents_defaults.get(fluent)
+            new_problem.add_fluent(fluent, default_initial_value=default)
+
+    for k, v in problem.explicit_initial_values.items():
+        if k.fluent().name not in write_only_names:
+            new_problem.set_initial_value(k, v)
+
+    for action in problem.actions:
+        new_action = action.clone()
+        effects_to_keep = [
+            e for e in new_action.effects
+            if e.fluent.fluent().name not in write_only_names
+        ]
+        if not effects_to_keep:
+            continue
+        new_action.effects.clear()
+        for e in effects_to_keep:
+            new_action._add_effect_instance(e)
+        new_problem.add_action(new_action)
+
+    return new_problem
+
+def group_conditions_by_shared_fluents(conditions: List[FNode]) -> List[List[FNode]]:
+    """
+    Groups conditions that share numeric fluents.
+    """
+    def get_numeric_fluents(cond):
+        return {str(f) for f in get_fluent_exps_in_expression(cond)
+                if f.fluent().type.is_int_type()}
+
+    def get_bool_fluents(cond):
+        return {str(f) for f in get_fluent_exps_in_expression(cond)
+                if f.fluent().type.is_bool_type()}
+
+    numeric_fluents = [get_numeric_fluents(c) for c in conditions]
+    bool_fluents = [get_bool_fluents(c) for c in conditions]
+
+    parent = list(range(len(conditions)))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        parent[find(x)] = find(y)
+
+    for i in range(len(conditions)):
+        for j in range(i + 1, len(conditions)):
+            shared_numeric = numeric_fluents[i] & numeric_fluents[j]
+            shared_bool = bool_fluents[i] & bool_fluents[j]
+
+            if shared_numeric:
+                union(i, j)
+            elif shared_bool and (numeric_fluents[i] or numeric_fluents[j]):
+                union(i, j)
+
+    groups = {}
+    for i in range(len(conditions)):
+        root = find(i)
+        groups.setdefault(root, []).append(conditions[i])
+
+    return list(groups.values())

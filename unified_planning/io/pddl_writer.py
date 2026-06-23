@@ -1106,6 +1106,12 @@ class PDDLWriter:
                             )
                         _update_domain_objects(self.domain_objects, obe.get(e.fluent))
                         _update_domain_objects(self.domain_objects, obe.get(e.value))
+        # Iterate the axioms to retrieve domain objects
+        for axiom in self.problem.axioms:
+            for body_cond in axiom.body:
+                _update_domain_objects(self.domain_objects, obe.get(body_cond))
+            if axiom.head is not None:
+                _update_domain_objects(self.domain_objects, obe.get(axiom.head.fluent))
         for ev in self.problem.events:
             for p in ev.preconditions:
                 _update_domain_objects(self.domain_objects, obe.get(p))
@@ -1262,13 +1268,13 @@ def _write_effect(
         and not effect.value.is_true()
         and not effect.value.is_false()
     )
-    if non_const_bool_ass and not rewrite_bool_assignments:
-        raise UPProblemDefinitionError(
-            "The problem has non-constant boolean assignments.This can't be directly written ",
-            "in PDDL, but it can be translated into a conditional effect maintaining the ",
-            "semantic. To enable this feature, set the flag rewrite_bool_assignments",
-            " to True in the PDDLWriter constructor.",
-        )
+    #if non_const_bool_ass and not rewrite_bool_assignments:
+    #    raise UPProblemDefinitionError(
+    #        "The problem has non-constant boolean assignments.This can't be directly written ",
+    #        "in PDDL, but it can be translated into a conditional effect maintaining the ",
+    #        "semantic. To enable this feature, set the flag rewrite_bool_assignments",
+    #        " to True in the PDDLWriter constructor.",
+    #    )
     forall_str = ""
     if effect.is_forall():
         mid_str = " ".join(

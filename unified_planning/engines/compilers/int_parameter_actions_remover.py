@@ -415,6 +415,9 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
                 return None
             new_args.append(transformed)
 
+        # If the array fluent is not being indexed - return the full array fluent
+        if not int_params and not instantiations:
+            return node
         fluent_base_name = node.fluent().name.split('[')[0]
         old_fluent = old_problem.fluent(fluent_base_name)
         # Array fluent: extract indices from name
@@ -458,7 +461,6 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
     ) -> Union[FNode, None]:
         """Generic recursive transformation."""
         em = old_problem.environment.expression_manager
-
         new_args = [
             self._transform_expression(old_problem, new_problem, arg, int_params, instantiations)
             for arg in node.args

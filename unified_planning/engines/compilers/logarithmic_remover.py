@@ -1,0 +1,867 @@
+# Copyright 2021-2023 AIPlan4EU project
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+"""This module defines the integers logarithmic remover class."""
+import math
+import re
+from bidict import bidict
+from unified_planning.model.operators import OperatorKind
+from ortools.sat.python import cp_model
+
+import unified_planning as up
+import unified_planning.engines as engines
+from unified_planning import model
+from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
+from unified_planning.engines.results import CompilerResult
+from unified_planning.model import (
+    Problem,
+    Action,
+    ProblemKind,
+    FNode,
+    AbstractProblem,
+    InstantaneousAction,
+    Effect,
+    EffectKind,
+    Object,
+    MinimizeActionCosts, Fluent, Expression, Axiom
+)
+from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
+from unified_planning.engines.compilers.utils import (
+    add_cp_constraints,
+    add_effect_bounds_constraints,
+    solve_with_cp_sat,
+    get_fresh_name,
+    replace_action,
+    updated_minimize_action_costs, requires_arithmetic, substitute_modified_fluents, evaluate_goal_in_initial_state,
+    get_fluent_exps_in_expression, evaluate_with_solution, remove_write_only_fluents
+)
+from unified_planning.exceptions import UPProblemDefinitionError
+from typing import Dict, List, Optional, OrderedDict, Iterable, Tuple
+from functools import partial
+from unified_planning.shortcuts import And, Not, Iff, FALSE, TRUE, Or, DerivedBoolType, BoolType
+
+
+class LogarithmicRemover(engines.engine.Engine, CompilerMixin):
+    """
+    Compiler that removes bounded integers by encoding each integer value as Boolean bits.
+
+    Integer fluents are transformed into bit-level Boolean fluents (using binary representation),
+    preserving semantics through bitwise precondition/effect rewrites.
+    """
+
+    def __init__(self):
+        engines.engine.Engine.__init__(self)
+        CompilerMixin.__init__(self, CompilationKind.LOGARITHMIC_REMOVING)
+        self.n_bits = OrderedDict()
+        self.offsets = {}
+        self._object_to_index = {}
+        self._index_to_object = {}
+
+    @property
+    def name(self):
+        return "lrm"
+
+    # Operators that can appear inside arithmetic expressions
+    ARITHMETIC_OPS = {
+        OperatorKind.PLUS: 'plus',
+        OperatorKind.MINUS: 'minus',
+        OperatorKind.DIV: 'div',
+        OperatorKind.TIMES: 'mult',
+    }
+
+    @staticmethod
+    def supported_kind() -> ProblemKind:
+        supported_kind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION)
+        supported_kind.set_problem_class("ACTION_BASED")
+        supported_kind.set_typing("FLAT_TYPING")
+        supported_kind.set_typing("HIERARCHICAL_TYPING")
+        #supported_kind.set_parameters("BOOL_FLUENT_PARAMETERS")
+        #supported_kind.set_parameters("BOUNDED_INT_FLUENT_PARAMETERS")
+        #supported_kind.set_parameters("BOOL_ACTION_PARAMETERS")
+        #supported_kind.set_parameters("BOUNDED_INT_ACTION_PARAMETERS")
+        # supported_kind.set_parameters("UNBOUNDED_INT_ACTION_PARAMETERS")
+        #supported_kind.set_parameters("REAL_ACTION_PARAMETERS")
+        supported_kind.set_numbers("BOUNDED_TYPES")
+        supported_kind.set_problem_type("SIMPLE_NUMERIC_PLANNING")
+        supported_kind.set_problem_type("GENERAL_NUMERIC_PLANNING")
+        supported_kind.set_fluents_type("INT_FLUENTS")
+        supported_kind.set_fluents_type("REAL_FLUENTS")
+        supported_kind.set_fluents_type("OBJECT_FLUENTS")
+        supported_kind.set_fluents_type("DERIVED_FLUENTS")
+        supported_kind.set_conditions_kind("NEGATIVE_CONDITIONS")
+        supported_kind.set_conditions_kind("DISJUNCTIVE_CONDITIONS")
+        supported_kind.set_conditions_kind("EQUALITIES")
+        supported_kind.set_conditions_kind("EXISTENTIAL_CONDITIONS")
+        supported_kind.set_conditions_kind("UNIVERSAL_CONDITIONS")
+        supported_kind.set_effects_kind("CONDITIONAL_EFFECTS")
+        supported_kind.set_effects_kind("INCREASE_EFFECTS")
+        supported_kind.set_effects_kind("DECREASE_EFFECTS")
+        supported_kind.set_effects_kind("STATIC_FLUENTS_IN_BOOLEAN_ASSIGNMENTS")
+        supported_kind.set_effects_kind("STATIC_FLUENTS_IN_NUMERIC_ASSIGNMENTS")
+        supported_kind.set_effects_kind("STATIC_FLUENTS_IN_OBJECT_ASSIGNMENTS")
+        supported_kind.set_effects_kind("FLUENTS_IN_BOOLEAN_ASSIGNMENTS")
+        supported_kind.set_effects_kind("FLUENTS_IN_NUMERIC_ASSIGNMENTS")
+        supported_kind.set_effects_kind("FLUENTS_IN_OBJECT_ASSIGNMENTS")
+        supported_kind.set_effects_kind("FORALL_EFFECTS")
+        supported_kind.set_time("CONTINUOUS_TIME")
+        supported_kind.set_time("DISCRETE_TIME")
+        supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
+        supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
+        supported_kind.set_time("TIMED_EFFECTS")
+        supported_kind.set_time("TIMED_GOALS")
+        supported_kind.set_time("DURATION_INEQUALITIES")
+        supported_kind.set_time("SELF_OVERLAPPING")
+        supported_kind.set_expression_duration("STATIC_FLUENTS_IN_DURATIONS")
+        supported_kind.set_expression_duration("FLUENTS_IN_DURATIONS")
+        supported_kind.set_expression_duration("INT_TYPE_DURATIONS")
+        supported_kind.set_expression_duration("REAL_TYPE_DURATIONS")
+        supported_kind.set_simulated_entities("SIMULATED_EFFECTS")
+        supported_kind.set_constraints_kind("STATE_INVARIANTS")
+        supported_kind.set_constraints_kind("TRAJECTORY_CONSTRAINTS")
+        supported_kind.set_quality_metrics("ACTIONS_COST")
+        supported_kind.set_actions_cost_kind("STATIC_FLUENTS_IN_ACTIONS_COST")
+        supported_kind.set_actions_cost_kind("FLUENTS_IN_ACTIONS_COST")
+        supported_kind.set_quality_metrics("PLAN_LENGTH")
+        supported_kind.set_quality_metrics("OVERSUBSCRIPTION")
+        supported_kind.set_quality_metrics("TEMPORAL_OVERSUBSCRIPTION")
+        supported_kind.set_quality_metrics("MAKESPAN")
+        supported_kind.set_quality_metrics("FINAL_VALUE")
+        supported_kind.set_actions_cost_kind("INT_NUMBERS_IN_ACTIONS_COST")
+        supported_kind.set_actions_cost_kind("REAL_NUMBERS_IN_ACTIONS_COST")
+        supported_kind.set_oversubscription_kind("INT_NUMBERS_IN_OVERSUBSCRIPTION")
+        supported_kind.set_oversubscription_kind("REAL_NUMBERS_IN_OVERSUBSCRIPTION")
+        return supported_kind
+
+    @staticmethod
+    def supports(problem_kind):
+        return problem_kind <= LogarithmicRemover.supported_kind()
+
+    @staticmethod
+    def supports_compilation(compilation_kind: CompilationKind) -> bool:
+        return compilation_kind == CompilationKind.LOGARITHMIC_REMOVING
+
+    @staticmethod
+    def resulting_problem_kind(
+            problem_kind: ProblemKind, compilation_kind: Optional[CompilationKind] = None
+    ) -> ProblemKind:
+        new_kind = problem_kind.clone()
+        new_kind.unset_conditions_kind("INT_FLUENTS")
+        return new_kind
+
+    # ==================== METHODS ====================
+
+    def _convert_value(self, value: int, n_bits: int, offset: int = 0) -> List[bool]:
+        """Convert integer value to binary list of n_bits, applying offset."""
+        shifted = value - offset
+        assert shifted >= 0, f"Value {value} - offset {offset} = {shifted} < 0"
+        return [b == '1' for b in bin(shifted)[2:].zfill(n_bits)]
+
+    def _get_bit_fluents(self, new_problem: Problem, fluent_exp: FNode) -> List[FNode]:
+        """Get the bit fluents representing an integer fluent."""
+        fluent = fluent_exp.fluent()
+
+        # Only integer fluents are transformed to bits
+        if not fluent.type.is_int_type():
+            return [fluent_exp]
+
+        name = fluent.name
+        if name not in self.n_bits:
+            # Not a transformed fluent, return as-is
+            return [fluent_exp]
+
+        n_bits = self.n_bits[name]
+        return [
+            new_problem.fluent(f"{name}_{i}")(*fluent_exp.args)
+            for i in range(n_bits)
+        ]
+
+    # ==================== ACTION TRANSFORMATION ====================
+
+    def _expand_condition_with_cp(self, problem, new_problem, condition, solution):
+        variables = bidict({})
+        cp_model_obj = cp_model.CpModel()
+        result_var = add_cp_constraints(problem, condition, variables, cp_model_obj, self._object_to_index)
+
+        for fnode, var in list(variables.items()):
+            if str(fnode) in solution:
+                cp_model_obj.Add(var == solution[str(fnode)])
+
+        cp_model_obj.Add(result_var == 1)
+        true_solutions = solve_with_cp_sat(variables, cp_model_obj) or []
+
+        unknown_vars = {str(fnode): fnode for fnode, var in variables.items()
+                        if str(fnode) not in solution}
+
+        clauses = []
+        for sol in true_solutions:
+            sol_conds = []
+            for var_str, fnode in unknown_vars.items():
+                if var_str not in sol or not fnode.is_fluent_exp():
+                    continue
+                fluent = fnode.fluent()
+                if fluent.type.is_int_type() and fluent.name in self.n_bits:
+                    n_bits = self.n_bits[fluent.name]
+                    value_bits = self._convert_value(sol[var_str], n_bits, self.offsets.get(fluent.name, 0))
+                    bit_fluents = self._get_bit_fluents(new_problem, fnode)
+                    bit_conds = [f if b else Not(f) for f, b in zip(bit_fluents, value_bits)]
+                    sol_conds.append(And(bit_conds) if len(bit_conds) > 1 else bit_conds[0])
+            if sol_conds:
+                clauses.append(And(sol_conds) if len(sol_conds) > 1 else sol_conds[0])
+
+        if not clauses:
+            return []
+        full_cond = Or(clauses).simplify() if len(clauses) > 1 else clauses[0]
+        return full_cond
+
+    def _add_effects_for_solution(
+            self,
+            new_action: InstantaneousAction,
+            problem: Problem,
+            new_problem: Problem,
+            variables: bidict,
+            solution: dict,
+            old_effects: List[Effect]
+    ) -> None:
+        """
+        Add effects for bit encoding.
+        Transform all effects: integer fluents to bits.
+        Transform conditions properly.
+        """
+        for old_effect in old_effects:
+            # Evaluates condition
+            if old_effect.condition.is_true():
+                new_condition = TRUE()
+            else:
+                new_condition = evaluate_with_solution(new_problem, old_effect.condition, solution)
+                if new_condition == FALSE():
+                    continue
+
+            # Increase/decrease effect
+            if old_effect.is_increase() or old_effect.is_decrease():
+                fluent = old_effect.fluent.fluent()
+                try:
+                    delta = old_effect.value.constant_value()
+                except:
+                    for new_eff in self._transform_increase_decrease_effect(old_effect, problem, new_problem):
+                        new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
+                    continue
+
+                cur_val = solution.get(str(old_effect.fluent))
+                if cur_val is None:
+                    # No value in solution
+                    for new_eff in self._transform_increase_decrease_effect(old_effect, problem, new_problem):
+                        new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
+                    continue
+
+                next_val = (cur_val + delta) if old_effect.is_increase() else (cur_val - delta)
+                n_bits = self.n_bits[fluent.name]
+                next_bits = self._convert_value(next_val, n_bits, self.offsets.get(fluent.name, 0))
+                bit_fluents = self._get_bit_fluents(new_problem, old_effect.fluent)
+                for f, bit_val in zip(bit_fluents, next_bits):
+                    new_action.add_effect(f, TRUE() if bit_val else FALSE(), new_condition, old_effect.forall)
+
+            # Integer assignment
+            elif old_effect.fluent.type.is_int_type():
+                evaluated_val = evaluate_with_solution(new_problem, old_effect.value, solution)
+                new_fluents, new_values = self._convert_fluent_and_value(
+                    new_problem, old_effect.fluent, evaluated_val
+                )
+                for f, v in zip(new_fluents, new_values):
+                    if isinstance(v, bool):
+                        v_fnode = TRUE() if v else FALSE()
+                    elif isinstance(v, FNode):
+                        v_fnode = v
+                    else:
+                        v_fnode = TRUE() if v else FALSE()
+                    if not new_condition.is_true() and requires_arithmetic(new_condition):
+                        expansions = self._expand_condition_with_cp(problem, new_problem, new_condition, solution)
+                        new_action.add_effect(f, v_fnode, expansions, old_effect.forall)
+                    else:
+                        new_action.add_effect(f, v_fnode, new_condition, old_effect.forall)
+
+            # Non-integer fluent effect
+            else:
+                new_fluent = self._get_new_expression(new_problem, old_effect.fluent)
+                new_value = self._get_new_expression(new_problem, old_effect.value)
+                if not new_fluent or not new_value:
+                    continue
+
+                if not new_condition.is_true() and requires_arithmetic(new_condition):
+                    # Arithmetic condition not evaluated - expand with CP-SAT
+                    expansions = self._expand_condition_with_cp(problem, new_problem, new_condition, solution)
+                    new_action.add_effect(new_fluent, new_value, expansions, old_effect.forall)
+                else:
+                    new_action.add_effect(new_fluent, new_value, new_condition, old_effect.forall)
+
+    def _transform_increase_decrease_effect(
+            self,
+            effect: Effect,
+            problem: Problem,
+            new_problem: Problem,
+    ) -> List[Effect]:
+        """Convert increase/decrease effects to conditional bit assignments."""
+        fluent = effect.fluent.fluent()
+        lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
+
+        name_fluent = fluent.name.split('[')[0]
+        n_bits = self.n_bits[name_fluent]
+
+        # Calculate the valid bounds
+        try:
+            int_value = effect.value.constant_value()
+        except:
+            int_value = effect.value
+
+        if effect.is_increase():
+            valid_range = range(max(lb, lb), min(ub - int_value, ub) + 1) if isinstance(int_value, int) else range(lb, ub + 1)
+        else:
+            valid_range = range(max(lb + int_value, lb), min(ub, ub) + 1) if isinstance(int_value, int) else range(lb, ub + 1)
+
+        returned = []
+
+        for i in valid_range:
+            next_val = (i + int_value) if effect.is_increase() else (i - int_value)
+            try:
+                next_val_int = next_val.simplify().constant_value() if hasattr(next_val, 'simplify') else next_val
+            except:
+                continue
+
+            # Convert current and next values to bits
+            current_bits = self._convert_value(i, n_bits, self.offsets.get(name_fluent, 0))
+            next_bits = self._convert_value(next_val_int, n_bits, self.offsets.get(name_fluent, 0))
+
+            # Get bit fluents
+            new_fluents = self._get_new_fluent(new_problem, effect.fluent)
+
+            # Build condition: fluent equals current value
+            cond_clauses = []
+            for f, bit_val in zip(new_fluents, current_bits):
+                cond_clauses.append(f if bit_val else Not(f))
+            value_condition = And(cond_clauses) if len(cond_clauses) > 1 else cond_clauses[0]
+
+            # Combine with effect condition
+            full_condition = And(value_condition, effect.condition).simplify() if effect.condition != TRUE() else value_condition
+
+            # Create effects for each bit
+            for f, next_bit in zip(new_fluents, next_bits):
+                new_effect = Effect(
+                    f,
+                    TRUE() if next_bit else FALSE(),
+                    full_condition,
+                    EffectKind.ASSIGN,
+                    effect.forall
+                )
+                returned.append(new_effect)
+
+        return returned
+
+    # ==================== GOALS TRANSFORMATION ====================
+
+    def _add_goal_as_axiom(self, problem: Problem, new_problem: Problem, goal_expr: FNode, i, arithmetic):
+        fluent_name = f"goal_{i}"
+        from unified_planning.model import Fluent
+        goal_fluent = Fluent(fluent_name, DerivedBoolType())
+        new_problem.add_fluent(goal_fluent, default_initial_value=FALSE())
+        new_problem.add_goal(goal_fluent)
+
+        self._object_to_index = {}
+        axiom = up.model.Axiom(f"{goal_fluent}")
+        axiom.set_head(goal_fluent())
+
+        if arithmetic:
+            axiom_condition = self._expand_condition_with_cp(problem, new_problem, goal_expr, {})
+            axiom.add_body_condition(axiom_condition)
+            new_problem.add_axiom(axiom)
+        else:
+            new_goal_expr = self._get_new_expression(new_problem, goal_expr)
+            axiom.add_body_condition(new_goal_expr)
+            new_problem.add_axiom(axiom)
+
+    def _transform_goals(self, problem: Problem, new_problem: Problem) -> None:
+        """
+        Transform goals: separate arithmetic and non-arithmetic.
+        Create an auxiliary axiom por each goal.
+        """
+        non_arithmetic_goals = []
+        arithmetic_goals = []
+
+        for goal in problem.goals:
+            if requires_arithmetic(goal):
+                arithmetic_goals.append(goal)
+            else:
+                non_arithmetic_goals.append(goal)
+
+        # Non-arithmetic goals - direct transformation
+        for i, goal in enumerate(non_arithmetic_goals):
+            if goal.is_fluent_exp():
+                new_problem.add_goal(goal)
+            else:
+                self._add_goal_as_axiom(problem, new_problem, goal, i, False)
+
+        # Create a predicate for each arithmetic goal
+        for i, goal in enumerate(arithmetic_goals):
+            j = len(non_arithmetic_goals) + i
+            self._add_goal_as_axiom(problem, new_problem, goal, j, True)
+
+    # ==================== AXIOMS TRANSFORMATION ====================
+
+    def _transform_axioms(self, problem: Problem, new_problem: Problem, new_to_old: Dict):
+        """Transform axioms"""
+        for axiom in problem.axioms:
+            params = OrderedDict((p.name, p.type) for p in axiom.parameters)
+            # Clone and transform
+            new_axiom_name = get_fresh_name(new_problem, axiom.name)
+            new_axiom = Axiom(new_axiom_name, params, axiom.environment)
+
+            skip_axiom = False
+            new_axiom.set_head(axiom.head.fluent)
+            for body in axiom.body:
+                new_body = self._get_new_expression(new_problem, body)
+                if new_body is None:
+                    skip_axiom = True
+                    break
+                else:
+                    new_axiom.add_body_condition(new_body)
+            if skip_axiom:
+                continue
+            new_problem.add_axiom(new_axiom)
+            new_to_old[new_axiom] = axiom
+
+    def _create_multiple_actions(
+            self,
+            old_action: Action,
+            problem: Problem,
+            new_problem: Problem,
+            params: OrderedDict,
+            solutions: List[dict],
+            variables: bidict,
+            dependent_effects: List[Effect] = None,
+            independent_effects: List[Effect] = None,
+            direct_precs: List[FNode] = None,
+    ):
+        dependent_effects = dependent_effects or old_action.effects
+        independent_effects = independent_effects or []
+        direct_precs = direct_precs or []
+
+        new_actions = []
+        var_str_to_fnode = {str(node_key): node_key for node_key in variables.keys()}
+
+        prec_fluent_strs = set()
+        for prec in old_action.preconditions:
+            for f in get_fluent_exps_in_expression(prec):
+                prec_fluent_strs.add(str(f))
+
+        modified_fluent_strs = {
+            str(effect.fluent) for effect in dependent_effects
+            if str(effect.fluent) not in prec_fluent_strs
+               and not effect.is_increase() and not effect.is_decrease()
+               and effect.condition.is_true()
+        }
+
+        for idx, solution in enumerate(solutions):
+            action_name = f"{old_action.name}_s{idx}"
+            new_action = InstantaneousAction(action_name, _parameters=params, _env=problem.environment)
+
+            # Fixed preconditions
+            for var_str, value in solution.items():
+                if var_str in modified_fluent_strs:
+                    continue
+                fnode = var_str_to_fnode.get(var_str)
+                if not fnode or not fnode.is_fluent_exp():
+                    continue
+                fluent = fnode.fluent()
+                if fluent.type.is_int_type():
+                    name_fluent = fluent.name
+                    if name_fluent in self.n_bits:
+                        n_bits = self.n_bits[name_fluent]
+                        value_bits = self._convert_value(value, n_bits, self.offsets.get(name_fluent, 0))
+                        new_fluents = self._get_bit_fluents(new_problem, fnode)
+                        for f, bit_val in zip(new_fluents, value_bits):
+                            new_action.add_precondition(f if bit_val else Not(f))
+                else:
+                    if value == 1:
+                        new_action.add_precondition(fnode)
+                    else:
+                        new_action.add_precondition(Not(fnode))
+
+            # Direct preconditions
+            for prec in direct_precs:
+                new_action.add_precondition(prec)
+
+            # Dependent effects
+            self._add_effects_for_solution(new_action, problem, new_problem, variables, solution, dependent_effects)
+
+            # Independent effect
+            for effect in independent_effects:
+                if effect.is_increase() or effect.is_decrease():
+                    raise NotImplementedError(f"Independent increase/decrease should be dependent: {effect}")
+                elif requires_arithmetic(effect.condition):
+                    new_fluent = self._get_new_expression(new_problem, effect.fluent)
+                    new_value = self._get_new_expression(new_problem, effect.value)
+                    expansions = self._expand_condition_with_cp(problem, new_problem, effect.condition, solution)
+                    new_action.add_effect(new_fluent, new_value, expansions, effect.forall)
+                else:
+                    new_fluent = self._get_new_expression(new_problem, effect.fluent)
+                    new_value = self._get_new_expression(new_problem, effect.value)
+                    new_cond = self._get_new_expression(new_problem, effect.condition) or TRUE()
+                    if new_fluent and new_value:
+                        new_action.add_effect(new_fluent, new_value, new_cond, effect.forall)
+            new_actions.append(new_action)
+
+        return new_actions
+
+    def _transform_action_integers(self, problem: Problem, new_problem: Problem, old_action: Action) -> List[Action]:
+        params = OrderedDict(((p.name, p.type) for p in old_action.parameters))
+
+        has_arithmetic_preconditions = any(requires_arithmetic(p) for p in old_action.preconditions)
+        has_arithmetic_effects = any(
+            effect.value.node_type in self.ARITHMETIC_OPS
+            or effect.is_increase() or effect.is_decrease()
+            or requires_arithmetic(effect.condition)
+            for effect in old_action.effects
+        )
+
+        # Cas 1: No arithmetic
+        if not has_arithmetic_preconditions and not has_arithmetic_effects:
+            new_action = InstantaneousAction(old_action.name, _parameters=params, _env=problem.environment)
+            for old_precondition in old_action.preconditions:
+                new_precondition = self._get_new_expression(new_problem, old_precondition)
+                if new_precondition and new_precondition != TRUE():
+                    new_action.add_precondition(new_precondition)
+            for old_effect in old_action.effects:
+                new_condition = self._get_new_expression(new_problem, old_effect.condition)
+                if old_effect.fluent.type.is_int_type():
+                    new_fluents, new_values = self._convert_fluent_and_value(
+                        new_problem, old_effect.fluent, old_effect.value
+                    )
+                    for f, v in zip(new_fluents, new_values):
+                        new_action.add_effect(f, v, new_condition, old_effect.forall)
+                else:
+                    new_action.add_effect(old_effect.fluent, old_effect.value, new_condition, old_effect.forall)
+            return [new_action]
+
+        # Classify effects: dependents vs independents
+        prec_vars = set()
+        for prec in old_action.preconditions:
+            for f in get_fluent_exps_in_expression(prec):
+                prec_vars.add(str(f))
+
+        # LR (different from IR): any effects on an integer is dependant
+        dependent_effects = []
+        independent_effects = []
+        for effect in old_action.effects:
+            if effect.fluent.type.is_int_type() or effect.is_increase() or effect.is_decrease():
+                dependent_effects.append(effect)
+            else:
+                independent_effects.append(effect)
+
+        # Fluents dels efectes dependents
+        dependent_fluent_strs = set()
+        for effect in dependent_effects:
+            for f in get_fluent_exps_in_expression(effect.fluent):
+                dependent_fluent_strs.add(str(f))
+
+        # Separate preconditions: the ones that are sent to the CP-SAT vs the directly transformed ones
+        cp_precs = []
+        direct_precs = []
+        for prec in old_action.preconditions:
+            if requires_arithmetic(prec):
+                cp_precs.append(prec)
+            else:
+                new_prec = self._get_new_expression(new_problem, prec)
+                if new_prec and new_prec != TRUE():
+                    direct_precs.append(new_prec)
+
+        # CP-SAT
+        self._object_to_index = {}
+        self._index_to_object = {}
+        variables = bidict({})
+        cp_model_obj = cp_model.CpModel()
+
+        if cp_precs:
+            result_var = add_cp_constraints(problem, And(cp_precs), variables, cp_model_obj,
+                                            self._object_to_index)
+            cp_model_obj.Add(result_var == 1)
+
+        add_effect_bounds_constraints(problem, variables, cp_model_obj, dependent_effects, self._object_to_index, True)
+
+        solutions = solve_with_cp_sat(variables, cp_model_obj)
+        if not solutions:
+            return []
+
+        return self._create_multiple_actions(
+            old_action, problem, new_problem, params, solutions, variables,
+            dependent_effects=dependent_effects,
+            independent_effects=independent_effects,
+            direct_precs=direct_precs,
+        )
+
+    def _transform_actions(self, problem: Problem, new_problem: Problem) -> Dict[Action, Action]:
+        """Transform all actions by grounding integer parameters into binary representation."""
+        new_to_old = {}
+        for old_action in problem.actions:
+            temporal_action = old_action.clone()
+            new_actions = self._transform_action_integers(problem, new_problem, temporal_action)
+            for new_action in new_actions:
+                new_problem.add_action(new_action)
+                new_to_old[new_action] = old_action
+        return new_to_old
+
+    def _get_new_fluent(
+            self,
+            new_problem: "up.model.AbstractProblem",
+            node: "up.model.fnode.FNode",
+    ) -> List["up.model.fnode.FNode"]:
+        """Return the bit-fluent expansion for an integer fluent expression."""
+        assert node.is_fluent_exp()
+
+        fluent = node.fluent()
+
+        # Only integer fluents are transformed to bits
+        if not fluent.type.is_int_type():
+            return [node]
+
+        name = fluent.name
+        if name not in self.n_bits:
+            # Not a transformed fluent, return as-is
+            return [node]
+
+        n_bits = self.n_bits[name]
+
+        return [
+            new_problem.fluent(f"{name}_{i}")(*node.args)
+            for i in range(n_bits)
+        ]
+
+    def _get_fluent_domain(
+            self,
+            fluent: Fluent,
+            save: bool = False
+    ) -> Iterable[int]:
+        """Calculate and cache the number of bits required for an integer fluent."""
+        if not fluent.type.is_int_type():
+            return []
+
+        inner_fluent = fluent.type
+        assert inner_fluent.is_int_type(), f"Fluent {fluent.name} must be integer type. Arrays should be removed beforehand."
+
+        # Calculate and save number of bits required to encode the integer domain
+        if save:
+            lb = inner_fluent.lower_bound
+            ub = inner_fluent.upper_bound
+            self.offsets[fluent.name] = lb  # <-- afegir
+            n_values = ub - lb + 1
+            if n_values <= 1:
+                self.n_bits[fluent.name] = 1
+            else:
+                self.n_bits[fluent.name] = math.ceil(math.log2(n_values))
+
+        return [fluent.name]
+
+    def _get_new_expression(
+            self,
+            new_problem: AbstractProblem,
+            node: FNode
+    ) -> FNode:
+        """
+        Transform expressions over encoded fluents into equivalent Boolean formulas.
+        """
+        # Handle equality on integers
+        if node.node_type == OperatorKind.EQUALS:
+            left, right = node.arg(0), node.arg(1)
+
+            # Check if one side is an integer fluent
+            if left.is_fluent_exp() and left.fluent().type.is_int_type():
+                fluent, value = left, right
+            elif right.is_fluent_exp() and right.fluent().type.is_int_type():
+                fluent, value = right, left
+            else:
+                # Not an integer equality, just recurse
+                new_args = [self._get_new_expression(new_problem, arg) for arg in node.args]
+                em = new_problem.environment.expression_manager
+                return em.create_node(node.node_type, tuple(new_args)).simplify()
+
+            # Get bit fluents and values
+            new_fluents, new_values = self._convert_fluent_and_value(new_problem, fluent, value)
+
+            # All bits must match
+            and_clauses = []
+            for f, v in zip(new_fluents, new_values):
+                if value.is_fluent_exp():
+                    and_clauses.append(Iff(f, v))
+                else:
+                    and_clauses.append(f if v else Not(f))
+            return And(and_clauses) if len(and_clauses) > 1 else and_clauses[0]
+
+        # For non-comparison nodes: recurse and transform recursively
+        if node.is_constant() or node.is_parameter_exp() or node.is_timing_exp():
+            return node
+        elif node.is_fluent_exp():
+            return node
+        elif node.args:
+            new_args = [self._get_new_expression(new_problem, arg) for arg in node.args]
+            em = new_problem.environment.expression_manager
+            return em.create_node(node.node_type, tuple(new_args)).simplify()
+        return node
+
+    def _set_fluent_bits(self, problem, fluent, k_args, new_value, n_bits, object_ref: Optional[Object] = None):
+        """Set initial values for all bit fluents representing one encoded integer value."""
+        for bit_index in range(n_bits):
+            this_fluent = problem.fluent(f"{fluent.name}_{bit_index}")(*k_args, *(object_ref,) if object_ref is not None else ())
+            problem.set_initial_value(this_fluent, new_value[bit_index])
+
+    def _convert_fluent_and_value(
+            self,
+            new_problem: AbstractProblem,
+            fluent: FNode,
+            value: FNode,
+    ) -> Tuple[List[FNode], List[FNode]]:
+        """Convert a fluent/value pair into aligned bit-level representations."""
+        n_bits = self.n_bits[fluent.fluent().name]
+        new_fluents = self._get_new_fluent(new_problem, fluent)
+        if value.is_fluent_exp():
+            new_values = self._get_new_fluent(new_problem, value)
+        else:
+            assert value.is_constant(), "Value must be a constant!"
+            new_values = self._convert_value(value.constant_value(), n_bits, self.offsets.get(fluent.fluent().name, 0))
+        return new_fluents, new_values
+
+    def _transform_fluents(self, problem: Problem, new_problem: Problem):
+        """
+        Transform integer fluents into bit-level boolean fluents.
+
+        Each integer fluent becomes n_bits boolean fluents (one per bit).
+        Non-integer fluents are copied unchanged.
+        """
+        for fluent in problem.fluents:
+            if fluent.type.is_int_type():
+                # Calculate bits needed for this integer fluent
+                self._get_fluent_domain(fluent, save=True)
+                n_bits = self.n_bits[fluent.name]
+
+                # Default initial values
+                default_value = problem.fluents_defaults.get(fluent)
+                if default_value is not None:
+                    dv = default_value.constant_value()
+                    lb = self.offsets.get(fluent.name, 0)
+                    ub = fluent.type.upper_bound
+                    if lb <= dv <= ub:
+                        default_bits = self._convert_value(dv, n_bits, lb)
+                    else:
+                        default_bits = [False] * n_bits
+                else:
+                    default_bits = [False] * n_bits
+
+                # Create bit fluents
+                for i in range(n_bits):
+                    bit_fluent = model.Fluent(f"{fluent.name}_{i}", _signature=fluent.signature, environment=new_problem.environment)
+                    new_problem.add_fluent(bit_fluent, default_initial_value=default_bits[i])
+
+                # Set initial values from the original problem
+                for k, v in problem.explicit_initial_values.items():
+                    if k.fluent() == fluent:
+                        new_value = self._convert_value(v.constant_value(), n_bits, self.offsets.get(fluent.name, 0))
+                        self._set_fluent_bits(new_problem, fluent, k.args, new_value, n_bits)
+            else:
+                # Non-integer fluent: copy as-is
+                default_value = problem.fluents_defaults.get(fluent)
+                new_problem.add_fluent(fluent, default_initial_value=default_value)
+                for k, v in problem.explicit_initial_values.items():
+                    if k.fluent() == fluent:
+                        new_problem.set_initial_value(k, v)
+
+
+    def _compile(
+            self,
+            problem: AbstractProblem,
+            compilation_kind: CompilationKind,
+    ) -> CompilerResult:
+        """Main compilation"""
+        assert isinstance(problem, Problem)
+
+        original_problem = problem
+        cleaned_problem = remove_write_only_fluents(problem)
+
+        # Mapping name between cleaned and original actions
+        name_to_original = {a.name: a for a in original_problem.actions}
+
+        new_problem = problem.clone()
+        new_problem.name = f"{self.name}_{problem.name}"
+        new_problem.clear_fluents()
+        new_problem.clear_actions()
+        new_problem.clear_goals()
+        new_problem.clear_quality_metrics()
+        new_problem.initial_values.clear()
+
+        #for action in problem.actions:
+        #    if action.parameters:
+        #        raise UPProblemDefinitionError(
+        #            f"LogarithmicRemover requires fully grounded actions (no parameters). "
+        #            f"Action '{action.name}' has parameters. "
+        #            f"Apply GROUNDING before LOGARITHMIC_REMOVING."
+        #        )
+
+        print(cleaned_problem)
+
+        # ========== Transform Fluents ==========
+        self._transform_fluents(cleaned_problem, new_problem)
+
+        # ========== Transform Actions ==========
+        new_to_old_cleaned = self._transform_actions(cleaned_problem, new_problem)
+
+        # ========== Transform Actions ==========
+        self._transform_axioms(cleaned_problem, new_problem, new_to_old_cleaned)
+
+        # Remap
+        new_to_old = {}
+        for new_action, cleaned_action in new_to_old_cleaned.items():
+            original = name_to_original.get(cleaned_action.name, cleaned_action)
+            new_to_old[new_action] = original
+
+        # ========== Transform Goals ==========
+        actions_before = set(new_problem.actions)
+        self._transform_goals(cleaned_problem, new_problem)
+        # Register dummy goal-achievement action in new_to_old (map to itself)
+        for action in new_problem.actions:
+            if action not in actions_before and action not in new_to_old:
+                new_to_old[action] = action
+
+        # Add dummy actions
+        for action in new_problem.actions:
+            if action.name.startswith("achieve_goal_") and action not in new_to_old:
+                new_to_old[action] = action
+
+        # ========== Transform Quality Metrics ==========
+        for metric in problem.quality_metrics:
+            if metric.is_minimize_action_costs():
+                updated = updated_minimize_action_costs(
+                    metric,
+                    new_to_old,
+                    new_problem.environment
+                )
+                # Dummy goal-achievement actions have cost 0
+                em = new_problem.environment.expression_manager
+                new_costs = dict(updated.costs)
+                for action in new_problem.actions:
+                    if action.name == "achieve_all_compound_goals":
+                        new_costs[action] = em.Int(0)
+                new_problem.add_quality_metric(
+                    MinimizeActionCosts(new_costs, default=updated.default, environment=new_problem.environment)
+                )
+            else:
+                new_problem.add_quality_metric(metric)
+
+        return CompilerResult(
+            new_problem, partial(replace_action, map=new_to_old), self.name
+        )

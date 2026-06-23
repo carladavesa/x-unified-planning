@@ -76,10 +76,6 @@ DEFAULT_ENGINES = {
         "unified_planning.engines.compilers.bounded_types_remover",
         "BoundedTypesRemover",
     ),
-    "up_unboundedness_remover": (
-        "unified_planning.engines.compilers.unboundedness_remover",
-        "UnboundednessRemover",
-    ),
     "up_conditional_effects_remover": (
         "unified_planning.engines.compilers.conditional_effects_remover",
         "ConditionalEffectsRemover",
@@ -112,17 +108,17 @@ DEFAULT_ENGINES = {
         "unified_planning.engines.compilers.arrays_remover",
         "ArraysRemover",
     ),
-    "up_arrays_logarithmic_remover": (
-        "unified_planning.engines.compilers.arrays_logarithmic_remover",
-        "ArraysLogarithmicRemover",
+    "up_logarithmic_remover": (
+        "unified_planning.engines.compilers.logarithmic_remover",
+        "LogarithmicRemover",
     ),
     "up_sets_remover": (
         "unified_planning.engines.compilers.sets_remover",
         "SetsRemover",
     ),
-    "up_bounds_consistency_simplifier": (
-        "unified_planning.engines.compilers.bounds_consistency_simplifier",
-        "BoundsConsistencySimplifier",
+    "up_conditions_to_predicates_simplifier": (
+        "unified_planning.engines.compilers.conditions_to_predicates_simplifier",
+        "ConditionsToPredicatesSimplifier",
     ),
     "up_int_parameter_actions_remover": (
         "unified_planning.engines.compilers.int_parameter_actions_remover",
@@ -190,7 +186,6 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "sequential_simulator",
     "up_time_triggered_validator",
     "up_bounded_types_remover",
-    "up_unboundedness_remover",
     "up_conditional_effects_remover",
     "up_disjunctive_conditions_remover",
     "up_ma_disjunctive_conditions_remover",
@@ -200,9 +195,9 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "up_count_remover",
     "up_count_int_remover",
     "up_arrays_remover",
-    "up_arrays_logarithmic_remover",
+    "up_logarithmic_remover",
     "up_sets_remover",
-    "up_bounds_consistency_simplifier",
+    "up_conditions_to_predicates_simplifier",
     "up_int_parameter_actions_remover",
     "up_integers_remover",
     "up_int_arrays_bits_remover",
