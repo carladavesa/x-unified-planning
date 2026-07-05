@@ -384,6 +384,60 @@ class ArraysRemover(engines.engine.Engine, CompilerMixin):
                 self._add_effect_to_action(action, effect_type, fluent, value, condition, forall)
         return True
 
+    def _expand_whole_array_effect(
+            self,
+            problem: Problem,
+            new_problem: Problem,
+            effect: Effect,
+            new_action: Action,
+    ) -> bool:
+        """Expand a whole-array assignment effect into per-element effects.
+
+        Handles two value forms:
+          - array constant (array.mk): dst[pos] := literal[pos]
+          - another array fluent (SV-to-SV copy): dst[pos] := src[pos]
+        """
+        dst_name = effect.fluent.fluent().name.split('[')[0]
+        if dst_name not in self.domains:
+            return False
+        new_dst_fluent = new_problem.fluent(dst_name)
+        new_condition = self._transform_expression(problem, new_problem, effect.condition)
+        if new_condition is None:
+            return False
+
+        # Preserve any non-index fluent args (e.g. action parameters on parametric fluents)
+        extra_args = [
+            self._transform_expression(problem, new_problem, a) for a in effect.fluent.args
+        ]
+        if any(a is None for a in extra_args):
+            return False
+
+        val_node = effect.value
+        is_sv_copy = val_node.is_fluent_exp() and val_node.fluent().type.is_array_type()
+        if is_sv_copy:
+            src_name = val_node.fluent().name.split('[')[0]
+            if src_name not in self.domains:
+                return False
+            new_src_fluent = new_problem.fluent(src_name)
+            src_extra_args = [
+                self._transform_expression(problem, new_problem, a) for a in val_node.args
+            ]
+            if any(a is None for a in src_extra_args):
+                return False
+        elif not val_node.is_constant():
+            return False
+
+        for pos in self.domains[dst_name]:
+            index_params = [self._get_index_object(new_problem, i) for i in pos]
+            dst_elem = new_dst_fluent(*(index_params + extra_args))
+            if is_sv_copy:
+                elem_val = new_src_fluent(*(index_params + src_extra_args))
+            else:
+                elem_val = self._get_element_value(val_node, pos)
+            self._add_effect_to_action(new_action, 'none', dst_elem, elem_val, new_condition, effect.forall)
+
+        return True
+
     def _add_instantiated_effect(
             self,
             problem: Problem,
@@ -392,6 +446,15 @@ class ArraysRemover(engines.engine.Engine, CompilerMixin):
             new_action: Action,
     ) -> bool:
         """Add single effect to action. Returns False if action should be pruned."""
+        # Whole-array assignment: (assign arr value) where arr is a bare array fluent.
+        # Expand into one per-element effect instead of returning None for the fluent.
+        if effect.fluent.is_fluent_exp():
+            base_name = effect.fluent.fluent().name.split('[')[0]
+            if (problem.has_fluent(base_name) and
+                    problem.fluent(base_name).type.is_array_type() and
+                    not re.findall(r'\[([0-9]+)\]', effect.fluent.fluent().name)):
+                return self._expand_whole_array_effect(problem, new_problem, effect, new_action)
+
         # Determine effect type
         if effect.is_increase():
             effect_type = 'increase'

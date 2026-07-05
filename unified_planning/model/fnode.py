@@ -483,6 +483,15 @@ class FNode(object):
     # Infix operators
     #
 
+    def __getitem__(self, index):
+        assert self.type.is_array_type(), "This FNode does not have array type"
+        em = self._env.expression_manager
+        if type(index) is int:
+            idx_fnode = em.Int(index)
+        else:
+            (idx_fnode,) = em.auto_promote(index)
+        return em.ArrayRead(self, idx_fnode)
+
     def __add__(self, right):
         return self._env.expression_manager.Plus(self, right)
 

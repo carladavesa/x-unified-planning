@@ -12,6 +12,16 @@
         (puzzle) - puzzle15
     )
 
+    ;(:functions
+    ;    (puzzle) - puzzle15.undef((0 0) (1 3) (5 8))
+    ;)
+    ;
+    ;(:arrays
+    ;    ( puzzle - puzzle15
+    ;     :undef (4 445)
+    ;    )
+    ;)
+
     (:action move_up
         :parameters (?i ?j - size)
         :precondition (and

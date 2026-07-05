@@ -4,23 +4,23 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="7c60bccf-105d-46ba-a2c0-79b47893c82f" name="Changes" comment="Proves pre revert">
-      <change afterPath="$PROJECT_DIR$/unified_planning/engines/compilers/OG_int_parameter_actions_remover.py" afterDir="false" />
+    <list default="true" id="7c60bccf-105d-46ba-a2c0-79b47893c82f" name="Changes" comment="Semantica">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/15-puzzle/15Puzzle.py" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/15-puzzle/15Puzzle.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/CHANGES.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/CHANGES.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/15-puzzle/pddl-extension/domain.pddl" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/15-puzzle/pddl-extension/domain.pddl" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/extensions/domains/compilation_solving.py" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/compilation_solving.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/extensions/domains/handcrafted_reader.py" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/handcrafted_reader.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/extensions/domains/labyrinth/Labyrinth.py" beforeDir="false" afterPath="$PROJECT_DIR$/docs/extensions/domains/labyrinth/Labyrinth.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/test_domains.py" beforeDir="false" afterPath="$PROJECT_DIR$/test_domains.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/engines/compilers/arrays_remover.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/engines/compilers/arrays_remover.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/unified_planning/engines/compilers/int_parameter_actions_remover.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/engines/compilers/int_parameter_actions_remover.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/engines/compilers/integers_remover.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/engines/compilers/integers_remover.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/engines/compilers/sets_remover.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/engines/compilers/sets_remover.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/unified_planning/grpc/proto_writer.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/grpc/proto_writer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/unified_planning/grpc/unified_planning.proto" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/grpc/unified_planning.proto" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/unified_planning/model/mixins/fluents_set.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/mixins/fluents_set.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/unified_planning/model/mixins/initial_state.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/mixins/initial_state.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/unified_planning/model/problem.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/problem.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/io/up_pddl_reader.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/io/up_pddl_reader.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/model/fluent.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/fluent.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/model/fnode.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/fnode.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/model/range_variable.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/range_variable.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/unified_planning/model/transition.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/transition.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/unified_planning/model/type_manager.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/type_manager.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/unified_planning/model/walkers/type_checker.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/walkers/type_checker.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/unified_planning/model/walkers/simplifier.py" beforeDir="false" afterPath="$PROJECT_DIR$/unified_planning/model/walkers/simplifier.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -478,6 +478,12 @@
       <workItem from="1780644528597" duration="5474000" />
       <workItem from="1780990952234" duration="10110000" />
       <workItem from="1781096726271" duration="2676000" />
+      <workItem from="1781351208793" duration="20860000" />
+      <workItem from="1782050869640" duration="5650000" />
+      <workItem from="1782199713753" duration="23422000" />
+      <workItem from="1782487596274" duration="6612000" />
+      <workItem from="1782909506880" duration="14350000" />
+      <workItem from="1783062706499" duration="7434000" />
     </task>
     <task id="LOCAL-00001" summary="Commit hanoi">
       <option name="closed" value="true" />
@@ -567,7 +573,15 @@
       <option name="project" value="LOCAL" />
       <updated>1779952201492</updated>
     </task>
-    <option name="localTasksCounter" value="12" />
+    <task id="LOCAL-00012" summary="Semantica">
+      <option name="closed" value="true" />
+      <created>1781351362478</created>
+      <option name="number" value="00012" />
+      <option name="presentableId" value="LOCAL-00012" />
+      <option name="project" value="LOCAL" />
+      <updated>1781351362480</updated>
+    </task>
+    <option name="localTasksCounter" value="13" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -639,7 +653,8 @@
     <MESSAGE value="All features ready" />
     <MESSAGE value="Petit canvi a parser i proto" />
     <MESSAGE value="Proves pre revert" />
-    <option name="LAST_COMMIT_MESSAGE" value="Proves pre revert" />
+    <MESSAGE value="Semantica" />
+    <option name="LAST_COMMIT_MESSAGE" value="Semantica" />
   </component>
   <component name="XDebuggerManager">
     <breakpoint-manager>

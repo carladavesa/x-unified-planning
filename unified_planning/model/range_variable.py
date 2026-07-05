@@ -57,12 +57,14 @@ class RangeVariable:
         return f"integer[{str(self.initial)}, {str(self.last)}] {self.name}"
 
     def __eq__(self, oth: object) -> bool:
+        # Fixed: was comparing self._X == self._X (always True), causing all
+        # RangeVariables with the same name to collide in the expression manager cache.
         if isinstance(oth, RangeVariable):
             return (
                 self._name == oth._name
-                and self._initial == self._initial
-                and self._last == self._last
-                and self._type_int == self._type_int
+                and self._initial == oth._initial
+                and self._last == oth._last
+                and self._type_int == oth._type_int
                 and self._env == oth._env
             )
         else:

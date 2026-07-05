@@ -33,7 +33,7 @@ import pyparsing
 from pyparsing import ParseResults
 from pyparsing import CharsNotIn, Empty, col, lineno
 from pyparsing import Word, alphanums, alphas, ZeroOrMore, OneOrMore, Keyword
-from pyparsing import Suppress, Group, Optional, Forward
+from pyparsing import Suppress, Group, Optional, Forward, Combine, Literal
 
 if pyparsing.__version__ < "3.0.0":
     from pyparsing import oneOf as one_of
@@ -128,12 +128,10 @@ class PDDLGrammar:
             + Suppress(")")
         )
 
+        signed_int = Combine(Optional(Literal("-")) + Word(pyparsing.nums))
         type_constructor = (
-            # (number lo hi)
-            Group(Keyword("number") + Word(pyparsing.nums) + Word(pyparsing.nums))
-            # (array rows cols elem_type)
+            Group(Keyword("number") + signed_int + signed_int)
             | Group(Keyword("array") + OneOrMore((name | Word(pyparsing.nums))))
-            # (set elem_type)
             | Group(Keyword("set") + name)
         )
         type_parent = Group(Suppress("(") + type_constructor + Suppress(")")) | name
@@ -1126,10 +1124,6 @@ class UPPDDLReader:
                     act.add_decrease_effect(*eff if timing is None else (timing, *eff), forall=tuple(forall_variables.values()))  # type: ignore
             elif op == "forall":
                 assert isinstance(exp, CustomParseResults)
-                if forall_variables:
-                    raise UPUnsupportedProblemTypeError(
-                        "Nested forall on effects are not supported."
-                    )
                 forall_variables = forall_variables.copy()
                 forall_variables.update(self._parse_quantifier_vars(exp[1], act, types_map))
                 to_add.append((exp[2], cond, forall_variables))
@@ -1342,10 +1336,6 @@ class UPPDDLReader:
                 )
             elif len(eff) == 3 and op == "forall":
                 assert isinstance(eff, CustomParseResults)
-                if forall_variables:
-                    raise UPUnsupportedProblemTypeError(
-                        "Nested forall on effects are not supported."
-                    )
                 forall_variables = forall_variables.copy()
                 forall_variables.update(self._parse_quantifier_vars(eff[1], act, types_map))
                 to_add.append((eff[2], forall_variables))

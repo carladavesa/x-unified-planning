@@ -434,14 +434,18 @@ class Simplifier(walkers.dag.DagWalker):
         return self.manager.SetIntersection(*args)
 
     def walk_set_difference(self, expression: FNode, args: List[FNode]) -> FNode:
+        # Fixed: was returning SetIntersection(*args) instead of SetDifference(*args),
+        # so difference(S, S) simplified to intersect(S, S)=S rather than EMPTY_SET,
+        # causing flush effects that clear a set to leave it unchanged.
         assert len(args) == 2
         if args[1] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[0])
+            return args[0]
         elif args[0] == self.manager.EMPTY_SET():
             return self.manager.EMPTY_SET()
+        elif args[0] == args[1]:
+            return self.manager.EMPTY_SET()
 
-        # implementar simplificador!
-        return self.manager.SetIntersection(*args)
+        return self.manager.SetDifference(*args)
 
     def walk_plus(self, expression: FNode, args: List[FNode]) -> FNode:
         new_args_plus: List[FNode] = list()

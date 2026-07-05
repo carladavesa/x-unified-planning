@@ -13,7 +13,6 @@
 # limitations under the License.
 #
 """This module defines the integer parameter actions remover and range variable remover compiler."""
-import re
 from itertools import product
 from unified_planning.exceptions import UPProblemDefinitionError
 from unified_planning.model.fnode import FNode
@@ -42,9 +41,9 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
     Compiler that removes integer parameters from actions by instantiating them.
 
     Transforms:
-    1. Integer action parameters  →  one grounded action per valid integer combination.
-    2. Range variables            →  expanded quantifiers over concrete integer ranges.
-    3. Array accesses with integer-parameter indices  →  the same read/write chain with
+    1. Integer action parameters -> grounded instantiated actions for each valid integer value
+    2. Range variables -> expanded quantifiers over concrete integer ranges.
+    3. Array accesses with integer-parameter indices  ->  the same read/write chain with
        concrete integer constants substituted in place of the parameters.
 
        Crucially, the base array fluent itself is *not* renamed or split.  A read like
@@ -199,7 +198,6 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
     ) -> ProblemKind:
         new_kind = problem_kind.clone()
         new_kind.unset_parameters("BOUNDED_INT_ACTION_PARAMETERS")
-        new_kind.unset_parameters("BOUNDED_INT_FLUENT_PARAMETERS")
         new_kind.unset_conditions_kind("RANGE_VARIABLES")
         return new_kind
 
@@ -230,159 +228,6 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             valid_positions = all_positions
 
         self.domains[fluent.name] = valid_positions
-
-    def _extract_array_indices(
-            self,
-            fluent: Fluent,
-            int_params: Optional[Dict[str, int]] = None,
-            instantiations: Optional[Tuple[int, ...]] = None
-    ) -> Union[List[int], None]:
-        """
-        Extract and evaluate array indices from fluent name.
-        Parses numeric and parameter-based indices, substituting parameter values from the current instantiation.
-        Returns None if out of bounds or undefined.
-        """
-        pattern = r'\[(.*?)\]'
-        indices = []
-        fluent_name = fluent.name
-        for access_expr in re.findall(pattern, fluent_name):
-            if access_expr.isdigit():
-                # Constant index
-                index_value = int(access_expr)
-            else:
-                # Expression with parameters - substitute and evaluate
-                evaluated_expr = access_expr
-                for param_name, param_idx in int_params.items():
-                    evaluated_expr = re.sub(
-                        r'\b' + re.escape(param_name) + r'\b',
-                        str(instantiations[param_idx]),
-                        evaluated_expr
-                    )
-
-                # Evaluate arithmetic expression
-                try:
-                    index_value = eval(evaluated_expr)
-                except:
-                    return None
-
-            indices.append(index_value)
-
-        # Check if access is within valid domain
-        fluent_base_name = fluent_name.split('[')[0]
-        valid_accesses = self.domains.get(fluent_base_name, [])
-        if tuple(indices) not in valid_accesses:
-            return None
-        return indices
-
-    # ==================== QUICK VALIDATION ====================
-    # NOTE: _quick_check_expression and _is_instantiation_valid below are
-    # *pre-transformation* heuristics that operate on the original (un-substituted)
-    # lifted action before _transform_expression runs.  They can catch a narrow set
-    # of obviously false cases (direct parameter==constant equality, legacy array OOB)
-    # but are NOT wired into the main instantiation loop and therefore do NOT serve
-    # as the primary dead-action pruning mechanism.
-    #
-    # The authoritative boundary-action pruning happens *after* substitution and
-    # simplification, inside _create_instantiated_action via _precondition_is_infeasible.
-    # That check sees the fully-resolved expression (e.g. (= blank_row -1)) and can
-    # compare concrete constants against declared fluent type ranges.
-
-    def _quick_check_expression(
-            self, problem: Problem, node: FNode, int_params: Dict[str, int], instantiation: Tuple[int, ...]
-    ) -> Optional[bool]:
-        """
-        Pre-transformation heuristic: check if an expression is definitely false
-        before running the full substitution machinery.
-
-        Handles:
-        - ``(= ?param const)`` or ``(= const ?param)`` where the parameter value
-          is already known from ``instantiation`` — straightforward equality check.
-        - AND: returns None if any conjunct is unknown (conservative).
-        - OR: returns False only if every disjunct is known-false.
-        - Array-indexed fluent equality: returns None (unknown) if the index tuple
-          falls outside the pre-computed domain (legacy guard for old array fluent
-          naming scheme).
-
-        Returns True/False if the result is definite, or None if unknown.
-
-        NOTE: This method is NOT called during the main instantiation loop.
-        See _precondition_is_infeasible for the post-transformation pruner that
-        handles the general boundary-action case (fluent equality with out-of-range
-        constant after parameter substitution).
-        """
-        # Check parameter equality
-        if node.is_equals():
-            left, right = node.arg(0), node.arg(1)
-
-            # parameter == constant
-            if left.is_parameter_exp() and right.is_int_constant():
-                param_name = left.parameter().name
-                if param_name in int_params:
-                    return instantiation[int_params[param_name]] == right.constant_value()
-
-            # constant == parameter
-            if right.is_parameter_exp() and left.is_int_constant():
-                param_name = right.parameter().name
-                if param_name in int_params:
-                    return instantiation[int_params[param_name]] == left.constant_value()
-
-            # Check array access out of bounds
-            if left.is_fluent_exp():
-                fluent_base = left.fluent().name.split('[')[0]
-                old_fluent = problem.fluent(fluent_base)
-                if old_fluent.type.is_array_type():
-                    indices = self._extract_array_indices(left.fluent(), int_params, instantiation)
-                    if indices is None:
-                        return None  # Out of bounds
-
-        # Check AND
-        elif node.is_and():
-            for arg in node.args:
-                result = self._quick_check_expression(problem, arg, int_params, instantiation)
-                if result == None:
-                    return None
-
-        # Check OR
-        elif node.is_or():
-            all_false = True
-            for arg in node.args:
-                result = self._quick_check_expression(problem, arg, int_params, instantiation)
-                if result == True:
-                    return True
-                if result != False:
-                    all_false = False
-            if all_false:
-                return False
-
-        return None  # Unknown
-
-    def _is_instantiation_valid(
-            self,
-            problem: Problem,
-            action: Action,
-            int_param_map: Dict[str, int],
-            instantiation: Tuple[int, ...]
-    ) -> bool:
-        """
-        Pre-transformation validity check: returns False if any precondition is
-        definitely false before running the full substitution.
-
-        Delegates to _quick_check_expression for each precondition conjunct.
-
-        NOTE: This method is NOT called during the main instantiation loop and is
-        therefore not the primary pruning mechanism.  It exists as an optional
-        early-exit optimisation that could be wired into _instantiate_action before
-        calling _create_instantiated_action.  The post-transformation check in
-        _precondition_is_infeasible (called from _create_instantiated_action) is
-        the definitive gate that handles the general boundary-action case.
-        """
-        # Quick check preconditions
-        for precond in action.preconditions:
-            result = self._quick_check_expression(problem, precond, int_param_map, instantiation)
-            if result == False:
-                return False  # Definitely false precondition
-
-        return True
 
     # ==================== RANGE VARIABLE TRANSFORMATION ====================
 
@@ -477,7 +322,10 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
                 if transformed is not None:
                     expanded_args.append(transformed)
         if not expanded_args:
-            return None
+            # Empty range: forall over nothing is vacuously True; exists over nothing is False.
+            # Returning None here caused the action to be silently discarded downstream.
+            em = new_problem.environment.expression_manager
+            return em.TRUE() if node.is_forall() else em.FALSE()
 
         # Combine with appropriate operator
         em = new_problem.environment.expression_manager
@@ -516,23 +364,8 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         old_fluent = old_problem.fluent(fluent_base_name)
         # Array fluent: extract indices from name
         if old_fluent.type.is_array_type():
-            # Whole-array reference (e.g. `pancake_stack()` in a goal equality) — no
-            # indices encoded in the name yet.  IPAR has nothing to substitute here;
-            # let ARRAYS_REMOVING expand it into element-wise comparisons.
-            if '[' not in node.fluent().name:
-                return node.fluent()(*new_args)
-            index_params = self._extract_array_indices(node.fluent(), int_params, instantiations)
-            if index_params is None:
-                return None
-            # Produce an ArrayRead chain rather than a named-bracket Fluent alias.
-            # This produces the same representation as PDDL-XTS (read (cells) 1).
-            # Callers that need a write target (effect fluent) convert the outermost
-            # ArrayRead to ArrayWrite as post-processing.
-            em = old_problem.environment.expression_manager
-            result = old_problem.fluent(fluent_base_name)(*new_args)
-            for k in index_params:
-                result = em.ArrayRead(result, Int(k))
-            return result
+            # Whole-array reference: let ARRAYS_REMOVING expand it into element-wise comparisons.
+            return node.fluent()(*new_args)
 
         # Integer-parametered fluent: substitute concrete int values into grounded name
         if fluent_base_name in self._int_param_fluents:

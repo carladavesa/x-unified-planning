@@ -1,4 +1,3 @@
-from docs.code_snippets.pddl_interop import domain_filename
 from docs.extensions.domains import compilation_solving
 from unified_planning.io import PDDLReader
 

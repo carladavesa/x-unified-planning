@@ -952,12 +952,14 @@ walking code (walkers, compilers, printers) dispatches on this field. Adding two
 members here is the minimal change that allows new FNode kinds to exist without
 colliding with any existing kind.
 
-**Why separate from `ARRAY_INDEX`:** `ARRAY_INDEX` already existed. It is used by
-`ArraysRemover` internally to construct indexed-fluent names like `board[1][2]`. It
-was never meant to appear in user-level expression trees. Reusing it for `read`/`write`
-would require every downstream pass to decide by context whether an `ARRAY_INDEX`
-node represents a user-level access (needs compilation) or a compiler-internal name
-(already compiled) — an untenable design.
+**Why not reuse or introduce `ARRAY_INDEX`:** `expression.py` has a factory method
+`array_index()` that references `OperatorKind.ARRAY_INDEX`, but `ARRAY_INDEX` was
+**never defined** in `operators.py` — calling the factory would raise `AttributeError`
+at runtime. It is a dead stub and `ArraysRemover` never calls it. The new operators are
+`ARRAY_READ` and `ARRAY_WRITE` rather than `ARRAY_INDEX` because they carry distinct
+user-level semantics: they must survive through the parser, type-checker, serializer,
+and C++ backend unchanged. An indexed-name approach (the old `board[1][2]` string
+encoding) has no place in the new architecture.
 
 **Risk of omitting:** Creating `ArrayRead`/`ArrayWrite` FNodes (§3) would fail with
 `KeyError` inside `create_node` when it looks up `OperatorKind.ARRAY_READ`.
@@ -2102,8 +2104,36 @@ preserved correctly through the type resolver and the compilation stage.
 
 ## 14. `unified_planning/engines/compilers/sets_remover.py`
 
-Two bugs in `SetsRemover` were discovered and fixed in commit **`fe37f780`**
+Three bugs in `SetsRemover` were fixed. §14.0 was fixed when bounded-integer set
+support was added; §14.1 and §14.2 were fixed in commit **`fe37f780`**
 ("Fixed recursive call for non-set equality expressions", Apr 2026).
+
+### 14.0 Bug fix: `assert elements_type.is_user_type()` in `_add_set_as_boolean_fluent`
+
+**Original code:**
+```python
+elements_type = fluent.type.elements_type
+assert elements_type.is_user_type(), "Only UserType types are supported"
+element_param = model.Parameter(str(elements_type)[0].lower(), elements_type)
+```
+
+The assertion made `SetsRemover` crash immediately for any set fluent whose element
+type was not a `UserType` — including `set{integer[0,9]}` and any other bounded-integer
+set. The message "Only UserType types are supported" reflected the original design
+scope (sets of objects), not a fundamental constraint.
+
+**Fix:** replaced the assert with an `if/elif` dispatch:
+```python
+if elements_type.is_user_type():
+    element_param = model.Parameter(str(elements_type)[0].lower(), elements_type)
+elif elements_type.is_int_type():
+    # ... enumerate integer range, create element objects ...
+```
+
+**Risk of omitting:** Any domain with a `set{integer[lo,hi]}` fluent crashes at the
+start of `SetsRemover._compile` before any action is processed.
+
+---
 
 ### 14.1 Bug fix: `fluent_name` crashes on fluents with more than one argument
 
@@ -2188,6 +2218,222 @@ compares object parameters (e.g., checking `?t ≠ ?t2`).
 
 ---
 
+## 15. Python API Unification: `Fluent.__getitem__` and `FNode.__getitem__` produce `ARRAY_READ` nodes
+
+### Background: two representations for the same concept
+
+Before this change, array-element accesses reached the compiler through **two
+incompatible paths** depending on whether the domain was authored in PDDL or via the
+Python API.
+
+**PDDL reader path** (§1.5): `(read (board ?a) ?r ?c)` is parsed by the stack machine
+into a proper FNode chain:
+
+```
+ArrayRead(ArrayRead(FluentExp(board, [?a]), ParameterExp(?r)), ParameterExp(?c))
+```
+
+**Python API path** (old): `puzzle[r-1][c]` called `Fluent.__getitem__` which produced
+a *new `Fluent` object* with the index encoded in its name:
+
+```python
+# Old Fluent.__getitem__ for puzzle[r-1][c] (r, c are Parameters):
+Fluent("puzzle[(r - 1)][c]", ...)   # a new Fluent with a bracket-encoded name
+```
+
+IPAR's `_transform_fluent_exp` contained a separate `_extract_array_indices` method
+that parsed these bracket-encoded names with a regex and `eval()` to recover the
+indices. This was a parallel, fragile path that lived alongside the clean
+`_transform_array_access` ARRAY_READ path.
+
+The two paths are now collapsed into one: `Fluent.__getitem__` produces an
+`ARRAY_READ` FNode, identical to what the PDDL reader produces.
+
+---
+
+### 15.1 `unified_planning/model/fluent.py`: `Fluent.__getitem__` → `ARRAY_READ`
+
+```python
+# Before
+def __getitem__(self, index):
+    assert self.type.is_array_type(), "The Fluent has no array type"
+    # ... construct a new Fluent with a bracket-encoded name like "puzzle[(r - 1)][c]"
+    return Fluent(new_name, self._typename.elements_type, ...)
+
+# After
+def __getitem__(self, index: Union["up.model.parameter.Parameter", "up.model.fnode.FNode",
+                                   "up.model.range_variable.RangeVariable", int]) -> "up.model.fnode.FNode":
+    assert self.type.is_array_type(), "The Fluent has no array type"
+    em = self._env.expression_manager
+    if type(index) is int:
+        idx_fnode = em.Int(index)
+    else:
+        (idx_fnode,) = em.auto_promote(index)
+    return em.ArrayRead(em.FluentExp(self), idx_fnode)
+```
+
+`auto_promote` converts `Parameter`, `RangeVariable`, and `FNode` inputs to FNodes
+(a `Parameter` becomes a `PARAMETER_EXP`, a `RangeVariable` becomes a
+`RANGE_VARIABLE_EXP`, a bare `FNode` passes through). Integer literals use `em.Int()`
+because `auto_promote` does not handle Python `int`.
+
+**Tracing `puzzle[r-1][c]`** (where `r`, `c` are `Parameter` objects):
+
+1. `puzzle[r-1]` — Python evaluates `r-1` first. `Parameter.__sub__` calls
+   `em.Minus(r, 1)`, producing a `MINUS` FNode.
+2. `puzzle.__getitem__(MINUS_node)` — `MINUS_node` is not `int`, so
+   `auto_promote(MINUS_node)` returns `(MINUS_node,)` unchanged.
+3. Returns `ArrayRead(FluentExp(puzzle), Minus(r, 1))` — an FNode.
+4. `puzzle[r-1][c]` — `FNode.__getitem__(c)` is called on the result (§15.2).
+
+**Risk of omitting:** The Python API produces opaque `Fluent` objects with
+bracket-encoded names that IPAR's `_transform_array_access` cannot interpret.
+IPAR returns `None` for every array access, silently dropping all array-indexed
+fluents — the compiled problem has zero array actions.
+
+---
+
+### 15.2 `unified_planning/model/fnode.py`: new `FNode.__getitem__`
+
+```python
+def __getitem__(self, index):
+    assert self.type.is_array_type(), "This FNode does not have array type"
+    em = self._env.expression_manager
+    if type(index) is int:
+        idx_fnode = em.Int(index)
+    else:
+        (idx_fnode,) = em.auto_promote(index)
+    return em.ArrayRead(self, idx_fnode)
+```
+
+This method enables **multi-dimensional chaining**. After step 3 in §15.1,
+`puzzle[r-1]` has returned an `ArrayRead` FNode whose type is
+`ArrayType(4, range)` (a 1-D sub-array). Subscripting that FNode with `[c]` invokes
+`FNode.__getitem__(c)`, producing:
+
+```
+ArrayRead(ArrayRead(FluentExp(puzzle), Minus(r,1)), c)
+```
+
+This is exactly the structure that IPAR's `_transform_array_access` expects and that
+the PDDL reader produces for `(read (puzzle) (- ?r 1) ?c)`.
+
+Without this method, `puzzle[r-1][c]` raises `TypeError` because Python would try to
+use the FNode as a sequence.
+
+---
+
+### 15.3 `unified_planning/model/transition.py`: accept `ARRAY_READ` as `add_effect` target
+
+`add_effect`, `add_increase_effect`, and `add_decrease_effect` previously accepted
+only `FLUENT_EXP`, `DOT`, and (after §7) `ARRAY_WRITE` as the effect target. With
+the Python API now producing `ARRAY_READ` from `Fluent.__getitem__`, user code like:
+
+```python
+action.add_effect(puzzle[r][c], new_value)
+```
+
+passes an `ARRAY_READ` node as the target. The fix auto-promotes it to `ARRAY_WRITE`
+before validation — added at the top of all three methods:
+
+```python
+if fluent_exp.is_array_read():
+    fluent_exp = self._environment.expression_manager.ArrayWrite(
+        fluent_exp.arg(0), fluent_exp.arg(1)
+    )
+```
+
+The outermost `ARRAY_READ` is replaced by an `ARRAY_WRITE` with the same `(array,
+index)` arguments. Inner `ARRAY_READ` nodes (the navigation chain for multi-
+dimensional indexing) stay unchanged. The resulting
+`ArrayWrite(ArrayRead(FluentExp(puzzle), r), c)` is the same representation the PDDL
+reader produces for `(write ((puzzle) ?r ?c) value)`.
+
+This mirrors the identical pattern already present in IPAR's `_add_instantiated_effect`.
+
+**Risk of omitting:** `action.add_effect(puzzle[r][c], v)` raises `UPUsageError` every
+time, making the Python API unusable for writing array elements.
+
+---
+
+### 15.4 `unified_planning/engines/compilers/int_parameter_actions_remover.py`: dead code removal
+
+With `Fluent.__getitem__` now producing `ARRAY_READ` chains, the Python API and PDDL
+paths are identical by the time IPAR sees the problem. This made several methods dead.
+
+**Removed: `_extract_array_indices`**
+
+This method parsed bracket-encoded fluent names (e.g., `"puzzle[(r - 1)][c]"`) with
+a regex and `eval()` to extract index expressions and substitute concrete integers:
+
+```python
+def _extract_array_indices(self, fluent, int_params, instantiations):
+    import re
+    indices_str = re.findall(r'\[(.*?)\]', fluent.name)
+    for s in indices_str:
+        val = eval(s, {"__builtins__": {}}, local_env)  # string eval
+        ...
+```
+
+This was the sole Python API path into `_transform_array_access`. With no callers
+remaining, it and the top-level `import re` were deleted.
+
+**Removed: `_quick_check_expression` and `_is_instantiation_valid`**
+
+These were pre-transformation heuristics that scanned an action's expressions for
+"obviously out-of-bounds" index arithmetic before the full instantiation loop. They
+were never wired into the main `_compile` loop — no call site existed anywhere.
+
+**Simplified: `_transform_fluent_exp` array branch**
+
+The old array branch called `_extract_array_indices` and fell back to a whole-array
+pass-through. After the deletion it reduces to just the pass-through guard (§11.6):
+
+```python
+if old_fluent.type.is_array_type():
+    # Whole-array reference: let ARRAYS_REMOVING expand it.
+    return node.fluent()(*new_args)
+```
+
+`ARRAY_READ`/`ARRAY_WRITE` chains — the only form the Python API now produces — are
+handled by the `is_array_read()` / `is_array_write()` guard in
+`_transform_expression` (§11.2) before `_transform_fluent_exp` is ever reached.
+
+| Input form | Handler |
+|---|---|
+| `ARRAY_READ` / `ARRAY_WRITE` chain | `_transform_array_access` (§11.1) |
+| `FLUENT_EXP` for whole-array fluent | `_transform_fluent_exp` pass-through (§11.6) |
+| `FLUENT_EXP` for scalar fluent | `_transform_fluent_exp` normal path |
+
+---
+
+### 15.5 `docs/extensions/domains/handcrafted_reader.py`: dead import removal
+
+The file previously contained:
+
+```python
+from docs.code_snippets.pddl_interop import domain_filename   # dead import
+from docs.extensions.domains import compilation_solving
+...
+domain_filename = f'docs/extensions/domains/{domain}/...'     # overwrites the import
+```
+
+`domain_filename` was immediately overwritten on the next use, making the import
+completely dead. Importing `pddl_interop` caused its module-level code to execute,
+including tarski calls — crashing the script with
+`ModuleNotFoundError: No module named 'tarski'` even when tarski is not installed.
+
+The dead import line was removed. The script now starts with:
+
+```python
+from docs.extensions.domains import compilation_solving
+```
+
+**Risk of omitting:** Running `python -m docs.extensions.domains.handcrafted_reader`
+fails at import time with a `ModuleNotFoundError` unrelated to the script's purpose.
+
+---
+
 ## Summary table
 
 | File | Change type | Justification |
@@ -2195,17 +2441,19 @@ compares object parameters (e.g., checking `?t ≠ ?t2`).
 | `io/up_pddl_reader.py` | Feature | Full PDDL surface syntax for arrays, sets, bounded integers, `count`, and inline range quantifiers (§1.9–§1.10) |
 | `model/operators.py` | Feature | New `ARRAY_READ` / `ARRAY_WRITE` operator kinds |
 | `model/expression.py` | Feature | Factory methods for the two new FNode types |
-| `model/fnode.py` | Feature | String repr + predicate methods for the new node types |
+| `model/fluent.py` | Feature | `Fluent.__getitem__` returns `ARRAY_READ` FNode instead of bracket-encoded `Fluent` (§15.1) |
+| `model/fnode.py` | Feature | String repr + predicate methods for new node types (§4.1–§4.2); `FNode.__getitem__` for multi-dimensional chaining (§15.2) |
 | `model/effect.py` (§5.1) | Bug fix | Skip nested-fluent check for array-write targets |
 | `model/effect.py` (§5.2) | Bug fix | Widen assert to accept `RangeVariable` in forall effects |
 | `model/problem.py` | Bug fix | Handle array-write targets when computing static fluents |
-| `model/transition.py` | Bug fix | Accept `ARRAY_WRITE` as a valid `add_effect` target |
+| `model/transition.py` | Bug fix | Accept `ARRAY_WRITE` as a valid `add_effect` target (§7); auto-convert `ARRAY_READ` → `ARRAY_WRITE` in `add_effect`/`add_increase_effect`/`add_decrease_effect` (§15.3) |
 | `model/walkers/simplifier.py` | Feature | Walk handlers for `ARRAY_READ` / `ARRAY_WRITE` |
 | `model/walkers/type_checker.py` | Feature | Type-inference handlers for `ARRAY_READ` / `ARRAY_WRITE` |
 | `engines/compilers/arrays_remover.py` | Feature + Bug fix | N-D array access transformation; guard against misrouting (see §"Why the compilers…") |
-| `engines/compilers/int_parameter_actions_remover.py` | Feature + Bug fix | Integer-range variable substitution in array indices; `is_constant()` guard; whole-array goal pass-through (§11.6); grounding of integer-parametered fluents into parameterless variants (§11.7) |
-| `engines/compilers/sets_remover.py` | Bug fix | Fluent name crash on multi-argument fluents (§14.1); removed overly restrictive assert and added recursive transformation for non-set equalities (§14.2) |
+| `engines/compilers/int_parameter_actions_remover.py` | Feature + Bug fix + Cleanup | Integer-range variable substitution in array indices; `is_constant()` guard; whole-array goal pass-through (§11.6); grounding of integer-parametered fluents (§11.7); removed dead `_extract_array_indices`, `_quick_check_expression`, `_is_instantiation_valid`; `_transform_array_access` is now the single unified handler for all array index expressions (§15.4) |
+| `engines/compilers/sets_remover.py` | Bug fix | `assert elements_type.is_user_type()` crash for bounded-integer sets (§14.0); fluent name crash on multi-argument fluents (§14.1); removed overly restrictive assert and added recursive transformation for non-set equalities (§14.2) |
 | `docs/extensions/domains/pancake-sorting/pddl-extension/` | Domain + Test | Pancake-sorting domain extended to 10 elements; `forall` uses inline range type (§12.5); new `long.pddl` instance |
 | `docs/extensions/domains/dump-trucks/pddl-extension/` | Bug fix | Empty-set syntax corrected to `(set.mk ())` in domain and problem files (§12.4) |
 | `docs/extensions/domains/tests/pddl-extension/` | Tests | Renamed array test files; new `domain_full_bounds.pddl`, `test_bounded.py`, and thermostat domain files (§13.1–§13.2) |
 | `docs/extensions/domains/pddl_reader.py` | Fix | Use `UPPDDLReader` directly for extension domains instead of relying on `PDDLReader` fallback |
+| `docs/extensions/domains/handcrafted_reader.py` | Fix | Removed dead `pddl_interop` import that triggered `tarski` module-level execution (§15.5) |

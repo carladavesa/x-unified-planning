@@ -77,6 +77,7 @@ COMPILATION_PIPELINES = {
         CompilationKind.COUNT_REMOVING,
         CompilationKind.INTEGERS_REMOVING,
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        CompilationKind.QUANTIFIERS_REMOVING,
     ],
     'ipar': [
         CompilationKind.INT_PARAMETER_ACTIONS_REMOVING,

@@ -777,23 +777,52 @@ class ProtobufWriter(Converter):
                     )
                 )
 
-        # Collect composite types (array/set) referenced by fluent value types or
-        # fluent parameter types.  These are not included in problem.user_types.
-        composite_types = []
-        seen_composite = set()
+        # [XTS] Collect extra TypeDeclarations for types used in the problem but
+        # absent from problem.user_types:
+        #   - bounded-int types (e.g. "up:integer[0, 4]") — Python serialises
+        #     these as inline strings in fluent/action fields without emitting a
+        #     TypeDeclaration, forcing C++ to scan inline strings on its own.
+        #   - anonymous inner composite element types (e.g. the inner array type
+        #     inside a 2D board) — these have no declared name and are therefore
+        #     not in user_types, but C++ needs them registered to resolve element
+        #     type chains without string-parsing fallbacks.
+        # Emitting them here lets C++ find every type via the normal
+        # TypeDeclarations loop, removing the need for collect_bounded_type() and
+        # the composite-element worklist on the C++ side.
+        extra_types: list = []
+        seen_extra: set = set()
+        seen_user = {proto_type(t) for t in problem.user_types}
+
+        def _collect(t: model.Type) -> None:
+            tn = proto_type(t)
+            if tn in seen_user or tn in seen_extra:
+                return
+            is_bounded_int = t.is_int_type() and t.lower_bound is not None
+            if t.is_array_type() or t.is_set_type() or is_bounded_int:
+                seen_extra.add(tn)
+                extra_types.append(t)
+            if t.is_array_type() or t.is_set_type():
+                elem = t.elements_type
+                if elem is not None:
+                    _collect(elem)
+
         for f in problem.fluents:
             for t in [f.type] + [p.type for p in f.signature]:
-                if t.is_array_type() or t.is_set_type():
-                    tn = proto_type(t)
-                    if tn not in seen_composite:
-                        seen_composite.add(tn)
-                        composite_types.append(t)
+                _collect(t)
+        for a in problem.actions:
+            for p in a.parameters:
+                _collect(p.type)
+        # Bounded-int types that serve only as parents of user types
+        # (never appear directly as a fluent/param type).
+        for ut in problem.user_types:
+            if isinstance(ut, model.types._UserType) and ut.father is not None:
+                _collect(ut.father)
 
         return proto.Problem(
             domain_name=problem_name + "_domain",
             problem_name=problem_name,
             types=[self.convert(t) for t in problem.user_types]
-                  + [self.convert(t) for t in composite_types],
+                  + [self.convert(t) for t in extra_types],
             fluents=[self.convert(f, problem) for f in problem.fluents],
             objects=[self.convert(o) for o in problem.all_objects],
             actions=[self.convert(a) for a in problem.actions],
