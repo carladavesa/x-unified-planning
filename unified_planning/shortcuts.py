@@ -55,6 +55,57 @@ def Count(*args: Union[Expression, Iterable[Expression]]) -> FNode:
     return get_environment().expression_manager.Count(*args)
 
 
+def AtLeastK(k: int, *args: Union[Expression, Iterable[Expression]]) -> FNode:
+    """
+    | Creates an expression stating that at least ``k`` of the given
+      ``boolean`` conditions hold, encoded as ``Count(args) >= k``.
+
+    | This function has polymorphic n-arguments, like ``Count``.
+    | Restriction: Arguments must be ``boolean``.
+
+    :param k: The minimum number of conditions that must hold.
+    :param \\*args: Either an ``Iterable`` of ``boolean expressions``, like ``[a, b, c]``,
+        or an unpacked version of it, like ``a, b, c``.
+    :return: The created expression.
+    """
+    em = get_environment().expression_manager
+    return em.GE(em.Count(*args), k)
+
+
+def AtMostK(k: int, *args: Union[Expression, Iterable[Expression]]) -> FNode:
+    """
+    | Creates an expression stating that at most ``k`` of the given
+      ``boolean`` conditions hold, encoded as ``Count(args) <= k``.
+
+    | This function has polymorphic n-arguments, like ``Count``.
+    | Restriction: Arguments must be ``boolean``.
+
+    :param k: The maximum number of conditions that may hold.
+    :param \\*args: Either an ``Iterable`` of ``boolean expressions``, like ``[a, b, c]``,
+        or an unpacked version of it, like ``a, b, c``.
+    :return: The created expression.
+    """
+    em = get_environment().expression_manager
+    return em.LE(em.Count(*args), k)
+
+
+def ExactlyK(k: int, *args: Union[Expression, Iterable[Expression]]) -> FNode:
+    """
+    | Creates an expression stating that exactly ``k`` of the given
+      ``boolean`` conditions hold, encoded as ``Count(args) == k``.
+
+    | This function has polymorphic n-arguments, like ``Count``.
+    | Restriction: Arguments must be ``boolean``.
+
+    :param k: The exact number of conditions that must hold.
+    :param \\*args: Either an ``Iterable`` of ``boolean expressions``, like ``[a, b, c]``,
+        or an unpacked version of it, like ``a, b, c``.
+    :return: The created expression.
+    """
+    em = get_environment().expression_manager
+    return em.Equals(em.Count(*args), k)
+
+
 def And(*args: Union[BoolExpression, Iterable[BoolExpression]]) -> FNode:
     """
     | Returns a conjunction of terms.

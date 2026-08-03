@@ -547,6 +547,67 @@ class TestProblem(unittest_TestCase):
                     problem.kind.has_simple_numeric_planning(), problem.name
                 )
 
+    def test_static_vs_dynamic_fluents_in_assignments_kind(self):
+        """The *_FLUENTS_IN_*_ASSIGNMENTS kinds must distinguish static from
+        dynamic fluents read by an effect value. Regression guard: the kind
+        factory compared the FNodes returned by the free-vars extractor
+        directly against static_fluents (a set of Fluent objects), so the
+        STATIC_FLUENTS_* variants were unreachable and the dynamic variants
+        fired even for purely static right-hand sides."""
+        x = Fluent("x", BoolType())
+        y = Fluent("y", BoolType())
+        locked = Fluent("locked", BoolType())
+        n = Fluent("n", IntType())
+        m = Fluent("m", IntType())
+
+        # Dynamic boolean source: y := x, with x written by an action.
+        problem = Problem("kind_dyn_bool")
+        problem.add_fluent(x, default_initial_value=False)
+        problem.add_fluent(y, default_initial_value=False)
+        setx = InstantaneousAction("setx")
+        setx.add_effect(x, True)
+        copy = InstantaneousAction("copy")
+        copy.add_effect(y, x)
+        problem.add_action(setx)
+        problem.add_action(copy)
+        self.assertTrue(problem.kind.has_fluents_in_boolean_assignments())
+        self.assertFalse(problem.kind.has_static_fluents_in_boolean_assignments())
+
+        # Static boolean source: y := locked, with locked never written.
+        problem = Problem("kind_static_bool")
+        problem.add_fluent(locked, default_initial_value=True)
+        problem.add_fluent(y, default_initial_value=False)
+        mark = InstantaneousAction("mark")
+        mark.add_effect(y, locked)
+        problem.add_action(mark)
+        self.assertTrue(problem.kind.has_static_fluents_in_boolean_assignments())
+        self.assertFalse(problem.kind.has_fluents_in_boolean_assignments())
+
+        # Mixed source: y := x and locked -> both kinds.
+        problem = Problem("kind_mixed_bool")
+        problem.add_fluent(x, default_initial_value=False)
+        problem.add_fluent(y, default_initial_value=False)
+        problem.add_fluent(locked, default_initial_value=True)
+        setx = InstantaneousAction("setx")
+        setx.add_effect(x, True)
+        both = InstantaneousAction("both")
+        both.add_effect(y, And(x, locked))
+        problem.add_action(setx)
+        problem.add_action(both)
+        self.assertTrue(problem.kind.has_fluents_in_boolean_assignments())
+        self.assertTrue(problem.kind.has_static_fluents_in_boolean_assignments())
+
+        # Numeric variant: n += m, with m never written (n is the target,
+        # not part of the value, so only the STATIC variant must be set).
+        problem = Problem("kind_static_num")
+        problem.add_fluent(n, default_initial_value=0)
+        problem.add_fluent(m, default_initial_value=1)
+        inc = InstantaneousAction("inc")
+        inc.add_increase_effect(n, m)
+        problem.add_action(inc)
+        self.assertTrue(problem.kind.has_static_fluents_in_numeric_assignments())
+        self.assertFalse(problem.kind.has_fluents_in_numeric_assignments())
+
     def test_simple_numeric_planning_ad_hoc_1(self):
         problem = Problem("ad_hoc_1")
         Location = UserType("Location")

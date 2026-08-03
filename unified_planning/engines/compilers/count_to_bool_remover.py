@@ -443,6 +443,15 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
             new_goal = self._transform_expression(new_problem, goal)
             new_problem.add_goal(new_goal)
 
+        # Transform trajectory constraints: clone() copies them verbatim,
+        # which would leak Count expressions through a compiler whose
+        # resulting_problem_kind promises COUNTING is removed.
+        new_problem.clear_trajectory_constraints()
+        for tc in problem.trajectory_constraints:
+            new_problem.add_trajectory_constraint(
+                self._transform_expression(new_problem, tc)
+            )
+
         # Transform quality metrics
         for qm in problem.quality_metrics:
             if qm.is_minimize_action_costs():

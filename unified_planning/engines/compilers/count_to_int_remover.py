@@ -466,6 +466,16 @@ class CountToIntRemover(engines.engine.Engine, CompilerMixin):
             new_goal = self._replace_count_with_fluents(new_problem, goal)
             new_problem.add_goal(new_goal)
 
+        # Rewrite trajectory constraints the same way (clone() copies them
+        # verbatim, leaking Counts a COUNT_INT_REMOVING result must not
+        # contain). Registered here, before effect generation, so the
+        # helper fluents they introduce are maintained by the actions too.
+        new_problem.clear_trajectory_constraints()
+        for tc in problem.trajectory_constraints:
+            new_problem.add_trajectory_constraint(
+                self._replace_count_with_fluents(new_problem, tc)
+            )
+
         # Add effects for count fluents and add actions to problem
         final_actions = []
         for temp_action, old_action in zip(temp_actions, problem.actions):
