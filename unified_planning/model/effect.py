@@ -77,9 +77,9 @@ class Effect:
     ):
         fve = fluent.environment.free_vars_extractor
         fluents_in_fluent = set(fve.get(fluent))
-        if fluent.is_array_index():
+        if fluent.is_array_access():
             base_fluent = fluent
-            while base_fluent.is_array_index():
+            while base_fluent.is_array_access():
                 base_fluent = base_fluent.arg(0)
             fluents_in_fluent.remove(base_fluent)
         else:

@@ -19,12 +19,24 @@ from unified_planning.model import InstantaneousAction
 from unified_planning.exceptions import UPValueError
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
-from unified_planning.model import Problem, Action, ProblemKind, OperatorKind, FNode, Effect
+from unified_planning.model import (
+    Problem,
+    Action,
+    ProblemKind,
+    OperatorKind,
+    FNode,
+    Effect,
+)
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
-from unified_planning.engines.compilers.utils import replace_action, get_fresh_name, updated_minimize_action_costs
+from unified_planning.engines.compilers.utils import (
+    replace_action,
+    get_fresh_name,
+    updated_minimize_action_costs,
+)
 from typing import Dict, Optional, Tuple, List
 from functools import partial
 from unified_planning.shortcuts import Not, And, Or, FALSE, TRUE
+
 
 class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
     """
@@ -34,7 +46,8 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
     equivalent boolean formula over the count's arguments.
 
     For example, `Count(a, b, c) <= 2` is rewritten as a formula stating that at
-    most two of `a, b, c` hold.
+    most two of `a, b, c` hold. The count's arguments are boolean expressions, and
+    the count denotes how many of them are true.
 
     This capability is offered by the :meth:`~unified_planning.engines.compilers.CountToBoolRemover.compile`
     method, that returns a :class:`~unified_planning.engines.CompilerResult` in which the
@@ -158,18 +171,27 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         """
         Transform expressions recursively, replacing count expressions with boolean formulas.
         """
-        if node.is_fluent_exp() or node.is_parameter_exp() or node.is_variable_exp() or node.is_constant():
+        if (
+            node.is_fluent_exp()
+            or node.is_parameter_exp()
+            or node.is_variable_exp()
+            or node.is_constant()
+        ):
             return node
 
         # UP normalizes all comparisons to LT, LE and EQUALS (GT/GE are rewritten)
         comparison_ops = {OperatorKind.LT, OperatorKind.LE, OperatorKind.EQUALS}
-        if node.node_type in comparison_ops and any(arg.is_count() for arg in node.args):
+        if node.node_type in comparison_ops and any(
+            arg.is_count() for arg in node.args
+        ):
             return self._transform_count_comparison(node)
 
         em = new_problem.environment.expression_manager
         new_args = [self._transform_expression(new_problem, arg) for arg in node.args]
         if node.is_exists() or node.is_forall():
-            return em.create_node(node.node_type, tuple(new_args), tuple(node.variables()))
+            return em.create_node(
+                node.node_type, tuple(new_args), tuple(node.variables())
+            )
         return em.create_node(node.node_type, tuple(new_args)).simplify()
 
     # ==================== COUNT VS CONSTANT ====================
@@ -185,11 +207,15 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         combinations = []
         for true_indices in itertools.combinations(range(n), k):
             true_set = set(true_indices)
-            literals = [arguments[i] if i in true_set else Not(arguments[i]) for i in range(n)]
+            literals = [
+                arguments[i] if i in true_set else Not(arguments[i]) for i in range(n)
+            ]
             combinations.append(And(*literals))
         return combinations
 
-    def _between_k_true_formula(self, arguments: List[FNode], min_true: int, max_true: int) -> FNode:
+    def _between_k_true_formula(
+        self, arguments: List[FNode], min_true: int, max_true: int
+    ) -> FNode:
         """
         Generate formula: "between min_true and max_true arguments are true".
         Returns: Or of all combinations where exactly k arguments are true, for k in [min_true, max_true],
@@ -232,7 +258,9 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         else:
             return Or(*clauses)
 
-    def _expand_count_vs_constant(self, count_node: FNode, value: int, op: OperatorKind) -> FNode:
+    def _expand_count_vs_constant(
+        self, count_node: FNode, value: int, op: OperatorKind
+    ) -> FNode:
         """
         Expand Count(args) op value into boolean formula.
 
@@ -254,7 +282,9 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
             raise UPValueError(f"Operator {op} not supported (should be LT/LE/EQUALS)")
         return self._between_k_true_formula(arguments, min_true, max_true)
 
-    def _expand_constant_vs_count(self, value: int, count_node: FNode, op: OperatorKind) -> FNode:
+    def _expand_constant_vs_count(
+        self, value: int, count_node: FNode, op: OperatorKind
+    ) -> FNode:
         """
         Expand constant op Count(args) into boolean formula by flipping the comparison.
         """
@@ -278,7 +308,9 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
 
     # ==================== COUNT VS COUNT ====================
 
-    def _expand_count_vs_count(self, count1: FNode, count2: FNode, op: OperatorKind) -> FNode:
+    def _expand_count_vs_count(
+        self, count1: FNode, count2: FNode, op: OperatorKind
+    ) -> FNode:
         """
         Expand Count(args1) op Count(args2) into boolean formula.
         Enumerate all possible (k1, k2) pairs satisfying the comparison, then generate:
@@ -313,7 +345,9 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
                 formula2 = self._between_k_true_formula(args2, k2_min, k2_max)
             else:
                 # Non-continuous - enumerate each k2 separately
-                k2_clauses = [self._between_k_true_formula(args2, k2, k2) for k2 in k2_list]
+                k2_clauses = [
+                    self._between_k_true_formula(args2, k2, k2) for k2 in k2_list
+                ]
                 formula2 = Or(*k2_clauses) if len(k2_clauses) > 1 else k2_clauses[0]
 
             clauses.append(And(formula1, formula2))
@@ -322,7 +356,9 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         else:
             return Or(*clauses)
 
-    def _get_valid_count_pairs(self, op: OperatorKind, n1: int, n2: int) -> List[Tuple[int, int]]:
+    def _get_valid_count_pairs(
+        self, op: OperatorKind, n1: int, n2: int
+    ) -> List[Tuple[int, int]]:
         """
         Get all valid (k1, k2) pairs for Count(args1) op Count(args2).
         Returns list of tuples (k1, k2) where k1 in [0, n1] and k2 in [0, n2] and the pair satisfies the comparison.
@@ -331,16 +367,18 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         for k1 in range(n1 + 1):
             for k2 in range(n2 + 1):
                 if (
-                        (op == OperatorKind.LT and k1 < k2) or
-                        (op == OperatorKind.LE and k1 <= k2) or
-                        (op == OperatorKind.EQUALS and k1 == k2)
+                    (op == OperatorKind.LT and k1 < k2)
+                    or (op == OperatorKind.LE and k1 <= k2)
+                    or (op == OperatorKind.EQUALS and k1 == k2)
                 ):
                     pairs.append((k1, k2))
         return pairs
 
     # ==================== ACTION TRANSFORMATION ====================
 
-    def _transform_action(self, new_problem: Problem, action: InstantaneousAction) -> InstantaneousAction:
+    def _transform_action(
+        self, new_problem: Problem, action: InstantaneousAction
+    ) -> InstantaneousAction:
         """Transform an action by replacing all Count expressions in preconditions and effects."""
         new_action = action.clone()
         new_action.name = get_fresh_name(new_problem, action.name)
@@ -356,7 +394,9 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
 
         return new_action
 
-    def _transform_effect(self, new_problem: Problem, new_action: InstantaneousAction, effect: Effect):
+    def _transform_effect(
+        self, new_problem: Problem, new_action: InstantaneousAction, effect: Effect
+    ):
         """Transform a single effect by replacing count expressions in value and condition."""
         new_fluent = self._transform_expression(new_problem, effect.fluent)
         new_value = self._transform_expression(new_problem, effect.value)
@@ -372,16 +412,14 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
                 new_fluent, new_value, new_condition, effect.forall
             )
         else:
-            new_action.add_effect(
-                new_fluent, new_value, new_condition, effect.forall
-            )
+            new_action.add_effect(new_fluent, new_value, new_condition, effect.forall)
 
     # ==================== MAIN COMPILATION ====================
 
     def _compile(
-            self,
-            problem: Problem,
-            compilation_kind: CompilationKind,
+        self,
+        problem: Problem,
+        compilation_kind: CompilationKind,
     ) -> CompilerResult:
         """Main compilation"""
         assert isinstance(problem, Problem)
@@ -409,7 +447,9 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         for qm in problem.quality_metrics:
             if qm.is_minimize_action_costs():
                 new_problem.add_quality_metric(
-                    updated_minimize_action_costs(qm, new_to_old, new_problem.environment)
+                    updated_minimize_action_costs(
+                        qm, new_to_old, new_problem.environment
+                    )
                 )
             else:
                 new_problem.add_quality_metric(qm)

@@ -380,7 +380,7 @@ class Simplifier(walkers.dag.DagWalker):
         else:
             return self.manager.Count(new_args_count)
 
-    def walk_array_index(self, expression: FNode, args: List[FNode]) -> FNode:
+    def walk_array_access(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
         array_arg, index_arg = args[0], args[1]
         # Both constant: resolve the access to the concrete element

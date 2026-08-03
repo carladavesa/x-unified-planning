@@ -61,7 +61,7 @@ class InitialStateMixin:
         if fluent.type.is_array_type() and isinstance(value, list):
             value = self._env.expression_manager.Array(value)
         fluent_exp, value_exp = self._env.expression_manager.auto_promote(fluent, value)
-        assert fluent_exp.is_fluent_exp() or fluent_exp.is_array_index(), \
+        assert fluent_exp.is_fluent_exp() or fluent_exp.is_array_access(), \
             "fluent field must be a fluent or an array access"
         if fluent.type.is_derived_bool_type():
             raise UPTypeError("You cannot set the initial value of a derived fluent!")

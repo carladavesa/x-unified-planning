@@ -57,7 +57,7 @@ class OperatorKind(Enum):
     AT_MOST_ONCE = auto()
     DOT = auto()
     COUNT = auto()
-    ARRAY_INDEX = auto()
+    ARRAY_ACCESS = auto()
     SET_MEMBER = auto()
     SET_SUBSETEQ = auto()
     SET_DISJOINT = auto()

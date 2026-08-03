@@ -78,7 +78,7 @@ class FNode(object):
                 + self.get_nary_expression_string(", ", self.args)
             ),
             OperatorKind.DOT: lambda: f"{self._content.payload}.{self.arg(0)}",
-            OperatorKind.ARRAY_INDEX: lambda: f"{self.arg(0)}[{self.arg(1)}]",
+            OperatorKind.ARRAY_ACCESS: lambda: f"{self.arg(0)}[{self.arg(1)}]",
             OperatorKind.SET_MEMBER: lambda: f"{self.arg(0)} in {self.arg(1)}",
             OperatorKind.SET_SUBSETEQ: lambda: f"{self.arg(0)} in {self.arg(1)}",
             OperatorKind.SET_DISJOINT: lambda: f"{self.arg(0)} ∩ {self.arg(1)} == ∅",
@@ -154,15 +154,15 @@ class FNode(object):
                 raise UPProblemDefinitionError(
                     f"Array index {i} is out of bounds for array of size {size}."
                 )
-        return self.environment.expression_manager.ArrayIndex(self, index)
+        return self.environment.expression_manager.ArrayAccess(self, index)
 
     def base_fluent(self) -> "FNode":
         """
-        For an array-write target (nested ARRAY_INDEX), descends through the indexings to return the underlying
+        For an array-write target (nested ARRAY_ACCESS), descends through the indexings to return the underlying
         FluentExp. For a plain fluent expression, returns itself.
         """
         node = self
-        while node.is_array_index():
+        while node.is_array_access():
             node = node.arg(0)
         return node
 
@@ -472,9 +472,9 @@ class FNode(object):
         """Test whether the node is the `DOT` operator."""
         return self.node_type == OperatorKind.DOT
 
-    def is_array_index(self) -> bool:
-        """Test whether the node is the `ARRAY_INDEX` operator."""
-        return self.node_type == OperatorKind.ARRAY_INDEX
+    def is_array_access(self) -> bool:
+        """Test whether the node is the `ARRAY_ACCESS` operator."""
+        return self.node_type == OperatorKind.ARRAY_ACCESS
 
     def is_set_member(self) -> bool:
         """Test whether the node is the `MEMBER` operator."""

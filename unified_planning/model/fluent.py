@@ -132,7 +132,7 @@ class Fluent:
                 raise UPProblemDefinitionError(
                     f"Array index {i} is out of bounds for array of size {size}."
                 )
-        return  self.environment.expression_manager.ArrayIndex(self, index)
+        return  self.environment.expression_manager.ArrayAccess(self, index)
 
     def add(self, element):
         """ Adds `element` to `Fluent` that has a Set Type """

@@ -19,10 +19,23 @@ from unified_planning.model.fnode import FNode
 import unified_planning.engines as engines
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
-from unified_planning.model import Problem, InstantaneousAction, Action, ProblemKind, MinimizeActionCosts, \
-    IntVariable, OperatorKind, Effect, Axiom, Expression
+from unified_planning.model import (
+    Problem,
+    InstantaneousAction,
+    Action,
+    ProblemKind,
+    MinimizeActionCosts,
+    IntVariable,
+    OperatorKind,
+    Effect,
+    Axiom,
+    Expression,
+)
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
-from unified_planning.engines.compilers.utils import get_fresh_name, lift_action_instance
+from unified_planning.engines.compilers.utils import (
+    get_fresh_name,
+    lift_action_instance,
+)
 from typing import Dict, List, Optional, Tuple, OrderedDict, Union
 from functools import partial
 from unified_planning.shortcuts import Int, FALSE, TRUE, Exists, Forall
@@ -47,7 +60,9 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
 
     def __init__(self):
         engines.engine.Engine.__init__(self)
-        CompilerMixin.__init__(self, CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING)
+        CompilerMixin.__init__(
+            self, CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING
+        )
 
     @property
     def name(self):
@@ -137,7 +152,9 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
         return new_kind
 
     # ==================== INT VARIABLE TRANSFORMATION ====================
-    def _split_variables(self, variables: List) -> Tuple[Tuple, Dict[str, Tuple[FNode, FNode]]]:
+    def _split_variables(
+        self, variables: List
+    ) -> Tuple[Tuple, Dict[str, Tuple[FNode, FNode]]]:
         """Separate regular variables from int variables."""
         regular_vars = []
         int_vars = {}
@@ -148,37 +165,45 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
                 regular_vars.append(var)
         return tuple(regular_vars), int_vars
 
-    def _evaluate_int_var_ranges(self, old_problem, new_problem, int_vars, int_params, instantiation):
+    def _evaluate_int_var_ranges(
+        self, old_problem, new_problem, int_vars, int_params, instantiation
+    ):
         """
         Evaluate the range bounds with the current parameter values, so that
         quantified int variables get concrete integer bounds.
         """
         updated = {}
         for var_name, (initial, last) in int_vars.items():
-            new_initial = self._transform_expression(old_problem, new_problem, initial, int_params, instantiation)
-            new_last = self._transform_expression(old_problem, new_problem, last, int_params, instantiation)
-            updated[var_name] = (new_initial.constant_value(), new_last.constant_value())
+            new_initial = self._transform_expression(
+                old_problem, new_problem, initial, int_params, instantiation
+            )
+            new_last = self._transform_expression(
+                old_problem, new_problem, last, int_params, instantiation
+            )
+            updated[var_name] = (
+                new_initial.constant_value(),
+                new_last.constant_value(),
+            )
         return updated
 
-    def _get_range_instantiation(self, ranges: Dict[str, Tuple[int, int]]) -> List[Tuple[int, ...]]:
+    def _get_range_instantiation(
+        self, ranges: Dict[str, Tuple[int, int]]
+    ) -> List[Tuple[int, ...]]:
         """Generate all combinations of values for int variables."""
         if not ranges:
             return [()]
-        range_iterables = [
-            range(start, end + 1)
-            for start, end in ranges.values()
-        ]
+        range_iterables = [range(start, end + 1) for start, end in ranges.values()]
         return list(product(*range_iterables))
 
     # ==================== EXPRESSION TRANSFORMATION ====================
 
     def _transform_quantifier(
-            self,
-            old_problem: Problem,
-            new_problem: Problem,
-            node: FNode,
-            int_params: Dict[str, int],
-            instantiation: Tuple[int, ...],
+        self,
+        old_problem: Problem,
+        new_problem: Problem,
+        node: FNode,
+        int_params: Dict[str, int],
+        instantiation: Tuple[int, ...],
     ) -> FNode:
         """
         Transform forall/exists by expanding int variables.
@@ -190,17 +215,23 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
         if not int_vars:
             # No int variables: keep quantifier
             new_args = [
-                self._transform_expression(old_problem, new_problem, arg, int_params, instantiation)
+                self._transform_expression(
+                    old_problem, new_problem, arg, int_params, instantiation
+                )
                 for arg in node.args
             ]
             new_args = self._handle_undef_args(node.node_type, new_args)
             if new_args is None:
                 return None
             em = old_problem.environment.expression_manager
-            return em.create_node(node.node_type, tuple(new_args), regular_vars).simplify()
+            return em.create_node(
+                node.node_type, tuple(new_args), regular_vars
+            ).simplify()
 
         # Update ranges with current parameter values
-        updated_ranges = self._evaluate_int_var_ranges(old_problem, new_problem, int_vars, int_params, instantiation)
+        updated_ranges = self._evaluate_int_var_ranges(
+            old_problem, new_problem, int_vars, int_params, instantiation
+        )
 
         # Expand int variables
         expanded_int_params = int_params.copy()
@@ -215,7 +246,9 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
         for range_inst in range_instantiation:
             full_inst = instantiation + range_inst
             for arg in node.args:
-                transformed = self._transform_expression(old_problem, new_problem, arg, expanded_int_params, full_inst)
+                transformed = self._transform_expression(
+                    old_problem, new_problem, arg, expanded_int_params, full_inst
+                )
                 if transformed is not None:
                     expanded_args.append(transformed)
         if not expanded_args:
@@ -234,16 +267,22 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
                 raise UPProblemDefinitionError(f"Error handling quantifiers!")
         return new_node
 
-    def _transform_fluent_exp(self, old_problem, new_problem, node, int_params, instantiation):
+    def _transform_fluent_exp(
+        self, old_problem, new_problem, node, int_params, instantiation
+    ):
         new_args = []
         for arg in node.args:
-            transformed = self._transform_expression(old_problem, new_problem, arg, int_params, instantiation)
+            transformed = self._transform_expression(
+                old_problem, new_problem, arg, int_params, instantiation
+            )
             if transformed is None:
                 return None
             new_args.append(transformed)
         return node.fluent()(*new_args)
 
-    def _handle_undef_args(self, node_type: OperatorKind, args: List) -> Union[List[FNode], None]:
+    def _handle_undef_args(
+        self, node_type: OperatorKind, args: List
+    ) -> Union[List[FNode], None]:
         """Handle undefined (None) values in arguments based on operator semantics."""
         if None not in args:
             return args
@@ -258,18 +297,20 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
             return None
 
     def _transform_generic(
-            self,
-            old_problem: Problem,
-            new_problem: Problem,
-            node: FNode,
-            int_params: Dict[str, int],
-            instantiation: Tuple[int, ...]
+        self,
+        old_problem: Problem,
+        new_problem: Problem,
+        node: FNode,
+        int_params: Dict[str, int],
+        instantiation: Tuple[int, ...],
     ) -> Union[FNode, None]:
         """Generic recursive transformation. Arithmetic that becomes undefined after substitution
         (e.g. division by zero) is handled and returned as None."""
         em = old_problem.environment.expression_manager
         new_args = [
-            self._transform_expression(old_problem, new_problem, arg, int_params, instantiation)
+            self._transform_expression(
+                old_problem, new_problem, arg, int_params, instantiation
+            )
             for arg in node.args
         ]
         new_args = self._handle_undef_args(node.node_type, new_args)
@@ -277,16 +318,16 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
             return None
         try:
             return em.create_node(node.node_type, tuple(new_args)).simplify()
-        except ZeroDivisionError: # division by zero is currently the only undefined arithmetic
+        except ZeroDivisionError:  # division by zero is currently the only undefined arithmetic
             return None
 
     def _transform_expression(
-            self,
-            old_problem: Problem,
-            new_problem: Problem,
-            node: FNode,
-            int_params: Optional[Dict[str, int]] = None,
-            instantiation: Optional[Tuple[int, ...]] = None,
+        self,
+        old_problem: Problem,
+        new_problem: Problem,
+        node: FNode,
+        int_params: Optional[Dict[str, int]] = None,
+        instantiation: Optional[Tuple[int, ...]] = None,
     ) -> Union[FNode, None]:
         """
         Transform expression by substituting integer parameters and expanding quantifiers, replacing:
@@ -315,35 +356,47 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
             return node
 
         if node.is_fluent_exp():
-            return self._transform_fluent_exp(old_problem, new_problem, node, int_params, instantiation)
+            return self._transform_fluent_exp(
+                old_problem, new_problem, node, int_params, instantiation
+            )
 
         if node.is_forall() or node.is_exists():
-            return self._transform_quantifier(old_problem, new_problem, node, int_params, instantiation)
+            return self._transform_quantifier(
+                old_problem, new_problem, node, int_params, instantiation
+            )
 
-        return self._transform_generic(old_problem, new_problem, node, int_params, instantiation)
+        return self._transform_generic(
+            old_problem, new_problem, node, int_params, instantiation
+        )
 
     # ==================== ACTION TRANSFORMATION ====================
 
     def _add_effect_to_action(
-            self, action: InstantaneousAction, effect_type: str, fluent: FNode, value: FNode, condition: FNode, forall: Tuple
+        self,
+        action: InstantaneousAction,
+        effect_type: str,
+        fluent: FNode,
+        value: FNode,
+        condition: FNode,
+        forall: Tuple,
     ):
         """Add effect to action, dispatching by effect type (assign/increase/decrease)."""
-        if effect_type == 'increase':
+        if effect_type == "increase":
             action.add_increase_effect(fluent, value, condition, forall)
-        elif effect_type == 'decrease':
+        elif effect_type == "decrease":
             action.add_decrease_effect(fluent, value, condition, forall)
         else:
             action.add_effect(fluent, value, condition, forall)
 
     def _add_single_effect(
-            self,
-            action: InstantaneousAction,
-            effect_type: str,
-            fluent: FNode,
-            value: FNode,
-            condition: FNode,
-            original_condition: FNode,
-            forall: Tuple
+        self,
+        action: InstantaneousAction,
+        effect_type: str,
+        fluent: FNode,
+        value: FNode,
+        condition: FNode,
+        original_condition: FNode,
+        forall: Tuple,
     ) -> bool:
         """
         Add single effect to action with bounds checking.
@@ -355,52 +408,83 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
             if fluent is None or value is None:
                 return False
             if fluent.type.is_int_type() and value.is_constant():
-                if not fluent.type.lower_bound <= value.constant_value() <= fluent.type.upper_bound:
+                if (
+                    not fluent.type.lower_bound
+                    <= value.constant_value()
+                    <= fluent.type.upper_bound
+                ):
                     # Unconditional effect out of bounds: discard the action.
                     return False
-            self._add_effect_to_action(action, effect_type, fluent, value, condition, forall)
+            self._add_effect_to_action(
+                action, effect_type, fluent, value, condition, forall
+            )
         # Conditional effects
         else:
-            if condition not in [None, FALSE()] and fluent is not None and value is not None:
-                if (fluent.type.is_int_type() and value.is_constant() and
-                        not fluent.type.lower_bound <= value.constant_value() <= fluent.type.upper_bound):
+            if (
+                condition not in [None, FALSE()]
+                and fluent is not None
+                and value is not None
+            ):
+                if (
+                    fluent.type.is_int_type()
+                    and value.is_constant()
+                    and not fluent.type.lower_bound
+                    <= value.constant_value()
+                    <= fluent.type.upper_bound
+                ):
                     # Conditional effect out of bounds: discard just this effect, keep the action.
                     return True
-                self._add_effect_to_action(action, effect_type, fluent, value, condition, forall)
+                self._add_effect_to_action(
+                    action, effect_type, fluent, value, condition, forall
+                )
         return True
 
     def _add_instantiated_effect(
-            self,
-            old_problem: Problem,
-            new_problem: Problem,
-            effect: Effect,
-            new_action: InstantaneousAction,
-            int_param_map: Dict[str, int],
-            instantiation: Tuple[int, ...]
+        self,
+        old_problem: Problem,
+        new_problem: Problem,
+        effect: Effect,
+        new_action: InstantaneousAction,
+        int_param_map: Dict[str, int],
+        instantiation: Tuple[int, ...],
     ) -> bool:
         """
         Add single effect to action, handling forall with int variables.
         Expands forall effects over int variables into individual effects for each instantiation.
         """
         if effect.is_increase():
-            effect_type = 'increase'
+            effect_type = "increase"
         elif effect.is_decrease():
-            effect_type = 'decrease'
+            effect_type = "decrease"
         else:
-            effect_type = 'none'
+            effect_type = "none"
 
         regular_forall, int_vars = self._split_variables(list(effect.forall))
         if not int_vars:
-            new_fluent = self._transform_expression(old_problem, new_problem, effect.fluent, int_param_map, instantiation)
-            new_value = self._transform_expression(old_problem, new_problem, effect.value, int_param_map, instantiation)
-            new_condition = self._transform_expression(old_problem, new_problem, effect.condition, int_param_map, instantiation)
+            new_fluent = self._transform_expression(
+                old_problem, new_problem, effect.fluent, int_param_map, instantiation
+            )
+            new_value = self._transform_expression(
+                old_problem, new_problem, effect.value, int_param_map, instantiation
+            )
+            new_condition = self._transform_expression(
+                old_problem, new_problem, effect.condition, int_param_map, instantiation
+            )
 
             return self._add_single_effect(
-                new_action, effect_type, new_fluent, new_value, new_condition, effect.condition, regular_forall
+                new_action,
+                effect_type,
+                new_fluent,
+                new_value,
+                new_condition,
+                effect.condition,
+                regular_forall,
             )
 
         # Evaluate int variables with current instantiation
-        updated_ranges = self._evaluate_int_var_ranges(old_problem, new_problem, int_vars, int_param_map, instantiation)
+        updated_ranges = self._evaluate_int_var_ranges(
+            old_problem, new_problem, int_vars, int_param_map, instantiation
+        )
 
         # Expand forall with int variables
         expanded_int_params = int_param_map.copy()
@@ -410,24 +494,40 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
         range_insts = self._get_range_instantiation(updated_ranges)
         for range_inst in range_insts:
             full_inst = instantiation + range_inst
-            new_fluent = self._transform_expression(old_problem, new_problem, effect.fluent, expanded_int_params, full_inst)
-            new_value = self._transform_expression(old_problem, new_problem, effect.value, expanded_int_params, full_inst)
-            new_condition = self._transform_expression(old_problem, new_problem, effect.condition, expanded_int_params, full_inst)
+            new_fluent = self._transform_expression(
+                old_problem, new_problem, effect.fluent, expanded_int_params, full_inst
+            )
+            new_value = self._transform_expression(
+                old_problem, new_problem, effect.value, expanded_int_params, full_inst
+            )
+            new_condition = self._transform_expression(
+                old_problem,
+                new_problem,
+                effect.condition,
+                expanded_int_params,
+                full_inst,
+            )
             success = self._add_single_effect(
-                new_action, effect_type, new_fluent, new_value, new_condition, effect.condition, regular_forall
+                new_action,
+                effect_type,
+                new_fluent,
+                new_value,
+                new_condition,
+                effect.condition,
+                regular_forall,
             )
             if not success:
                 return False
         return True
 
     def _add_instantiated_effects(
-            self,
-            problem: Problem,
-            new_problem: Problem,
-            old_action: InstantaneousAction,
-            new_action: InstantaneousAction,
-            int_param_map: Dict[str, int],
-            instantiation: Tuple[int, ...]
+        self,
+        problem: Problem,
+        new_problem: Problem,
+        old_action: InstantaneousAction,
+        new_action: InstantaneousAction,
+        int_param_map: Dict[str, int],
+        instantiation: Tuple[int, ...],
     ) -> bool:
         """
         Add all effects to instantiated action.
@@ -442,23 +542,29 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
         return len(new_action.effects) > 0
 
     def _create_instantiated_action(
-            self,
-            problem: Problem,
-            new_problem: Problem,
-            action: InstantaneousAction,
-            regular_params: OrderedDict,
-            int_param_map: Dict[str, int],
-            instantiation: Tuple[int, ...]
+        self,
+        problem: Problem,
+        new_problem: Problem,
+        action: InstantaneousAction,
+        regular_params: OrderedDict,
+        int_param_map: Dict[str, int],
+        instantiation: Tuple[int, ...],
     ) -> Union[Action, None]:
         """
         Create a single instantiated action for a specific integer parameter assignment.
         Transforms preconditions and effects, pruning the action if any become false/invalid.
         """
         # Generate unique name
-        action_name = get_fresh_name(new_problem, action.name, list(map(str, instantiation)))
+        action_name = get_fresh_name(
+            new_problem, action.name, list(map(str, instantiation))
+        )
         # Create action with only regular (noninteger) parameters
-        assert isinstance(action, InstantaneousAction), "Only InstantaneousActions are supported"
-        new_action = InstantaneousAction(action_name, regular_params, action.environment)
+        assert isinstance(
+            action, InstantaneousAction
+        ), "Only InstantaneousActions are supported"
+        new_action = InstantaneousAction(
+            action_name, regular_params, action.environment
+        )
         # Transform preconditions
         for precondition in action.preconditions:
             new_precondition = self._transform_expression(
@@ -477,7 +583,7 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
         return new_action
 
     def _instantiate_action(
-            self, problem: Problem, new_problem: Problem, action: InstantaneousAction
+        self, problem: Problem, new_problem: Problem, action: InstantaneousAction
     ) -> List[Tuple[Action, Tuple[int, ...]]]:
         """
         Create all valid instantiation of an action for integer parameters.
@@ -493,14 +599,22 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
                 regular_params[param.name] = param.type
             elif param.type.is_int_type():
                 int_param_map[param.name] = len(int_param_map)
-                int_param_ranges.append((param.type.lower_bound, param.type.upper_bound))
+                int_param_ranges.append(
+                    (param.type.lower_bound, param.type.upper_bound)
+                )
             else:
-                raise UPProblemDefinitionError(f"Parameter type {param.type} not supported")
+                raise UPProblemDefinitionError(
+                    f"Parameter type {param.type} not supported"
+                )
 
         # Generate all instantiation
-        instantiation = self._get_range_instantiation(
-            {f"p{i}": r for i, r in enumerate(int_param_ranges)}
-        ) if int_param_ranges else [()]
+        instantiation = (
+            self._get_range_instantiation(
+                {f"p{i}": r for i, r in enumerate(int_param_ranges)}
+            )
+            if int_param_ranges
+            else [()]
+        )
         result = []
         for inst in instantiation:
             new_action = self._create_instantiated_action(
@@ -510,11 +624,15 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
                 result.append((new_action, inst))
         return result
 
-    def _transform_actions(self, problem: Problem, new_problem: Problem) -> Dict[Action, Tuple[Action, Tuple[int, ...]]]:
+    def _transform_actions(
+        self, problem: Problem, new_problem: Problem
+    ) -> Dict[Action, Tuple[Action, Tuple[int, ...]]]:
         """Transform all actions by grounding integer parameters."""
         new_to_old = {}
         for action in problem.actions:
-            instantiated_actions = self._instantiate_action(problem, new_problem, action)
+            instantiated_actions = self._instantiate_action(
+                problem, new_problem, action
+            )
             for new_action, instantiation in instantiated_actions:
                 new_problem.add_action(new_action)
                 new_to_old[new_action] = (action, instantiation)
@@ -522,7 +640,9 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
 
     # ==================== AXIOMS TRANSFORMATION ====================
 
-    def _transform_axioms(self, problem: Problem, new_problem: Problem, new_to_old: Dict):
+    def _transform_axioms(
+        self, problem: Problem, new_problem: Problem, new_to_old: Dict
+    ):
         """
         Transform axioms by replacing integer parameter references.
         Raises an error if axioms contain integer parameters (not yet supported).
@@ -554,7 +674,10 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
     # ==================== QUALITY METRICS TRANSFORMATION ====================
 
     def _transform_quality_metrics(
-            self, problem: Problem, new_problem: Problem, new_to_old: Dict[Action, Tuple[Action, Tuple[int, ...]]]
+        self,
+        problem: Problem,
+        new_problem: Problem,
+        new_to_old: Dict[Action, Tuple[Action, Tuple[int, ...]]],
     ):
         """Transform quality metrics, handling action costs with integer parameter substitution."""
         for qm in problem.quality_metrics:
@@ -570,9 +693,9 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
                 new_problem.add_quality_metric(qm)
 
     def _transform_action_costs(
-            self,
-            qm: MinimizeActionCosts,
-            new_to_old: Dict[Action, Tuple[Action, Tuple[int, ...]]]
+        self,
+        qm: MinimizeActionCosts,
+        new_to_old: Dict[Action, Tuple[Action, Tuple[int, ...]]],
     ) -> Dict[Action, Expression]:
         """Transform action costs by substituting integer parameter values."""
         new_costs = {}
@@ -621,5 +744,7 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
         self._transform_goals(problem, new_problem)
 
         return CompilerResult(
-            new_problem, partial(lift_action_instance, map=new_to_old), self.name,
+            new_problem,
+            partial(lift_action_instance, map=new_to_old),
+            self.name,
         )

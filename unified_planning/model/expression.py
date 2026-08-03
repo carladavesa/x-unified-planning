@@ -271,7 +271,7 @@ class ExpressionManager(object):
         else:
             return self.create_node(node_type=OperatorKind.COUNT, args=tuple_args)
 
-    def ArrayIndex(
+    def ArrayAccess(
             self, array_expr: Expression, index: Expression
     ) -> "up.model.fnode.FNode":
         """
@@ -283,10 +283,10 @@ class ExpressionManager(object):
 
         :param array_expr: The array expression (can be a fluent returning an array or a constant array).
         :param index: The index expression.
-        :return: The ``ARRAY_INDEX`` expression created.
+        :return: The ``ARRAY_ACCESS`` expression created.
         """
         array_expr, index = self.auto_promote(array_expr, index)
-        return self.create_node(node_type=OperatorKind.ARRAY_INDEX, args=(array_expr, index))
+        return self.create_node(node_type=OperatorKind.ARRAY_ACCESS, args=(array_expr, index))
 
     def SetMember(
         self, element: Expression, set_expr: SetExpression

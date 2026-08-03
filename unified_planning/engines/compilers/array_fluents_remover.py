@@ -22,13 +22,30 @@ from unified_planning import model
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
 from unified_planning.exceptions import UPProblemDefinitionError
-from unified_planning.model import Problem, Action, ProblemKind, InstantaneousAction, FNode, Object, Parameter, Fluent, \
-    Type, OperatorKind, Effect, Axiom
+from unified_planning.model import (
+    Problem,
+    Action,
+    ProblemKind,
+    InstantaneousAction,
+    FNode,
+    Object,
+    Parameter,
+    Fluent,
+    Type,
+    OperatorKind,
+    Effect,
+    Axiom,
+)
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
-from unified_planning.engines.compilers.utils import replace_action, updated_minimize_action_costs, get_fresh_name
+from unified_planning.engines.compilers.utils import (
+    replace_action,
+    updated_minimize_action_costs,
+    get_fresh_name,
+)
 from typing import Dict, List, Optional, Tuple, OrderedDict, Union
 from functools import partial
 from unified_planning.shortcuts import FALSE, UserType, And, TRUE
+
 
 class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
     """
@@ -46,7 +63,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
     This `Compiler` supports only the `ARRAY_FLUENTS_REMOVING` :class:`~unified_planning.engines.CompilationKind`.
     """
 
-    def __init__(self, mode: str = 'strict'):
+    def __init__(self, mode: str = "strict"):
         engines.engine.Engine.__init__(self)
         CompilerMixin.__init__(self, CompilationKind.ARRAY_FLUENTS_REMOVING)
         self.mode = mode
@@ -55,7 +72,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
 
     @property
     def name(self):
-        return "ar"
+        return "afr"
 
     @staticmethod
     def supported_kind() -> ProblemKind:
@@ -145,7 +162,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         - strict: aborts compilation (out-of-bounds is not allowed).
         - permissive: returns None, so undefinedness propagates following the operator semantics.
         """
-        if self.mode == 'strict':
+        if self.mode == "strict":
             raise UPProblemDefinitionError(
                 f"Out-of-bounds or undefined array access '{node}' is not allowed in strict mode."
             )
@@ -156,9 +173,9 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         if n in self._index_objects_cache:
             return self._index_objects_cache[n]
 
-        obj_name = f'i{n}'
+        obj_name = f"i{n}"
         if not problem.has_object(obj_name):
-            obj = Object(obj_name, UserType('Index'))
+            obj = Object(obj_name, UserType("Index"))
             problem.add_object(obj)
             self._index_objects_cache[n] = obj
             return obj
@@ -170,10 +187,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
     # ==================== EXPRESSION TRANSFORMATION ====================
 
     def _transform_fluent_exp(
-            self,
-            old_problem: Problem,
-            new_problem: Problem,
-            node: FNode
+        self, old_problem: Problem, new_problem: Problem, node: FNode
     ) -> Union[FNode, None]:
         """Transform fluent expression, handling arrays."""
         new_args = []
@@ -205,12 +219,16 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
 
         # Out-of-bounds / undefined access: no valid position matches the fixed indices -> undefined
         pre = tuple(pre_indices)
-        matching = [pos for pos in self.domains[new_fluent.name] if pos[:len(pre)] == pre]
+        matching = [
+            pos for pos in self.domains[new_fluent.name] if pos[: len(pre)] == pre
+        ]
         if not matching:
             return self._undefined_access(node)
 
         # Parameters of the base fluent (e.g. P in grid(P)), transformed
-        new_params = [self._transform_expression(old_problem, new_problem, a) for a in base.args]
+        new_params = [
+            self._transform_expression(old_problem, new_problem, a) for a in base.args
+        ]
 
         em = new_problem.environment.expression_manager
         comparisons = []
@@ -218,20 +236,24 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         # Expand over the positions still open under the fixed pre_indices
         pre = tuple(pre_indices)
         post_indices = [
-            pos[len(pre):]
+            pos[len(pre) :]
             for pos in self.domains[new_fluent.name]
-            if pos[:len(pre)] == pre
+            if pos[: len(pre)] == pre
         ]
         for post_idx in post_indices:
             full_idx = list(pre) + list(post_idx)
             index_objs = [self._get_index_object(new_problem, i) for i in full_idx]
             cell = new_fluent(*(index_objs + new_params))
             element_value = self._get_element_value(value_arg, post_idx)
-            comparisons.append(em.create_node(node.node_type, (cell, element_value)).simplify())
+            comparisons.append(
+                em.create_node(node.node_type, (cell, element_value)).simplify()
+            )
 
         return And(comparisons).simplify()
 
-    def _handle_none_args(self, node_type: OperatorKind, args: List) -> Union[List[FNode], None]:
+    def _handle_none_args(
+        self, node_type: OperatorKind, args: List
+    ) -> Union[List[FNode], None]:
         """Handle undefined (None) values in arguments based on operator semantics."""
         if None not in args:
             return args
@@ -241,15 +263,12 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         elif node_type == OperatorKind.IMPLIES:
             if args[1] is None and args[0] is not None:
                 return [args[0], FALSE()]
-            return[TRUE(), args[1]] if args[1] is not None else None
+            return [TRUE(), args[1]] if args[1] is not None else None
         else:
             return None
 
     def _transform_quantifier(
-            self,
-            old_problem: Problem,
-            new_problem: Problem,
-            node: FNode
+        self, old_problem: Problem, new_problem: Problem, node: FNode
     ) -> FNode:
         """Transform quantifier expression."""
         new_args = [
@@ -261,9 +280,11 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
             return None
 
         em = old_problem.environment.expression_manager
-        return em.create_node(node.node_type, tuple(new_args), tuple(node.variables())).simplify()
+        return em.create_node(
+            node.node_type, tuple(new_args), tuple(node.variables())
+        ).simplify()
 
-    def _transform_array_index(self, old_problem, new_problem, node):
+    def _transform_array_access(self, old_problem, new_problem, node):
         """Resolve an array access grid(P)[i][j] to its indexed fluent grid_indexed(i, j, P)."""
         base, indices = self._unpack_array_access(node)
         # base is the FluentExp (e.g. grid(P)); base.fluent() is the array fluent
@@ -277,24 +298,28 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
 
         # Transform the fluent parameters (e.g. P) and build the indexed fluent
         index_objs = [self._get_index_object(new_problem, i) for i in indices]
-        new_params = [self._transform_expression(old_problem, new_problem, a) for a in base.args]
+        new_params = [
+            self._transform_expression(old_problem, new_problem, a) for a in base.args
+        ]
         return new_fluent(*(index_objs + new_params))
 
     def _transform_expression(
-            self,
-            old_problem: Problem,
-            new_problem: Problem,
-            node: FNode
+        self, old_problem: Problem, new_problem: Problem, node: FNode
     ) -> Union[FNode, None]:
         """Transform expression by substituting array accesses."""
-        if node.is_constant() or node.is_variable_exp() or node.is_timing_exp() or node.is_parameter_exp():
+        if (
+            node.is_constant()
+            or node.is_variable_exp()
+            or node.is_timing_exp()
+            or node.is_parameter_exp()
+        ):
             return node
         if node.is_fluent_exp():
             return self._transform_fluent_exp(old_problem, new_problem, node)
         if node.is_forall() or node.is_exists():
             return self._transform_quantifier(old_problem, new_problem, node)
-        if node.is_array_index():
-            return self._transform_array_index(old_problem, new_problem, node)
+        if node.is_array_access():
+            return self._transform_array_access(old_problem, new_problem, node)
         # Special case: array fluent comparisons
         if node.args and node.arg(0).type.is_array_type():
             return self._transform_array_comparison(old_problem, new_problem, node)
@@ -313,87 +338,115 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
     # ==================== ACTION TRANSFORMATION ====================
 
     def _add_effect_to_action(
-            self, action: InstantaneousAction, effect_type: str, fluent: FNode, value: FNode, condition: FNode, forall: Tuple
+        self,
+        action: InstantaneousAction,
+        effect_type: str,
+        fluent: FNode,
+        value: FNode,
+        condition: FNode,
+        forall: Tuple,
     ):
         """Add effect to action based on type."""
-        if effect_type == 'increase':
+        if effect_type == "increase":
             action.add_increase_effect(fluent, value, condition, forall)
-        elif effect_type == 'decrease':
+        elif effect_type == "decrease":
             action.add_decrease_effect(fluent, value, condition, forall)
         else:
             action.add_effect(fluent, value, condition, forall)
 
     def _add_single_effect(
-            self,
-            action: InstantaneousAction,
-            effect_type: str,
-            fluent: FNode,
-            value: FNode,
-            condition: FNode,
-            original_condition: FNode,
-            forall: Tuple
+        self,
+        action: InstantaneousAction,
+        effect_type: str,
+        fluent: FNode,
+        value: FNode,
+        condition: FNode,
+        original_condition: FNode,
+        forall: Tuple,
     ) -> bool:
         """Add single effect to action. Returns False if action should be pruned."""
         # Handle unconditional effects
         if original_condition == TRUE():
             if fluent is None or value is None:
                 return False  # Invalid unconditional effect
-            self._add_effect_to_action(action, effect_type, fluent, value, condition, forall)
+            self._add_effect_to_action(
+                action, effect_type, fluent, value, condition, forall
+            )
         # Handle conditional effects
         else:
-            if condition not in (None, FALSE()) and fluent is not None and value is not None:
-                self._add_effect_to_action(action, effect_type, fluent, value, condition, forall)
+            if (
+                condition not in (None, FALSE())
+                and fluent is not None
+                and value is not None
+            ):
+                self._add_effect_to_action(
+                    action, effect_type, fluent, value, condition, forall
+                )
         return True
 
     def _add_instantiated_effect(
-            self,
-            problem: Problem,
-            new_problem: Problem,
-            effect: Effect,
-            new_action: InstantaneousAction,
+        self,
+        problem: Problem,
+        new_problem: Problem,
+        effect: Effect,
+        new_action: InstantaneousAction,
     ) -> bool:
         """Add single effect to action. Returns False if action should be pruned."""
         # Determine effect type
         if effect.is_increase():
-            effect_type = 'increase'
+            effect_type = "increase"
         elif effect.is_decrease():
-            effect_type = 'decrease'
+            effect_type = "decrease"
         else:
-            effect_type = 'none'
+            effect_type = "none"
 
         new_fluent = self._transform_expression(problem, new_problem, effect.fluent)
         new_value = self._transform_expression(problem, new_problem, effect.value)
-        new_condition = self._transform_expression(problem, new_problem, effect.condition)
+        new_condition = self._transform_expression(
+            problem, new_problem, effect.condition
+        )
 
         return self._add_single_effect(
-            new_action, effect_type, new_fluent, new_value, new_condition, effect.condition, effect.forall
+            new_action,
+            effect_type,
+            new_fluent,
+            new_value,
+            new_condition,
+            effect.condition,
+            effect.forall,
         )
 
     def _add_instantiated_effects(
-            self,
-            problem: Problem,
-            new_problem: Problem,
-            old_action: InstantaneousAction,
-            new_action: InstantaneousAction
+        self,
+        problem: Problem,
+        new_problem: Problem,
+        old_action: InstantaneousAction,
+        new_action: InstantaneousAction,
     ) -> bool:
         """Add all effects to instantiated action. Returns True if any effects added."""
         for effect in old_action.effects:
-            success = self._add_instantiated_effect(problem, new_problem, effect, new_action)
+            success = self._add_instantiated_effect(
+                problem, new_problem, effect, new_action
+            )
             if not success:
                 return False
 
         return len(new_action.effects) > 0
 
     def _transform_action_arrays(
-            self, problem: Problem, new_problem: Problem, old_action: InstantaneousAction
+        self, problem: Problem, new_problem: Problem, old_action: InstantaneousAction
     ) -> Union[Action, None]:
         """Transform array accesses in action."""
         params = OrderedDict((p.name, p.type) for p in old_action.parameters)
-        new_action = InstantaneousAction(old_action.name, _parameters=params, _env=problem.environment)
+        new_action = InstantaneousAction(
+            old_action.name, _parameters=params, _env=problem.environment
+        )
 
         # Transform preconditions
         for precondition in old_action.preconditions:
-            new_precondition = self._transform_expression(problem, new_problem, precondition)
+            new_precondition = self._transform_expression(
+                problem, new_problem, precondition
+            )
 
             if new_precondition is None or new_precondition == FALSE():
                 return None  # Impossible action
@@ -401,14 +454,18 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
             new_action.add_precondition(new_precondition)
 
         # Transform effects
-        has_valid_effects = self._add_instantiated_effects(problem, new_problem, old_action, new_action)
+        has_valid_effects = self._add_instantiated_effects(
+            problem, new_problem, old_action, new_action
+        )
 
         if not has_valid_effects:
             return None
 
         return new_action
 
-    def _transform_actions(self, problem: Problem, new_problem: Problem) -> Dict[Action, Action]:
+    def _transform_actions(
+        self, problem: Problem, new_problem: Problem
+    ) -> Dict[Action, Action]:
         """Transform all actions by substituting array accesses."""
         new_to_old = {}
         for action in problem.actions:
@@ -437,8 +494,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         # Filter out undefined positions
         if fluent.undefined_positions is not None:
             valid_positions = [
-                pos for pos in all_positions
-                if pos not in fluent.undefined_positions
+                pos for pos in all_positions if pos not in fluent.undefined_positions
             ]
         else:
             valid_positions = all_positions
@@ -454,11 +510,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         return element
 
     def _get_new_fluent_value(
-            self,
-            new_problem: Problem,
-            new_fluent: Fluent,
-            f: FNode,
-            v: FNode
+        self, new_problem: Problem, new_fluent: Fluent, f: FNode, v: FNode
     ) -> Dict[FNode, FNode]:
         """Convert an array assignment to the corresponding indexed-fluent assignments."""
         # Extract pre-indices from fluent name
@@ -467,20 +519,22 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         new_equalities = {}
 
         if not f.type.is_array_type():
-           # Single element: grid(P)[0][1] := value
-           if tuple(pre_indices) not in self.domains[new_fluent.name]:
-               self._undefined_access(f)  # strict: raises; permissive: returns None
-           else:
-               index_objs = [self._get_index_object(new_problem, i) for i in pre_indices]
-               new_equalities[new_fluent(*(index_objs + old_params))] = v
+            # Single element: grid(P)[0][1] := value
+            if tuple(pre_indices) not in self.domains[new_fluent.name]:
+                self._undefined_access(f)  # strict: raises; permissive: returns None
+            else:
+                index_objs = [
+                    self._get_index_object(new_problem, i) for i in pre_indices
+                ]
+                new_equalities[new_fluent(*(index_objs + old_params))] = v
         else:
             # Full or partial array: expand over the positions
             # pre_indices are the already-fixed dimensions (empty for a full array).
             pre = tuple(pre_indices)
             post_indices = [
-                pos[len(pre):]
+                pos[len(pre) :]
                 for pos in self.domains[new_fluent.name]
-                if pos[:len(pre)] == pre
+                if pos[: len(pre)] == pre
             ]
             for post_idx in post_indices:
                 full_idx = list(pre) + list(post_idx)
@@ -492,14 +546,14 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
 
     def _unpack_array_access(self, node):
         """
-        Given a (possibly nested) ARRAY_INDEX node, return:
+        Given a (possibly nested) ARRAY_ACCESS node, return:
         - the base FluentExp (e.g. grid(B))
         - the list of index values (ints), outermost-last
 
         E.g. grid(B)[1][6] -> (grid(B), [1, 6])
         """
         indices = []
-        while node.is_array_index():
+        while node.is_array_access():
             idx = node.arg(1).simplify()
             assert idx.is_int_constant(), f"Array index is not constant: {node.arg(1)}"
             indices.append(idx.constant_value())
@@ -507,7 +561,9 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         indices.reverse()  # we collected outermost-first; reverse to get [row, col]
         return node, indices  # node is now the base FluentExp, e.g. grid(B)
 
-    def _add_array_as_indexed_fluent(self, problem, new_problem, fluent, default_value, index_ut):
+    def _add_array_as_indexed_fluent(
+        self, problem, new_problem, fluent, default_value, index_ut
+    ):
         """Transform array fluent into indexed fluent."""
         # Get domain and element type
         n_elements, element_type = self._get_array_domain_and_type(fluent)
@@ -518,43 +574,52 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
             self._get_index_object(new_problem, i)
 
         # Create new signature with Index parameters
-        new_signature = [Parameter(f'i_{dim + 1}', index_ut)
-                         for dim in range(len(n_elements))] + list(fluent.signature)
+        new_signature = [
+            Parameter(f"i_{dim + 1}", index_ut) for dim in range(len(n_elements))
+        ] + list(fluent.signature)
 
-        new_fluent = Fluent(fluent.name, element_type, new_signature, fluent.environment)
+        new_fluent = Fluent(
+            fluent.name, element_type, new_signature, fluent.environment
+        )
         new_problem.add_fluent(new_fluent, default_initial_value=default_value)
 
         # Set initial values
         for f, v in problem.explicit_initial_values.items():
             base = f
-            while base.is_array_index():
+            while base.is_array_access():
                 base = base.arg(0)
             if base.fluent() == fluent:
-                new_equalities = self._get_new_fluent_value(new_problem, new_fluent, f, v)
+                new_equalities = self._get_new_fluent_value(
+                    new_problem, new_fluent, f, v
+                )
                 for nf, nv in new_equalities.items():
                     new_problem.set_initial_value(nf, nv)
 
     def _transform_fluents(self, problem: Problem, new_problem: Problem):
         """Transform array fluents to indexed fluents."""
-        index_ut = UserType('Index')
+        index_ut = UserType("Index")
 
         for fluent in problem.fluents:
             default_value = problem.fluents_defaults.get(fluent)
 
             if fluent.type.is_array_type():
-                self._add_array_as_indexed_fluent(problem, new_problem, fluent, default_value, index_ut)
+                self._add_array_as_indexed_fluent(
+                    problem, new_problem, fluent, default_value, index_ut
+                )
             else:
                 new_problem.add_fluent(fluent, default_initial_value=default_value)
                 for f, v in problem.explicit_initial_values.items():
                     base = f
-                    while base.is_array_index():
+                    while base.is_array_access():
                         base = base.arg(0)
                     if base.fluent() == fluent:
                         new_problem.set_initial_value(fluent(*f.args), v)
 
     # ==================== AXIOMS TRANSFORMATION ====================
 
-    def _transform_axioms(self, problem: Problem, new_problem: Problem, new_to_old: Dict):
+    def _transform_axioms(
+        self, problem: Problem, new_problem: Problem, new_to_old: Dict
+    ):
         """Transform axioms"""
         for axiom in problem.axioms:
             # Check for integer parameters
@@ -612,7 +677,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         new_problem.clear_axioms()
         new_problem.initial_values.clear()
         new_problem.clear_quality_metrics()
-        assert self.mode == 'strict' or self.mode == 'permissive'
+        assert self.mode == "strict" or self.mode == "permissive"
 
         # Transform components
         self._transform_fluents(problem, new_problem)
@@ -624,7 +689,9 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         for metric in problem.quality_metrics:
             if metric.is_minimize_action_costs():
                 new_problem.add_quality_metric(
-                    updated_minimize_action_costs(metric, new_to_old, new_problem.environment)
+                    updated_minimize_action_costs(
+                        metric, new_to_old, new_problem.environment
+                    )
                 )
             else:
                 new_problem.add_quality_metric(metric)
