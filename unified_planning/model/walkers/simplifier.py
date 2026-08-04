@@ -390,7 +390,7 @@ class Simplifier(walkers.dag.DagWalker):
             if 0 <= i < len(elements):
                 return elements[i]
         # Otherwise rebuild the node with the simplified children
-        return self.manager.ArrayIndex(array_arg, index_arg)
+        return self.manager.ArrayAccess(array_arg, index_arg)
 
     def walk_set_member(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
