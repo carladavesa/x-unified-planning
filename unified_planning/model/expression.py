@@ -383,7 +383,7 @@ class ExpressionManager(object):
         """
         | Creates an expression that removes an element from a set:
 
-            * ``SetRemove(set_expr, element)`` equivalent to ``set_expr \ {element}``
+            * ``SetRemove(set_expr, element)`` equivalent to ``set_expr\{element}``
 
         | Restriction: ``set_expr`` must be of ``set type`` and ``element`` must be
           of the same type as the elements of the set.
@@ -439,7 +439,7 @@ class ExpressionManager(object):
         """
         | Creates a set difference:
 
-            * ``SetDifference(set_expr1, set_expr2)`` equivalent to ``set_expr1 \ set_expr2``
+            * ``SetDifference(set_expr1, set_expr2)`` equivalent to ``set_expr1\set_expr2``
 
         | Restriction: Both arguments must be of ``set type`` with the same element type.
 
