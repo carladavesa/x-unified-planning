@@ -169,6 +169,11 @@ class TypeManager:
             elements_type: Type = None
     ) -> Type:
         """Returns the set type with a specific element type."""
+        # [XTS] Nested set types are not supported.
+        if elements_type is not None and elements_type.is_set_type():
+            raise UPTypeError(
+                f"Nested set type not supported: element type '{elements_type}' is itself "
+                "a set; set element types must be bounded integers or user objects.")
         k = elements_type
         if k in self._sets:
             return self._sets[k]

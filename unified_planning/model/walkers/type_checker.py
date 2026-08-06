@@ -19,12 +19,13 @@ import unified_planning.model.types
 import unified_planning.environment
 import unified_planning.model.walkers as walkers
 from unified_planning.model import Fluent
-from unified_planning.model.types import BOOL, DERIVED_BOOL, TIME, _UserType, _IntType, _ArrayType
+from unified_planning.model.types import BOOL, DERIVED_BOOL, TIME, _UserType, _IntType, _ArrayType, _SetType, is_compatible_type
 from unified_planning.model.fnode import FNode
 from unified_planning.model.operators import OperatorKind
 from unified_planning.exceptions import UPTypeError
 from typing import List, Optional, cast
 import math
+from unified_planning.model.walkers.index_interval import _index_interval
 
 
 def combine_types(types: List["unified_planning.model.types.Type"]) -> "unified_planning.model.types.Type":
@@ -65,6 +66,15 @@ def combine_types(types: List["unified_planning.model.types.Type"]) -> "unified_
                     if len(str(ct)) > len(str(global_user_type)):
                         global_user_type = ct
         return global_user_type
+    elif x.is_set_type():
+        all_elem_types = []
+        for t in types:
+            assert t.is_set_type()
+            if t.elements_type is not None:
+                all_elem_types.append(t.elements_type)
+        if not all_elem_types:
+            return _SetType(None)
+        return _SetType(combine_types(all_elem_types))
     elif x.is_bool_type():
         for t in types:
             assert t.is_bool_type()
@@ -505,6 +515,69 @@ class TypeChecker(walkers.dag.DagWalker):
             return None
         return args[0]
 
+    def _check_array_access(self, expression, args):
+        """Shared type rules for ARRAY_READ and ARRAY_WRITE (identical checks).
+        
+        These range checks are NOT redundant with IPAR: an out-of-bounds
+        slot is silently defaulted to 0/empty-set by 'arrays_remover'.
+        """
+        index = expression.arg(1)
+        arr_type = expression.arg(0).type
+        # [XTS] Fluent used as array index.
+        if index.is_fluent_exp():
+            raise UPTypeError(
+                f"Array index '{index}' is a fluent. Only constants, "
+                "parameters and forall variables are supported as array indices")
+        # [XTS] Nested ARRAY_READ used as array index (dynamic index).
+        if index.node_type == OperatorKind.ARRAY_READ:
+            raise UPTypeError(
+                "Array index is a nested array read. Dynamic indexing is not supported")
+        if arr_type.is_array_type():
+            # [XTS] Constant index out of bounds.
+            if index.is_int_constant():
+                v = index.constant_value()
+                if v < 0 or v >= arr_type.size:
+                    raise UPTypeError(
+                        f"Array index {v} is out of bounds for array of size {arr_type.size} "
+                        f"(valid range [0, {arr_type.size - 1}])")
+            # [XTS] Forall/range variable exceeds the array dimension.
+            elif index.is_range_variable_exp():
+                index_type = args[1]  # type returned by walk_range_variable_exp
+                if index_type is not None and index_type.is_int_type():
+                    if (index_type.upper_bound is not None
+                            and index_type.upper_bound >= arr_type.size):
+                        raise UPTypeError(
+                            f"Forall variable upper bound {index_type.upper_bound} "
+                            f"exceeds array size {arr_type.size} "
+                            f"(valid range [0, {arr_type.size - 1}])")
+                    if (index_type.lower_bound is not None
+                            and index_type.lower_bound < 0):
+                        raise UPTypeError(
+                            f"Forall variable lower bound {index_type.lower_bound} "
+                            f"is negative (must be >= 0)")
+            # [XTS] Arithmetic index provably out of bounds (interval over forall/range vars).
+            else:
+                iv = _index_interval(index)
+                if iv is not None:
+                    if iv[1] >= arr_type.size:
+                        raise UPTypeError(
+                            f"Array index expression upper bound {iv[1]} "
+                            f"exceeds array size {arr_type.size} "
+                            f"(valid range [0, {arr_type.size - 1}])")
+                    if iv[0] < 0:
+                        raise UPTypeError(
+                            f"Array index expression lower bound {iv[0]} "
+                            f"is negative (must be >= 0)")
+        return arr_type.elements_type
+
+    @walkers.handles(OperatorKind.ARRAY_READ)
+    def walk_array_read(self, expression, args, **kwargs):
+        return self._check_array_access(expression, args)
+
+    @walkers.handles(OperatorKind.ARRAY_WRITE)
+    def walk_array_write(self, expression, args, **kwargs):
+        return self._check_array_access(expression, args)
+
     @walkers.handles(OperatorKind.SET_MEMBER)
     def walk_member(
         self, expression: FNode, args: List["unified_planning.model.types.Type"]
@@ -515,7 +588,18 @@ class TypeChecker(walkers.dag.DagWalker):
         set_type = args[1]
         if element_type is None:
             return None
-        if element_type != set_type.elements_type:
+        set_elem_type = set_type.elements_type
+        if set_elem_type is None:
+            # Untyped set (e.g. the empty-set constant): membership is
+            # well-formed and trivially False at runtime.
+            return BOOL
+        # For integer-to-integer membership, range overlap is too strict:
+        # asking whether value 6 is in a set{integer[0,5]} is well-formed
+        # (it always evaluates to False, but the query itself is valid).
+        # Only require that both sides are integer types.
+        if element_type.is_int_type() and set_elem_type.is_int_type():
+            return BOOL
+        if not is_compatible_type(element_type, set_elem_type):
             return None
         return BOOL
 
@@ -527,7 +611,7 @@ class TypeChecker(walkers.dag.DagWalker):
         assert expression.is_set_subseteq()
         set1 = args[0]
         set2 = args[1]
-        if set1.elements_type != set2.elements_type:
+        if not is_compatible_type(set1.elements_type, set2.elements_type):
             return None
         return BOOL
 
@@ -539,7 +623,7 @@ class TypeChecker(walkers.dag.DagWalker):
         assert expression.is_set_disjoint()
         set1 = args[0]
         set2 = args[1]
-        if set1.elements_type != set2.elements_type:
+        if not is_compatible_type(set1.elements_type, set2.elements_type):
             return None
         # fer alguna altra comprovacio?
         return BOOL
@@ -564,4 +648,21 @@ class TypeChecker(walkers.dag.DagWalker):
         self, expression: FNode, args: List["unified_planning.model.types.Type"]
     ) -> Optional["unified_planning.model.types.Type"]:
         assert expression is not None
+        # [XTS] SET_ADD / SET_REMOVE element type category mismatch.
+        # SET_UNION / SET_INTERSECT / SET_DIFFERENCE have two set args. The check
+        # only applies to element-into-set operations where args[0] is the element.
+        if expression.node_type in (OperatorKind.SET_ADD, OperatorKind.SET_REMOVE):
+            elem_type = args[0]
+            set_type  = args[1]
+            if (elem_type is not None and set_type is not None
+                    and set_type.elements_type is not None):
+                set_elem = set_type.elements_type
+                if elem_type.is_int_type() and set_elem.is_user_type():
+                    raise UPTypeError(
+                        f"Type mismatch: adding an integer expression to a set of "
+                        f"objects (set element type '{set_elem}')")
+                if elem_type.is_user_type() and set_elem.is_int_type():
+                    raise UPTypeError(
+                        f"Type mismatch: adding an object expression to a set of "
+                        f"integers (set element type '{set_elem}')")
         return self.environment.type_manager.SetType(args[1].elements_type)

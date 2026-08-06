@@ -81,6 +81,28 @@ def map_operator(op: int) -> str:
         return "up:sometime_after"
     elif op == OperatorKind.SOMETIME_BEFORE:
         return "up:sometime_before"
+    elif op == OperatorKind.ARRAY_READ:
+        return "up:array_read"
+    elif op == OperatorKind.ARRAY_WRITE:
+        return "up:array_write"
+    elif op == OperatorKind.SET_MEMBER:
+        return "up:set_member"
+    elif op == OperatorKind.SET_SUBSETEQ:
+        return "up:set_subseteq"
+    elif op == OperatorKind.SET_DISJOINT:
+        return "up:set_disjoint"
+    elif op == OperatorKind.SET_CARDINALITY:
+        return "up:set_cardinality"
+    elif op == OperatorKind.SET_ADD:
+        return "up:set_add"
+    elif op == OperatorKind.SET_REMOVE:
+        return "up:set_remove"
+    elif op == OperatorKind.SET_UNION:
+        return "up:set_union"
+    elif op == OperatorKind.SET_INTERSECT:
+        return "up:set_intersect"
+    elif op == OperatorKind.SET_DIFFERENCE:
+        return "up:set_difference"
     raise ValueError(f"Unknown operator `{op}`")
 
 
@@ -92,9 +114,10 @@ def proto_type(tpe: model.Type) -> str:
     elif tpe.is_int_type() or tpe.is_real_type():
         return f"up:{tpe}"
     elif tpe.is_array_type():
-        return "up:array"
+        return f"up:array[{tpe.size},{proto_type(tpe.elements_type)}]"
     elif tpe.is_set_type():
-        return "up:set"
+        elem = tpe.elements_type
+        return f"up:set{{{proto_type(elem) if elem is not None else ''}}}"
     elif isinstance(tpe, model.types._UserType):
         return str(tpe.name)
 
@@ -120,11 +143,85 @@ def real_expression(value: fractions.Fraction) -> proto.Expression:
     )
 
 
-def array_expression(value: list) -> proto.Expression:
+def array_expression(elements: list) -> proto.Expression:
+    """Serialize an array constant as FUNCTION_APPLICATION("up:array_constant", v0, v1, ...)."""
+    func_sym = proto.Expression(
+        atom=proto.Atom(symbol="up:array_constant"),
+        list=[],
+        kind=proto.ExpressionKind.Value("FUNCTION_SYMBOL"),
+        type="up:operator",
+    )
     return proto.Expression(
-        atom=proto.Atom(list=value),
+        list=[func_sym] + list(elements),
+        kind=proto.ExpressionKind.Value("FUNCTION_APPLICATION"),
         type="up:array",
-        kind=proto.ExpressionKind.Value("CONSTANT"),
+    )
+
+
+def set_expression(elements: list) -> proto.Expression:
+    """Serialize a set constant as FUNCTION_APPLICATION("up:set_constant", v0, v1, ...)."""
+    func_sym = proto.Expression(
+        atom=proto.Atom(symbol="up:set_constant"),
+        list=[],
+        kind=proto.ExpressionKind.Value("FUNCTION_SYMBOL"),
+        type="up:operator",
+    )
+    return proto.Expression(
+        list=[func_sym] + list(elements),
+        kind=proto.ExpressionKind.Value("FUNCTION_APPLICATION"),
+        type="up:set",
+    )
+
+
+def range_var_expression(rv: "model.range_variable.RangeVariable") -> proto.Expression:
+    """Encode a RangeVariable as FUNCTION_APPLICATION "range_var(var, lo, hi)".
+
+    The three arguments are:
+      [0] VARIABLE node carrying the variable name and its conservative type
+          (integer[lo_type, hi_type] derived from the parameter's declared bounds)
+      [1] lo bound — CONSTANT int if static, PARAMETER reference if dynamic
+      [2] hi bound — CONSTANT int if static, PARAMETER reference if dynamic
+
+    The C++ side (action_instantiator / ForallGrounderPass) detects the
+    "range_var" head, substitutes any PARAMETER bounds with the concrete
+    action-parameter value, then expands the forall for each integer in [lo, hi].
+    """
+    conservative_type = proto_type(rv.type)
+
+    var_expr = proto.Expression(
+        atom=proto.Atom(symbol=rv.name),
+        list=[],
+        kind=proto.ExpressionKind.Value("VARIABLE"),
+        type=conservative_type,
+    )
+
+    def _bound_expr(bound) -> proto.Expression:
+        if isinstance(bound, int):
+            return proto.Expression(
+                atom=proto.Atom(int=bound),
+                list=[],
+                kind=proto.ExpressionKind.Value("CONSTANT"),
+                type="up:integer",
+            )
+        # Parameter reference — encode as PARAMETER with name=bound (string)
+        return proto.Expression(
+            atom=proto.Atom(symbol=bound),
+            list=[],
+            kind=proto.ExpressionKind.Value("PARAMETER"),
+            type=conservative_type,
+        )
+
+    func_sym = proto.Expression(
+        atom=proto.Atom(symbol="range_var"),
+        list=[],
+        kind=proto.ExpressionKind.Value("FUNCTION_SYMBOL"),
+        type="up:integer",
+    )
+
+    return proto.Expression(
+        list=[func_sym, var_expr, _bound_expr(rv.initial), _bound_expr(rv.last)],
+        kind=proto.ExpressionKind.Value("FUNCTION_APPLICATION"),
+        type=conservative_type,
     )
 
 
@@ -146,6 +243,14 @@ class FNode2Protobuf(walkers.DagWalker):
 
     def convert(self, expression: model.FNode) -> proto.Expression:
         return self.walk(expression)
+
+    def _get_children(self, expression: model.FNode):
+        # SET_CONSTANT and ARRAY_CONSTANT store their elements in _content.payload,
+        # not in args.  Expose them so the DAG walker traverses them before calling
+        # the walk_* method, avoiding the iter_walk stack-reset bug.
+        if expression.node_type in (OperatorKind.SET_CONSTANT, OperatorKind.ARRAY_CONSTANT):
+            return expression._content.payload
+        return expression.args
 
     def walk_bool_constant(
         self, expression: model.FNode, args: List[proto.Expression]
@@ -170,8 +275,19 @@ class FNode2Protobuf(walkers.DagWalker):
     def walk_array_constant(
         self, expression: model.FNode, args: List[proto.Expression]
     ) -> proto.Expression:
-        return array_expression(expression.list_constant_value())
+        # args contains the converted element expressions courtesy of _get_children.
+        return array_expression(args)
 
+    def walk_set_constant(
+        self, expression: model.FNode, args: List[proto.Expression]
+    ) -> proto.Expression:
+        # args contains the converted payload elements, courtesy of _get_children.
+        return set_expression(args)
+
+    def walk_range_variable_exp(
+        self, expression: model.FNode, args: List[proto.Expression]
+    ) -> proto.Expression:
+        return range_var_expression(expression.range_variable())
 
     def walk_param_exp(
         self, expression: model.FNode, args: List[proto.Expression]
@@ -298,6 +414,16 @@ class FNode2Protobuf(walkers.DagWalker):
         BOOL_OPERATORS.union(IRA_OPERATORS)
         .union(RELATIONS)
         .union(TRAJECTORY_CONSTRAINTS)
+        .union({
+            OperatorKind.ARRAY_READ,
+            OperatorKind.ARRAY_WRITE,
+            OperatorKind.SET_ADD,
+            OperatorKind.SET_REMOVE,
+            OperatorKind.SET_UNION,
+            OperatorKind.SET_INTERSECT,
+            OperatorKind.SET_DIFFERENCE,
+            OperatorKind.SET_DISJOINT,
+        })
     )
     def walk_operator(
         self, expression: model.FNode, args: List[proto.Expression]
@@ -326,11 +452,11 @@ class FNode2Protobuf(walkers.DagWalker):
         )
 
 
-def map_feature(feature: str) -> proto.Feature:
-    pb_feature = proto.Feature.Value(feature)
-    if pb_feature is None:
-        raise ValueError(f"Cannot convert feature to protobuf {feature}")
-    return pb_feature
+def map_feature(feature: str) -> "Optional[proto.Feature]":
+    try:
+        return proto.Feature.Value(feature)
+    except ValueError:
+        return None
 
 
 class ProtobufWriter(Converter):
@@ -384,6 +510,21 @@ class ProtobufWriter(Converter):
     @handles(model.types._RealType)
     def _convert_real(self, t: model.types._RealType) -> proto.TypeDeclaration:
         return proto.TypeDeclaration(type_name=proto_type(t))
+
+    @handles(model.types._ArrayType)
+    def _convert_array_type(self, t: model.types._ArrayType) -> proto.TypeDeclaration:
+        return proto.TypeDeclaration(
+            type_name=proto_type(t),
+            element_type=proto_type(t.elements_type),
+            size=t.size,
+        )
+
+    @handles(model.types._SetType)
+    def _convert_set_type(self, t: model.types._SetType) -> proto.TypeDeclaration:
+        return proto.TypeDeclaration(
+            type_name=proto_type(t),
+            element_type=proto_type(t.elements_type) if t.elements_type is not None else "",
+        )
 
     @handles(model.Effect)
     def _convert_effect(self, effect: model.Effect) -> proto.Effect:
@@ -520,7 +661,7 @@ class ProtobufWriter(Converter):
             is_left_open=interval.is_left_open(),
             lower=self.convert(interval.lower()),
             is_right_open=interval.is_right_open(),
-            upper=self.convert(interval.lower()),
+            upper=self.convert(interval.upper()),
         )
 
     @handles(model.TimeInterval)
@@ -641,10 +782,52 @@ class ProtobufWriter(Converter):
                     )
                 )
 
+        # [XTS] Collect extra TypeDeclarations for types used in the problem but
+        # absent from problem.user_types:
+        #   - bounded-int types (e.g. "up:integer[0, 4]") — Python serialises
+        #     these as inline strings in fluent/action fields without emitting a
+        #     TypeDeclaration, forcing C++ to scan inline strings on its own.
+        #   - anonymous inner composite element types (e.g. the inner array type
+        #     inside a 2D board) — these have no declared name and are therefore
+        #     not in user_types, but C++ needs them registered to resolve element
+        #     type chains without string-parsing fallbacks.
+        # Emitting them here lets C++ find every type via the normal
+        # TypeDeclarations loop, removing the need for collect_bounded_type() and
+        # the composite-element worklist on the C++ side.
+        extra_types: list = []
+        seen_extra: set = set()
+        seen_user = {proto_type(t) for t in problem.user_types}
+
+        def _collect(t: model.Type) -> None:
+            tn = proto_type(t)
+            if tn in seen_user or tn in seen_extra:
+                return
+            is_bounded_int = t.is_int_type() and t.lower_bound is not None
+            if t.is_array_type() or t.is_set_type() or is_bounded_int:
+                seen_extra.add(tn)
+                extra_types.append(t)
+            if t.is_array_type() or t.is_set_type():
+                elem = t.elements_type
+                if elem is not None:
+                    _collect(elem)
+
+        for f in problem.fluents:
+            for t in [f.type] + [p.type for p in f.signature]:
+                _collect(t)
+        for a in problem.actions:
+            for p in a.parameters:
+                _collect(p.type)
+        # Bounded-int types that serve only as parents of user types
+        # (never appear directly as a fluent/param type).
+        for ut in problem.user_types:
+            if isinstance(ut, model.types._UserType) and ut.father is not None:
+                _collect(ut.father)
+
         return proto.Problem(
             domain_name=problem_name + "_domain",
             problem_name=problem_name,
-            types=[self.convert(t) for t in problem.user_types],
+            types=[self.convert(t) for t in problem.user_types]
+                  + [self.convert(t) for t in extra_types],
             fluents=[self.convert(f, problem) for f in problem.fluents],
             objects=[self.convert(o) for o in problem.all_objects],
             actions=[self.convert(a) for a in problem.actions],
@@ -654,7 +837,7 @@ class ProtobufWriter(Converter):
             ],
             timed_effects=timed_effects,
             goals=goals,
-            features=[map_feature(feature) for feature in problem.kind.features],
+            features=[f for f in (map_feature(feature) for feature in problem.kind.features) if f is not None],
             metrics=[self.convert(m) for m in problem.quality_metrics],
             hierarchy=hierarchy,
             trajectory_constraints=[
@@ -712,7 +895,7 @@ class ProtobufWriter(Converter):
                 for (timing, eff) in problem.base_effects
             ],
             goals=goals,
-            features=[map_feature(feature) for feature in problem.kind.features],
+            features=[f for f in (map_feature(feature) for feature in problem.kind.features) if f is not None],
             metrics=[self.convert(m) for m in problem.quality_metrics],
             hierarchy=None,
             scheduling_extension=sched,
@@ -819,6 +1002,12 @@ class ProtobufWriter(Converter):
             kind=proto.ExpressionKind.Value("VARIABLE"),
             type=proto_type(variable.type),
         )
+
+    @handles(model.range_variable.RangeVariable)
+    def _convert_range_variable(
+        self, rv: model.range_variable.RangeVariable
+    ) -> proto.Expression:
+        return range_var_expression(rv)
 
     @handles(unified_planning.plans.ActionInstance)
     def _convert_action_instance(

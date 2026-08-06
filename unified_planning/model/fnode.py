@@ -65,6 +65,8 @@ class FNode(object):
             OperatorKind.INT_CONSTANT: lambda: str(self._content.payload),
             OperatorKind.REAL_CONSTANT: lambda: str(self._content.payload),
             OperatorKind.ARRAY_CONSTANT: lambda: str(list(self._content.payload)),
+            OperatorKind.ARRAY_READ: lambda: f"(read {self.arg(0)} {self.arg(1)})",
+            OperatorKind.ARRAY_WRITE: lambda: f"(write {self.arg(0)} {self.arg(1)})",
             OperatorKind.SET_CONSTANT: lambda: str(set(self._content.payload)),
             OperatorKind.FLUENT_EXP: lambda: (
                 self._content.payload.name
@@ -311,6 +313,12 @@ class FNode(object):
         """Test whether the expression is a `real` constant."""
         return self.node_type == OperatorKind.ARRAY_CONSTANT
 
+    def is_array_read(self) -> bool:
+        return self.node_type == OperatorKind.ARRAY_READ
+
+    def is_array_write(self) -> bool:
+        return self.node_type == OperatorKind.ARRAY_WRITE
+
     def is_set_constant(self) -> bool:
         """Test whether the expression is a `real` constant."""
         return self.node_type == OperatorKind.SET_CONSTANT
@@ -474,6 +482,16 @@ class FNode(object):
     #
     # Infix operators
     #
+
+    def __getitem__(self, index):
+        # Chaining/composition case for `expr[i]`: self is already an expression
+        assert self.type.is_array_type(), "This FNode does not have array type"
+        em = self._env.expression_manager
+        if type(index) is int:
+            idx_fnode = em.Int(index)
+        else:
+            (idx_fnode,) = em.auto_promote(index)
+        return em.ArrayRead(self, idx_fnode)
 
     def __add__(self, right):
         return self._env.expression_manager.Plus(self, right)

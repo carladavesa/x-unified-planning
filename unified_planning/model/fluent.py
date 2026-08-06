@@ -121,14 +121,15 @@ class Fluent:
             res += hash(p)
         return res ^ hash(self._name)
 
-    def __getitem__(self, index: Union["up.model.parameter.Parameter", "up.model.fnode.FNode", "up.model.range_variable.RangeVariable", int]):
+    def __getitem__(self, index: Union["up.model.parameter.Parameter", "up.model.fnode.FNode", "up.model.range_variable.RangeVariable", int]) -> "up.model.fnode.FNode":
+        # Entry point for `fluent[i]`: promote the Fluent to a FLUENT_EXP first, then read.
         assert self.type.is_array_type(), "The Fluent has no array type"
-        if isinstance(index, up.model.fnode.FNode):
-            return Fluent(self.name+'['+str(index)+']', self.type.elements_type, self.signature, self.environment)
+        em = self._env.expression_manager
         if type(index) is int:
-            index = up.model.parameter.Parameter(str(index), self._env.type_manager.IntType(index,index), self.environment)
-        assert index.type.is_int_type() or index is up.model.range_variable.RangeVariable, "The parameter has no integer type "
-        return Fluent(self.name+'['+str(index.name)+']', self.type.elements_type, self.signature, self.environment)
+            idx_fnode = em.Int(index)
+        else:
+            (idx_fnode,) = em.auto_promote(index)
+        return em.ArrayRead(em.FluentExp(self), idx_fnode)
 
     def add(self, element):
         """ Adds `element` to `Fluent` that has a Set Type """

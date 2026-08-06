@@ -19,10 +19,52 @@ import unified_planning as up
 from unified_planning.exceptions import (
     UPTypeError,
     UPExpressionDefinitionError,
+    UPProblemDefinitionError,
 )
 from unified_planning.model.fluent import get_all_fluent_exp
 from unified_planning.model.mixins import ObjectsSetMixin, FluentsSetMixin
 from unified_planning.model.types import domain_size
+
+
+def _check_container_literal_ranges(
+    value_fnode: "up.model.fnode.FNode",
+    container_type: "up.model.types.Type",
+    fluent_name: str,
+) -> None:
+    """
+    Recursively verify every literal element in an
+    ARRAY_CONSTANT or SET_CONSTANT is within the declared element type bounds.
+    Only bounded-int element types are range-checked
+    """
+    if value_fnode.is_array_constant():
+        elem_type = container_type.elements_type
+        for elem in value_fnode.constant_value():  # list of FNodes
+            if elem_type.is_array_type():
+                _check_container_literal_ranges(elem, elem_type, fluent_name)
+            elif (elem_type.is_int_type()
+                  and elem_type.lower_bound is not None
+                  and elem_type.upper_bound is not None
+                  and elem.is_int_constant()):
+                v = elem.constant_value()
+                if v < elem_type.lower_bound or v > elem_type.upper_bound:
+                    raise UPProblemDefinitionError(
+                        f"Init: element {v} is out of declared range "
+                        f"[{elem_type.lower_bound}, {elem_type.upper_bound}] "
+                        f"for fluent '{fluent_name}'")
+    elif value_fnode.is_set_constant():
+        elem_type = container_type.elements_type
+        if (elem_type is not None
+                and elem_type.is_int_type()
+                and elem_type.lower_bound is not None
+                and elem_type.upper_bound is not None):
+            for elem in value_fnode.constant_value():  # set/tuple of FNodes
+                if elem.is_int_constant():
+                    v = elem.constant_value()
+                    if v < elem_type.lower_bound or v > elem_type.upper_bound:
+                        raise UPProblemDefinitionError(
+                            f"Init: element {v} is out of declared range "
+                            f"[{elem_type.lower_bound}, {elem_type.upper_bound}] "
+                            f"for fluent '{fluent_name}'")
 
 
 class InitialStateMixin:
@@ -65,6 +107,9 @@ class InitialStateMixin:
             raise UPTypeError("You cannot set the initial value of a derived fluent!")
         if not fluent_exp.type.is_compatible(value_exp.type):
             raise UPTypeError("Initial value assignment has not compatible types!")
+        # [XTS check #9] Literal element values must be within declared element type bounds.
+        if fluent_exp.type.is_array_type() or fluent_exp.type.is_set_type():
+            _check_container_literal_ranges(value_exp, fluent_exp.type, str(fluent_exp))
         self._initial_value[fluent_exp] = value_exp
 
     def create_multidimensional_array(self, dimensions, elements_default):

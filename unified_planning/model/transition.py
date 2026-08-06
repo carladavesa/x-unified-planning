@@ -29,7 +29,7 @@ from unified_planning.exceptions import (
 )
 from unified_planning.model.mixins.timed_conds_effs import TimedCondsEffs
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Set, Union, Optional, Iterable
+from typing import Any, Dict, List, Optional, Set, Union, Iterable
 from collections import OrderedDict
 
 
@@ -273,7 +273,9 @@ class UntimedEffectMixin:
             value_exp,
             condition_exp,
         ) = self._environment.expression_manager.auto_promote(fluent, value, condition)
-        if not fluent_exp.is_fluent_exp() and not fluent_exp.is_dot():
+        if fluent_exp.is_array_read():
+            fluent_exp = self._environment.expression_manager.ArrayWrite(fluent_exp.arg(0), fluent_exp.arg(1))
+        if not fluent_exp.is_fluent_exp() and not fluent_exp.is_dot() and not fluent_exp.is_array_write():
             raise UPUsageError(
                 "fluent field of add_effect must be a Fluent or a FluentExp or a Dot."
             )
@@ -289,6 +291,41 @@ class UntimedEffectMixin:
             raise UPTypeError(
                 f"InstantaneousAction effect has an incompatible value type. Fluent type: {fluent_exp.type} // Value type: {value_exp.type}"
             )
+        # [XTS] Type-narrowing assignment: a direct fluent-to-fluent copy must not
+        # move a wider bounded-int range into a narrower one.
+        if value_exp.is_fluent_exp():
+            dest_t, src_t = fluent_exp.type, value_exp.type
+            both_bounded_int = (
+                dest_t.is_int_type() and src_t.is_int_type()
+                and dest_t.lower_bound is not None and dest_t.upper_bound is not None
+                and src_t.lower_bound is not None and src_t.upper_bound is not None
+            )
+            # the source range must be a subrange of the destination range
+            if both_bounded_int and (src_t.lower_bound < dest_t.lower_bound
+                                     or src_t.upper_bound > dest_t.upper_bound):
+                raise UPTypeError(
+                    f"Type-narrowing assignment: source type {src_t} "
+                    f"[{src_t.lower_bound}, {src_t.upper_bound}] is not a subrange of "
+                    f"destination type {dest_t} [{dest_t.lower_bound}, {dest_t.upper_bound}]"
+                )
+        # [XTS] Set-element range: the element added/removed must fit the set's declared bounded-int bounds.
+        if (value_exp.is_set_add() or value_exp.is_set_remove()) and fluent_exp.type.is_set_type():
+            elem_t = fluent_exp.type.elements_type
+            if (elem_t is not None and elem_t.is_int_type()
+                    and elem_t.lower_bound is not None and elem_t.upper_bound is not None):
+                from unified_planning.model.walkers.index_interval import _index_interval
+                elem_iv = _index_interval(value_exp.arg(0))   # arg(0) is the element
+                if elem_iv is not None:
+                    if elem_iv[1] > elem_t.upper_bound:
+                        raise UPTypeError(
+                            f"Set element expression upper bound {elem_iv[1]} exceeds "
+                            f"declared element type upper bound {elem_t.upper_bound} "
+                            f"(element type range [{elem_t.lower_bound}, {elem_t.upper_bound}])")
+                    if elem_iv[0] < elem_t.lower_bound:
+                        raise UPTypeError(
+                            f"Set element expression lower bound {elem_iv[0]} is below "
+                            f"declared element type lower bound {elem_t.lower_bound} "
+                            f"(element type range [{elem_t.lower_bound}, {elem_t.upper_bound}])")
         self._add_effect_instance(
             up.model.effect.Effect(fluent_exp, value_exp, condition_exp, forall=forall)
         )
@@ -319,6 +356,8 @@ class UntimedEffectMixin:
             value,
             condition,
         )
+        if fluent_exp.is_array_read():
+            fluent_exp = self._environment.expression_manager.ArrayWrite(fluent_exp.arg(0), fluent_exp.arg(1))
         if not fluent_exp.is_fluent_exp() and not fluent_exp.is_dot():
             raise UPUsageError(
                 "fluent field of add_increase_effect must be a Fluent or a FluentExp or a Dot."
@@ -363,6 +402,8 @@ class UntimedEffectMixin:
             value_exp,
             condition_exp,
         ) = self._environment.expression_manager.auto_promote(fluent, value, condition)
+        if fluent_exp.is_array_read():
+            fluent_exp = self._environment.expression_manager.ArrayWrite(fluent_exp.arg(0), fluent_exp.arg(1))
         if not fluent_exp.is_fluent_exp() and not fluent_exp.is_dot():
             raise UPUsageError(
                 "fluent field of add_decrease_effect must be a Fluent or a FluentExp or a Dot."

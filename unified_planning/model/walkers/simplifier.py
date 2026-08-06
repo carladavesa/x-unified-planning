@@ -334,6 +334,12 @@ class Simplifier(walkers.dag.DagWalker):
     def walk_dot(self, expression: FNode, args: List[FNode]) -> FNode:
         return self.manager.Dot(expression.agent(), args[0])
 
+    def walk_array_read(self, expression, args, **kwargs):
+        return self.manager.ArrayRead(args[0], args[1])
+
+    def walk_array_write(self, expression, args, **kwargs):
+        return self.manager.ArrayWrite(args[0], args[1])
+
     def walk_count(self, expression: FNode, args: List[FNode]) -> FNode:
         new_args_count: List[FNode] = list()
         for a in args:
@@ -412,9 +418,9 @@ class Simplifier(walkers.dag.DagWalker):
     def walk_set_union(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
         if args[1] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[0])
+            return args[0]
         elif args[0] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[1])
+            return args[1]
 
         # implementar simplificador!
         return self.manager.SetUnion(*args)
@@ -430,12 +436,13 @@ class Simplifier(walkers.dag.DagWalker):
     def walk_set_difference(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
         if args[1] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[0])
+            return args[0]
         elif args[0] == self.manager.EMPTY_SET():
             return self.manager.EMPTY_SET()
+        elif args[0] == args[1]:
+            return self.manager.EMPTY_SET()
 
-        # implementar simplificador!
-        return self.manager.SetIntersection(*args)
+        return self.manager.SetDifference(*args)
 
     def walk_plus(self, expression: FNode, args: List[FNode]) -> FNode:
         new_args_plus: List[FNode] = list()

@@ -25,9 +25,14 @@ from unified_planning.model import Problem, InstantaneousAction, Action, Problem
     RangeVariable, OperatorKind, Effect, Axiom, Expression
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.engines.compilers.utils import get_fresh_name, lift_action_instance
+from unified_planning.plans import ActionInstance
 from typing import Dict, List, Optional, Tuple, OrderedDict, Union
 from functools import partial
 from unified_planning.shortcuts import Int, FALSE, TRUE, Exists, Forall
+
+
+# Returned by _transform_array_access distinct from None, means a concrete but out-of-bounds index.
+_OOB = object()
 
 
 class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
@@ -37,7 +42,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
     Transforms:
     1. Integer action parameters -> grounded instantiated actions for each valid integer value
     2. Range variables -> expanded quantifiers (forall/exists) over instantiated ranges
-    3. Array fluents -> indexed fluents with explicit array accesses
+    3. Array fluents and accesses with integer-parameter indices  ->  read/write chain with explicit array accesses
 
     Example:
         action(p: Int[1,3]) with precondition p < 2
@@ -51,6 +56,8 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         CompilerMixin.__init__(self, CompilationKind.INT_PARAMETER_ACTIONS_REMOVING)
         self.domains: Dict[str, List[Tuple[int, ...]]] = {}
         self._expression_cache: Dict[Tuple[int, Tuple[int, ...]], FNode] = {}
+        # Maps base fluent name: (int_param_indices, {int_vals_tuple: grounded_fluent})
+        self._int_param_fluents: Dict[str, Tuple[Tuple[int, ...], Dict[Tuple[int, ...], Fluent]]] = {}
 
     @property
     def name(self):
@@ -168,125 +175,6 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
 
         self.domains[fluent.name] = valid_positions
 
-    def _extract_array_indices(
-            self,
-            fluent: Fluent,
-            int_params: Optional[Dict[str, int]] = None,
-            instantiations: Optional[Tuple[int, ...]] = None
-    ) -> Union[List[int], None]:
-        """
-        Extract and evaluate array indices from fluent name.
-        Parses numeric and parameter-based indices, substituting parameter values from the current instantiation.
-        Returns None if out of bounds or undefined.
-        """
-        pattern = r'\[(.*?)\]'
-        indices = []
-        fluent_name = fluent.name
-        for access_expr in re.findall(pattern, fluent_name):
-            if access_expr.isdigit():
-                # Constant index
-                index_value = int(access_expr)
-            else:
-                # Expression with parameters - substitute and evaluate
-                evaluated_expr = access_expr
-                for param_name, param_idx in int_params.items():
-                    evaluated_expr = re.sub(
-                        r'\b' + re.escape(param_name) + r'\b',
-                        str(instantiations[param_idx]),
-                        evaluated_expr
-                    )
-
-                # Evaluate arithmetic expression
-                try:
-                    index_value = eval(evaluated_expr)
-                except:
-                    return None
-
-            indices.append(index_value)
-
-        # Check if access is within valid domain
-        fluent_base_name = fluent_name.split('[')[0]
-        valid_accesses = self.domains.get(fluent_base_name, [])
-        if tuple(indices) not in valid_accesses:
-            return None
-        return indices
-
-    # ==================== QUICK VALIDATION ====================
-
-    def _quick_check_expression(
-            self, problem: Problem, node: FNode, int_params: Dict[str, int], instantiation: Tuple[int, ...]
-    ) -> Optional[bool]:
-        """
-        Quick check if expression is definitely false without full transformation.
-        Used to prune invalid instantiations early before full action generation.
-        Returns: True/False if definite, None if unknown.
-        """
-        # Check parameter equality
-        if node.is_equals():
-            left, right = node.arg(0), node.arg(1)
-
-            # parameter == constant
-            if left.is_parameter_exp() and right.is_int_constant():
-                param_name = left.parameter().name
-                if param_name in int_params:
-                    return instantiation[int_params[param_name]] == right.constant_value()
-
-            # constant == parameter
-            if right.is_parameter_exp() and left.is_int_constant():
-                param_name = right.parameter().name
-                if param_name in int_params:
-                    return instantiation[int_params[param_name]] == left.constant_value()
-
-            # Check array access out of bounds
-            if left.is_fluent_exp():
-                fluent_base = left.fluent().name.split('[')[0]
-                old_fluent = problem.fluent(fluent_base)
-                if old_fluent.type.is_array_type():
-                    indices = self._extract_array_indices(left.fluent(), int_params, instantiation)
-                    if indices is None:
-                        return None  # Out of bounds
-
-        # Check AND
-        elif node.is_and():
-            for arg in node.args:
-                result = self._quick_check_expression(problem, arg, int_params, instantiation)
-                if result == None:
-                    return None
-
-        # Check OR
-        elif node.is_or():
-            all_false = True
-            for arg in node.args:
-                result = self._quick_check_expression(problem, arg, int_params, instantiation)
-                if result == True:
-                    return True
-                if result != False:
-                    all_false = False
-            if all_false:
-                return False
-
-        return None  # Unknown
-
-    def _is_instantiation_valid(
-            self,
-            problem: Problem,
-            action: Action,
-            int_param_map: Dict[str, int],
-            instantiation: Tuple[int, ...]
-    ) -> bool:
-        """
-        Check if an instantiation is valid before creating the full action.
-        Quick validation on preconditions to prune impossible instantiations early.
-        Returns False if definitely impossible (e.g., precondition always false).
-        """
-        # Quick check preconditions
-        for precond in action.preconditions:
-            result = self._quick_check_expression(problem, precond, int_param_map, instantiation)
-            if result == False:
-                return False  # Definitely false precondition
-
-        return True
-
     # ==================== RANGE VARIABLE TRANSFORMATION ====================
 
     def _extract_variables(self, variables: List) -> Tuple[Tuple, Dict[str, Tuple[int, int]]]:
@@ -380,7 +268,9 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
                 if transformed is not None:
                     expanded_args.append(transformed)
         if not expanded_args:
-            return None
+            # Empty range: forall over nothing is True; exists over nothing is False.
+            em = new_problem.environment.expression_manager
+            return em.TRUE() if node.is_forall() else em.FALSE()
 
         # Combine with appropriate operator
         em = new_problem.environment.expression_manager
@@ -419,17 +309,25 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         old_fluent = old_problem.fluent(fluent_base_name)
         # Array fluent: extract indices from name
         if old_fluent.type.is_array_type():
-            index_params = self._extract_array_indices(node.fluent(), int_params, instantiations)
-            if index_params is None:
+            # Whole-array reference
+            return node.fluent()(*new_args)
+
+        # Integer-parametered fluent: substitute concrete int values into grounded name
+        if fluent_base_name in self._int_param_fluents:
+            # Which argument positions are integers, and the val[i] -> val_i table built for 
+            # them by _transform_int_param_fluents.
+            int_param_indices, grounded = self._int_param_fluents[fluent_base_name]
+            # The loop above already folded those args to constants, so they read directly.
+            int_vals = tuple(new_args[i].constant_value() for i in int_param_indices)
+            int_param_set = set(int_param_indices)
+            # The integer args are encoded in the grounded name(user-type args stay in the signature)
+            non_int_args = [new_args[i] for i in range(len(new_args)) if i not in int_param_set]
+            grounded_fluent = grounded.get(int_vals)
+            if grounded_fluent is None:
+                # No grounded variant for these values: they fall outside the declared
+                # bounds, so the access is impossible and the caller prunes it.
                 return None
-            idx = "".join(f"[{i}]" for i in index_params)
-            return Fluent(
-                f"{fluent_base_name}{idx}",
-                node.fluent().type,
-                _signature=node.fluent().signature,
-                environment=node.fluent().environment,
-                undefined_positions=node.fluent().undefined_positions
-            )(*new_args)
+            return grounded_fluent(*non_int_args)
 
         # Regular fluent
         return node.fluent()(*new_args)
@@ -468,6 +366,92 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             return None
         return em.create_node(node.node_type, tuple(new_args)).simplify()
 
+    def _transform_array_access(
+            self,
+            old_problem: Problem,
+            new_problem: Problem,
+            node: FNode,
+            int_params: Dict[str, int],
+            instantiations: Tuple[int, ...]
+    ) -> Union[FNode, None]:
+        """
+        Substitute concrete integers into the indices of an ARRAY_READ/ARRAY_WRITE
+        node, keeping the node structure and the base fluent intact:
+
+            (read (read card_at r) c)  with r=1, c=0  ->  (read (read card_at 1) 0)
+
+        Handles four cases (board: Int[4][4], r=1, c=0):
+          - all indices concrete and in domain: rebuild the chain
+            Pre:  (read (read board(?a) r) c)
+            Post: (read (read board(?a) 1) 0)
+          - partial access, fewer indices than dimensions: checked on the indexed prefix
+            Pre:  (read board(?a) r)
+            Post: (read board(?a) 1)
+          - index not a concrete integer, chain not rooted in a fluent, or base fluent with no recorded domain
+            Pre:  (read board(?a) (blank_row))
+            Post: None
+          - concrete indices out of bounds or on an undefined position
+            Pre:  (read (read board(?a) -1) 0)
+            Post: _OOB
+        """
+        em = old_problem.environment.expression_manager
+
+        # Unwind the read/write chain from outermost to innermost, recording each
+        # layer as (is_write: bool, concrete_index: FNode)
+        layers: List[Tuple[bool, FNode]] = []
+        current = node
+        while current.is_array_read() or current.is_array_write():
+            is_write = current.is_array_write()
+            idx = self._transform_expression(
+                old_problem, new_problem, current.arg(1), int_params, instantiations
+            )
+            if idx is None or not idx.is_int_constant():
+                # Index could not be evaluated to a concrete integer
+                return None
+            layers.append((is_write, idx))
+            current = current.arg(0)
+
+        if not current.is_fluent_exp():
+            return None
+
+        base_fluent = current.fluent()
+        base_name = base_fluent.name.split('[')[0]
+
+        # Build the index tuple in innermost-first order (dim0, dim1, ...) by reversing
+        # the outermost-first collection order
+        indices = tuple(idx.constant_value() for _, idx in reversed(layers))
+        valid_positions = self.domains.get(base_name)
+        if valid_positions is None:
+            # No domain to check against: cannot decide
+            return None
+        if not valid_positions:
+            return _OOB
+        # A partial access (e.g. the row `board[i]` of an Int[n][n]) indexes fewer
+        # dimensions than self.domains records, so compare on the indexed prefix.
+        if len(indices) == len(valid_positions[0]):
+            in_domain = indices in valid_positions
+        else:
+            in_domain = any(pos[:len(indices)] == indices for pos in valid_positions)
+        if not in_domain:
+            # OOB or undefined position: the access is provably impossible.
+            return _OOB
+
+        # Transform the base fluent's own arguments (e.g., object-typed parameters).
+        new_fluent_args = [
+            self._transform_expression(old_problem, new_problem, a, int_params, instantiations)
+            for a in current.args
+        ]
+        if any(a is None for a in new_fluent_args):
+            return None
+
+        # Rebuild the read/write chain from inner to outer with concrete indices.
+        result: FNode = em.FluentExp(base_fluent, new_fluent_args)
+        for is_write, concrete_idx in reversed(layers):
+            result = em.ArrayWrite(result, concrete_idx) if is_write \
+                else em.ArrayRead(result, concrete_idx)
+
+        return result
+
     def _transform_expression(
             self,
             old_problem: Problem,
@@ -493,7 +477,17 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             return self._expression_cache[cache_key]
 
         # Base cases
-        if node.is_constant() or node.is_variable_exp() or node.is_timing_exp():
+        if node.is_constant() or node.is_timing_exp():
+            return node
+
+        # If expression wraps a RangeVariable, substitute with integer
+        if node.is_variable_exp():
+            v = node.variable()
+            if isinstance(v, RangeVariable) and v.name in int_params:
+                param_index = int_params[v.name]
+                result = Int(instantiations[param_index])
+                self._expression_cache[cache_key] = result
+                return result
             return node
 
         if node.is_parameter_exp():
@@ -504,6 +498,15 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
                 self._expression_cache[cache_key] = result
                 if result is None:
                     return None
+                return result
+            return node
+
+        if node.is_range_variable_exp():
+            var_name = node.range_variable().name
+            if var_name in int_params:
+                param_index = int_params[var_name]
+                result = Int(instantiations[param_index])
+                self._expression_cache[cache_key] = result
                 return result
             return node
 
@@ -520,11 +523,97 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             if result is None:
                 return None
             return result
+
+        if node.is_array_read() or node.is_array_write():
+            result = self._transform_array_access(old_problem, new_problem, node, int_params, instantiations)
+            if result is _OOB:
+                # Provably impossible access
+                self._expression_cache[cache_key] = None
+                return None
+            if result is not None:
+                self._expression_cache[cache_key] = result
+                return result
+            # _transform_array_access returned None: index could not be evaluated to a concrete integer
+
         result = self._transform_generic(old_problem, new_problem, node, int_params, instantiations)
         self._expression_cache[cache_key] = result
         if result is None:
             return None
         return result
+
+    # ==================== FLUENT TRANSFORMATION ====================
+
+    def _transform_int_param_fluents(self, problem: Problem, new_problem: Problem):
+        """
+        Replace each integer-parametered fluent with one parameterless grounded fluent per
+        combination of integer values, and rewrite explicit initial values accordingly.
+
+        Handles three fluent shapes:
+          - integer parameters only: one grounded fluent per combination of values
+            Pre:  val(i: int[0, 2])       val(1) := 7
+            Post: val_0, val_1, val_2     val_1 := 7
+          - mixed parameters: the user-type ones stay in the grounded signature
+            Pre:  at(i: int[0, 1], ?t)    at(0, t1) := true
+            Post: at_0(?t), at_1(?t)      at_0(t1) := true
+          - array fluent, or no integer parameter at all: copied unchanged
+            Pre:  board: int[4][4]
+            Post: board: int[4][4]
+        """
+        for fluent in problem.fluents:
+            default_value = problem.fluents_defaults.get(fluent)
+
+            # Array fluents are handled by the array-access
+            if fluent.type.is_array_type():
+                new_problem.add_fluent(fluent, default_initial_value=default_value)
+                for f, v in problem.explicit_initial_values.items():
+                    if f.fluent() == fluent:
+                        new_problem.set_initial_value(fluent(*f.args), v)
+                continue
+
+            int_param_indices = tuple(
+                i for i, p in enumerate(fluent.signature) if p.type.is_int_type()
+            )
+
+            if not int_param_indices:
+                # No integer parameters: add unchanged and copy initial values.
+                new_problem.add_fluent(fluent, default_initial_value=default_value)
+                for f, v in problem.explicit_initial_values.items():
+                    if f.fluent() == fluent:
+                        new_problem.set_initial_value(fluent(*f.args), v)
+                continue
+
+            # Build grounded fluents for every combination of integer parameter values.
+            int_param_set = set(int_param_indices)
+            non_int_signature = OrderedDict(
+                (fluent.signature[i].name, fluent.signature[i].type)
+                for i in range(len(fluent.signature))
+                if i not in int_param_set
+            )
+            int_ranges = [
+                range(fluent.signature[i].type.lower_bound, fluent.signature[i].type.upper_bound + 1)
+                for i in int_param_indices
+            ]
+
+            grounded: Dict[Tuple[int, ...], Fluent] = {}
+            for int_vals in product(*int_ranges):
+                grounded_name = fluent.name + "".join(f"_{v}" for v in int_vals)
+                new_fluent = Fluent(
+                    grounded_name, fluent.type, non_int_signature, fluent.environment
+                )
+                new_problem.add_fluent(new_fluent, default_initial_value=default_value)
+                grounded[int_vals] = new_fluent
+
+            self._int_param_fluents[fluent.name] = (int_param_indices, grounded)
+
+            # Rewrite explicit initial values using the grounded fluent names.
+            for f, v in problem.explicit_initial_values.items():
+                if f.fluent() != fluent:
+                    continue
+                int_vals = tuple(f.args[i].constant_value() for i in int_param_indices)
+                non_int_args = tuple(f.args[i] for i in range(len(f.args)) if i not in int_param_set)
+                grounded_fluent = grounded.get(int_vals)
+                if grounded_fluent is not None:
+                    new_problem.set_initial_value(grounded_fluent(*non_int_args), v)
 
     # ==================== ACTION TRANSFORMATION ====================
 
@@ -565,7 +654,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         # Handle conditional effects
         else:
             if condition not in [None, FALSE()] and fluent is not None and value is not None:
-                if (fluent.type.is_int_type() and
+                if (fluent.type.is_int_type() and value.is_constant() and
                         not fluent.type.lower_bound <= value.constant_value() <= fluent.type.upper_bound):
                     return True
                 self._add_effect_to_action(action, effect_type, fluent, value, condition, forall)
@@ -641,7 +730,45 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             )
             if not success:
                 return False
-        return len(new_action.effects) > 0
+        # An action with no original effects is a valid no-op (keep it for precondition validation).
+        return len(new_action.effects) > 0 or not old_action.effects
+
+    @staticmethod
+    def _precondition_is_infeasible(node: FNode) -> bool:
+        """
+        Detect a precondition that no state can satisfy because it equates a bounded-int
+        fluent to a constant outside its declared range.
+        Runs on the already-transformed node, so `(- ?i 1)` at ?i=0 is the constant -1.
+
+        Handles three cases (blank_row: int[0, 3]):
+          - equality with a constant outside the fluent's range, either side
+            Pre:  (= (blank_row) -1)
+            Post: True
+          - conjunct of an AND (a precondition is stored as one AND node)
+            Pre:  (and (= (blank_row) 4) (not (done)))
+            Post: True
+          - anything else: constant in range, non-equality, or a non-fluent side
+            Pre:  (= (blank_row) 2)  /  (> (blank_row) -1)
+            Post: False
+        """
+        # One infeasible conjunct makes the whole conjunction infeasible.
+        if node.is_and():
+            return any(IntParameterActionsRemover._precondition_is_infeasible(arg)
+                       for arg in node.args)
+        # Only binary equalities carry the bound information needed here.
+        if not node.is_equals() or len(node.args) != 2:
+            return False
+        # The fluent may sit on either side, so try both orientations.
+        for sv_side, const_side in [(node.arg(0), node.arg(1)),
+                                     (node.arg(1), node.arg(0))]:
+            if sv_side.is_fluent_exp() and const_side.is_int_constant():
+                ftype = sv_side.fluent().type
+                # Only a bounded int type has a range to fall outside of.
+                if ftype.is_int_type():
+                    v = const_side.constant_value()
+                    if not (ftype.lower_bound <= v <= ftype.upper_bound):
+                        return True
+        return False
 
     def _create_instantiated_action(
             self,
@@ -654,7 +781,8 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
     ) -> Union[Action, None]:
         """
         Create a single instantiated action for a specific integer parameter assignment.
-        Transforms preconditions and effects, pruning the action if any become false/invalid.
+        Transforms all preconditions and effects by substituting the given integer
+        parameter values and pruning the action if any become false/invalid
         """
         # Generate unique name
         action_name = get_fresh_name(new_problem, action.name, list(map(str, instantiation)))
@@ -667,6 +795,10 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
                 problem, new_problem, precondition, int_param_map, instantiation
             )
             if new_precondition in [FALSE(), None]:
+                return None
+            # Boundary-int-action check: precondition requires a bounded-int fluent to equal
+            # a constant outside its type range
+            if self._precondition_is_infeasible(new_precondition):
                 return None
             new_action.add_precondition(new_precondition)
 
@@ -751,7 +883,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             if skip_axiom:
                 continue
             new_problem.add_axiom(new_axiom)
-            new_to_old[new_axiom] = axiom
+            new_to_old[new_axiom] = (axiom, tuple())
 
     # ==================== QUALITY METRICS TRANSFORMATION ====================
 
@@ -796,6 +928,17 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
                 new_costs[new_action] = old_cost
         return new_costs
 
+    # ==================== GOALS TRANSFORMATION ====================
+    def _transform_goals(self, problem: Problem, new_problem: Problem):
+        for goal in problem.goals:
+            transformed = self._transform_expression(problem, new_problem, goal)
+            if transformed is None:
+                # The goal references a provably impossible construct (e.g. an
+                # out-of-bounds array access). Dropping it would make an
+                # unsolvable problem appear solvable; keep the problem UNSOLVABLE.
+                transformed = FALSE()
+            new_problem.add_goal(transformed)
+
     def _compile(
         self,
         problem: "up.model.AbstractProblem",
@@ -804,23 +947,39 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         """Main compilation."""
         assert isinstance(problem, Problem)
         self._expression_cache.clear()
+        self._int_param_fluents.clear()
 
-        # Create new problem
+        # Create new problem, and rebuild fluents and init
         new_problem = problem.clone()
         new_problem.name = f"{self.name}_{problem.name}"
+        new_problem.clear_fluents()
         new_problem.clear_actions()
         new_problem.clear_axioms()
+        new_problem.clear_goals()
         new_problem.clear_quality_metrics()
+        new_problem.initial_values.clear()
 
-        # Transform components
-        for fluent in new_problem.fluents:
+        # Build array domain cache from original problem fluents.
+        for fluent in problem.fluents:
             if fluent.type.is_array_type():
                 self._save_array_domain(fluent)
 
+        # Rebuild fluents (grounding integer-parametered ones) and initial values.
+        self._transform_int_param_fluents(problem, new_problem)
         new_to_old = self._transform_actions(problem, new_problem)
         self._transform_quality_metrics(problem, new_problem, new_to_old)
         self._transform_axioms(problem, new_problem, new_to_old)
+        self._transform_goals(problem, new_problem)
 
-        return CompilerResult(
-            new_problem, partial(lift_action_instance, map=new_to_old), self.name,
-        )
+        def _map_back(action_instance, ipar_map=new_to_old):
+            old_action, instantiation = ipar_map[action_instance.action]
+            em = old_action.environment.expression_manager
+            int_iter = iter(instantiation)
+            reg_iter = iter(action_instance.actual_parameters)
+            full_params = tuple(
+                em.Int(next(int_iter)) if p.type.is_int_type() else next(reg_iter)
+                for p in old_action.parameters
+            )
+            return ActionInstance(old_action, full_params)
+
+        return CompilerResult(new_problem, _map_back, self.name)
