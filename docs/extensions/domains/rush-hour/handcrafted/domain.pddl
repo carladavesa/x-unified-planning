@@ -8,6 +8,7 @@
         (CAR ?v - vehicle)
         (TRUCK ?v - vehicle)
         (QUAD ?v - vehicle)
+        (SMALL ?v - vehicle)
         (isOccupied ?p - position)
         (containsVehicle ?p - position ?v - vehicle)
         (isWall ?p - position)
