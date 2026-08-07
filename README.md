@@ -42,8 +42,8 @@ We highly recommend using a Python virtual environment to avoid conflicts.
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/carladavesa/unified-planning.git
-cd unified-planning
+git clone https://github.com/carladavesa/x-unified-planning.git
+cd x-unified-planning
 ```
 
 ### 2. Set up a virtual environment (Recommended)
