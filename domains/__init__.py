@@ -28,6 +28,7 @@ from .delivery import DOMAIN as delivery
 from .dump_trucks import DOMAIN as dump_trucks
 from .expedition import DOMAIN as expedition
 from .farmland import DOMAIN as farmland
+from .folding import DOMAIN as folding
 from .hydro_power import DOMAIN as hydro_power
 from .labyrinth import DOMAIN as labyrinth
 from .market_trader import DOMAIN as market_trader
@@ -52,6 +53,7 @@ DOMAINS: dict[str, Domain] = {
     "dump_trucks": dump_trucks,
     "expedition": expedition,
     "farmland": farmland,
+    "folding": folding,
     "hydro_power": hydro_power,
     "labyrinth": labyrinth,
     "market_trader": market_trader,

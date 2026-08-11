@@ -133,6 +133,10 @@ DEFAULT_ENGINES = {
         "unified_planning.engines.compilers.integer_fluents_remover",
         "IntegerFluentsRemover",
     ),
+    "up_integer_fluents_basic_remover": (
+        "unified_planning.engines.compilers.integer_fluents_basic_remover",
+        "IntegerFluentsBasicRemover",
+    ),
     "up_int_arrays_bits_remover": (
         "unified_planning.engines.compilers.int_arrays_bits_remover",
         "IntArraysBitsRemover",
@@ -214,6 +218,7 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "up_conditions_to_predicates_simplifier",
     "up_int_parameters_and_variables_remover",
     "up_integer_fluents_remover",
+    "up_integer_fluents_basic_remover",
     "up_int_arrays_bits_remover",
     "up_state_invariants_remover",
     "up_usertype_fluents_remover",
