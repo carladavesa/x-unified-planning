@@ -827,6 +827,12 @@ class Problem(  # type: ignore[misc]
                 for c in qm.costs.values():
                     domain_constants.update(extractor.get(c))
 
+        for ax in self.axioms:
+            for p in ax.preconditions:
+                domain_constants.update(extractor.get(p))
+            if ax.head is not None:
+                domain_constants.update(extractor.get(ax.head.fluent))
+
         return domain_constants
 
 
