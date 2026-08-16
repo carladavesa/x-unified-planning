@@ -38,7 +38,8 @@ from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_V
 from unified_planning.engines.compilers.utils import get_fresh_name, replace_action, updated_minimize_action_costs
 from typing import Optional, Iterator, OrderedDict, Union
 from functools import partial
-from unified_planning.shortcuts import And, Or, Equals, Not, FALSE, UserType, TRUE, ObjectExp, DerivedBoolType, BoolType
+from unified_planning.shortcuts import And, Or, Equals, Not, FALSE, UserType, TRUE, ObjectExp, DerivedBoolType, \
+    BoolType, Iff
 from typing import Dict
 
 class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
@@ -66,10 +67,10 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         self._lt_fluent: Optional[Fluent] = None
 
         if representation == 'object':
-            # Number objects (per object representation)
+            # Number objects (object representation)
             self._number_objects: Dict[int, Object] = {}
         else:
-            # Bit encoding (per binary representation)
+            # Bit encoding (binary representation)
             self.n_bits: OrderedDict = OrderedDict()
             self.offsets: Dict[str, int] = {}
 
@@ -167,7 +168,44 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
     }
 
     # ============================================================
-    # NUMBER OBJECTS and lt PREDICATE (object representation)
+    # BINARY REPRESENTATION
+    # ============================================================
+
+    def _num_bits(self, fluent_type) -> int:
+        """Number of bits needed to represent all values in the fluent's range."""
+        n_values = fluent_type.upper_bound - fluent_type.lower_bound + 1
+        return max(1, math.ceil(math.log2(n_values))) if n_values > 1 else 1
+
+    def _to_bits(self, value: int, n_bits: int, offset: int) -> List[bool]:
+        """Convert an integer value to a list of n_bits booleans (MSB first).
+
+        The value is first shifted by offset (which should be the lower bound of the fluent).
+        """
+        shifted = value - offset
+        if shifted < 0 or shifted >= 2 ** n_bits:
+            raise ValueError(f"Value {value} out of range for {n_bits} bits with offset {offset}")
+        return [((shifted >> i) & 1) == 1 for i in range(n_bits - 1, -1, -1)]
+
+    def _get_bit_fluents(self, fluent_ref: FNode, new_problem: Problem) -> List[FNode]:
+        """Get the list of bit fluent references for a given integer fluent reference.
+
+        E.g. for f(x, y) → [f_0(x, y), f_1(x, y), ..., f_k(x, y)] with MSB first.
+        """
+        fluent = fluent_ref.fluent()
+        n_bits = self.n_bits[fluent.name]
+        return [
+            new_problem.fluent(f"{fluent.name}_{i}")(*fluent_ref.args)
+            for i in range(n_bits)
+        ]
+
+    def _value_to_bit_pattern(self, value: int, fluent_type) -> List[bool]:
+        """Convert an integer value to its bit pattern (MSB first) for the given type."""
+        offset = fluent_type.lower_bound
+        n_bits = self._num_bits(fluent_type)
+        return self._to_bits(value, n_bits, offset)
+
+    # ============================================================
+    # NUMBER OBJECTS
     # ============================================================
 
     def _compute_needed_values(self, problem: Problem) -> set:
@@ -334,11 +372,13 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
     def _emit_upper_bound_prec(self, fluent_ref: FNode, upper: int) -> FNode:
         """Emit precondition: fluent_ref <= upper, using lt predicate."""
         n_upper_plus_1 = ObjectExp(self._number_objects[upper + 1])
+        assert self._lt_fluent is not None, "lt predicate should have been set up"
         return self._lt_fluent(fluent_ref, n_upper_plus_1)
 
     def _emit_lower_bound_prec(self, fluent_ref: FNode, lower: int) -> FNode:
         """Emit precondition: fluent_ref >= lower, using lt predicate."""
         n_lower = ObjectExp(self._number_objects[lower])
+        assert self._lt_fluent is not None, "lt predicate should have been set up"
         # fluent >= lower == not (fluent < lower)
         return Not(self._lt_fluent(fluent_ref, n_lower))
 
@@ -416,7 +456,11 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         # Constants
         if expr.is_int_constant():
             v = expr.constant_value()
-            return ObjectExp(self._number_objects[v])
+            if self.representation == 'object':
+                return ObjectExp(self._number_objects[v])
+            else:
+                # For binary, integer constants outside comparisons should not appear after simplification
+                return expr
         if expr.is_bool_constant():
             return expr
 
@@ -425,26 +469,36 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
             fluent = expr.fluent()
             if fluent.type.is_int_type():
                 return self._transform_fluent_ref(expr, new_problem)
-            return expr  # Boolean or user-type fluent: pass through
+            return expr
+
+        # Try to simplify arithmetic patterns before dispatching
+        if expr.is_le() or expr.is_lt():
+            simplified = self._try_simplify_arithmetic(expr)
+            if simplified is not expr:
+                return self._transform_expression(simplified, new_problem)
 
         # Equality: f == c or f == g
         if expr.is_equals():
-            return self._transform_equality(expr, new_problem)
+            if self.representation == 'object':
+                return self._transform_equality_object(expr, new_problem)
+            else:  # binary
+                return self._transform_equality_binary(expr, new_problem)
 
-        # Less than: f < c, f < g, etc.
         if expr.is_lt():
-            simplified = self._try_simplify_arithmetic(expr)
-            if simplified is not expr and not simplified.is_lt():
-                return self._transform_expression(simplified, new_problem)
-            return self._transform_lt(expr.arg(0), expr.arg(1), new_problem)
+            left = expr.arg(0)
+            right = expr.arg(1)
+            if self.representation == 'object':
+                return self._transform_lt_object(left, right, new_problem)
+            else:  # binary
+                return self._transform_lt_binary(left, right, new_problem)
 
         if expr.is_le():
-            # Try to simplify (a + 1) <= b to a < b before transforming
-            simplified = self._try_simplify_arithmetic(expr)
-            if simplified is not expr and not simplified.is_le():
-                # Was simplified to something else (likely lt or true/false)
-                return self._transform_expression(simplified, new_problem)
-            return self._transform_le(expr.arg(0), expr.arg(1), new_problem)
+            left = expr.arg(0)
+            right = expr.arg(1)
+            if self.representation == 'object':
+                return self._transform_le_object(left, right, new_problem)
+            else:  # binary
+                return self._transform_le_binary(left, right, new_problem)
 
         # Logical combinations
         if expr.is_not():
@@ -467,7 +521,9 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """Transform a reference to an integer fluent to its new form."""
         fluent = expr.fluent()
         if self.representation == 'object':
-            return new_problem.fluent(fluent.name)(*expr.args)
+            new_fluent = new_problem.fluent(fluent.name)
+            result = new_fluent(*expr.args)
+            return result
         else:
             # For binary, this should not appear in simple contexts
             raise NotImplementedError(
@@ -516,7 +572,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                 new_b = self._transform_expression(b, new_problem)
                 return self._succ_fluent(new_a, new_b)
 
-        # a - 1 == b  ⟺  a == b + 1  ⟺  succ(b, a)
+        # a - 1 == b  <==>  a == b + 1  <==>  succ(b, a)
         if left.is_minus() and len(left.args) == 2:
             a, c = left.arg(0), left.arg(1)
             if c.is_int_constant() and c.constant_value() == 1:
@@ -526,7 +582,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
 
         return None
 
-    def _transform_equality(self, expr: FNode, new_problem: Problem) -> FNode:
+    def _transform_equality_object(self, expr: FNode, new_problem: Problem) -> FNode:
         """Transform f == c, f == g, c == c'."""
         left, right = expr.arg(0), expr.arg(1)
 
@@ -554,31 +610,277 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         new_right = self._transform_expression(right, new_problem)
         return Equals(new_left, new_right)
 
-    def _transform_lt(self, left: FNode, right: FNode, new_problem: Problem) -> FNode:
+    def _transform_lt_object(self, left: FNode, right: FNode, new_problem: Problem) -> FNode:
         """Transform 'left < right'."""
+        assert self._lt_fluent is not None, "lt predicate should have been set up"
         # Both constants
         if left.is_int_constant() and right.is_int_constant():
             return TRUE() if left.constant_value() < right.constant_value() else FALSE()
 
-        # In object mode, use lt predicate
-        if self.representation == 'object':
-            new_left = self._transform_expression(left, new_problem)
-            new_right = self._transform_expression(right, new_problem)
-            return self._lt_fluent(new_left, new_right)
+        new_left = self._transform_expression(left, new_problem)
+        new_right = self._transform_expression(right, new_problem)
+        return self._lt_fluent(new_left, new_right)
 
         raise NotImplementedError("Binary representation of < not implemented in Basic.")
 
-    def _transform_le(self, left: FNode, right: FNode, new_problem: Problem) -> FNode:
+    def _transform_le_object(self, left: FNode, right: FNode, new_problem: Problem) -> FNode:
         """Transform 'left <= right' as 'left < right or left == right'."""
+        assert self._lt_fluent is not None, "lt predicate should have been set up"
         if left.is_int_constant() and right.is_int_constant():
             return TRUE() if left.constant_value() <= right.constant_value() else FALSE()
 
-        if self.representation == 'object':
-            new_left = self._transform_expression(left, new_problem)
-            new_right = self._transform_expression(right, new_problem)
-            return Or(self._lt_fluent(new_left, new_right), Equals(new_left, new_right))
+        new_left = self._transform_expression(left, new_problem)
+        new_right = self._transform_expression(right, new_problem)
+        return Or(self._lt_fluent(new_left, new_right), Equals(new_left, new_right))
 
         raise NotImplementedError("Binary representation of <= not implemented in Basic.")
+
+    def _transform_equality_binary(self, expr: FNode, new_problem: Problem) -> FNode:
+        """Transform an integer equality for the binary representation.
+
+        Handles:
+        - c == c'  (both constants): simplified
+        - f == c   (fluent and constant): conjunction over bits of f
+        - f == g   (both fluents): conjunction of Iff over corresponding bits
+        """
+        left, right = expr.arg(0), expr.arg(1)
+
+        # Both constants
+        if left.is_int_constant() and right.is_int_constant():
+            return TRUE() if left.constant_value() == right.constant_value() else FALSE()
+
+        # Fluent == constant
+        if left.is_fluent_exp() and right.is_int_constant():
+            return self._binary_equal_to_constant(left, right.constant_value(), new_problem)
+        if right.is_fluent_exp() and left.is_int_constant():
+            return self._binary_equal_to_constant(right, left.constant_value(), new_problem)
+
+        # Both fluents
+        if left.is_fluent_exp() and right.is_fluent_exp():
+            return self._binary_equal_fluents(left, right, new_problem)
+
+        raise UPProblemDefinitionError(
+            f"Basic binary compiler does not support equality expression {expr}"
+        )
+
+    def _binary_equal_to_constant(self, fluent_ref: FNode, value: int, new_problem: Problem) -> FNode:
+        """Encode f == c as a conjunction over the bits of f."""
+        fluent_type = fluent_ref.fluent().type
+
+        # Value out of range
+        if value < fluent_type.lower_bound or value > fluent_type.upper_bound:
+            return FALSE()
+
+        n_bits = self.n_bits[fluent_ref.fluent().name]
+        offset = self.offsets[fluent_ref.fluent().name]
+        bit_pattern = self._to_bits(value, n_bits, offset)
+
+        bit_fluents = [new_problem.fluent(f"{fluent_ref.fluent().name}_{i}")(*fluent_ref.args) for i in range(n_bits)]
+
+        conjuncts = []
+        for bit_val, bit_flu in zip(bit_pattern, bit_fluents):
+            conjuncts.append(bit_flu if bit_val else Not(bit_flu))
+
+        if len(conjuncts) == 1:
+            return conjuncts[0]
+        return And(conjuncts)
+
+    def _binary_equal_fluents(self, f_ref: FNode, g_ref: FNode, new_problem: Problem) -> FNode:
+        """Encode f == g as a conjunction of Iff on corresponding bits.
+
+        Requires f and g to have the same offset (same lower_bound).
+        If they have different bit widths, the extra MSB bits of the wider one must be all FALSE for the equality to hold.
+        """
+        f_type = f_ref.fluent().type
+        g_type = g_ref.fluent().type
+
+        # Check compatibility
+        if f_type.lower_bound != g_type.lower_bound:
+            raise UPProblemDefinitionError(
+                f"Basic binary compiler requires the same offset for fluent equality: "
+                f"{f_ref} has lb={f_type.lower_bound}, {g_ref} has lb={g_type.lower_bound}. "
+                f"Use IntegerFluentsGeneralRemover instead."
+            )
+
+        f_name = f_ref.fluent().name
+        g_name = g_ref.fluent().name
+        f_nbits = self.n_bits[f_name]
+        g_nbits = self.n_bits[g_name]
+
+        f_bits = [new_problem.fluent(f"{f_name}_{i}")(*f_ref.args) for i in range(f_nbits)]
+        g_bits = [new_problem.fluent(f"{g_name}_{i}")(*g_ref.args) for i in range(g_nbits)]
+
+        conjuncts = []
+
+        # If different lengths, the extra MSB bits of the wider one must be FALSE
+        if f_nbits < g_nbits:
+            pad = g_nbits - f_nbits
+            # g has more bits: its extra MSB bits (indices 0..pad-1) must be FALSE
+            conjuncts.extend([Not(g_bits[i]) for i in range(pad)])
+            # Then match aligned bits
+            for f_bit, g_bit in zip(f_bits, g_bits[pad:]):
+                conjuncts.append(Iff(f_bit, g_bit))
+        elif g_nbits < f_nbits:
+            pad = f_nbits - g_nbits
+            # f has more bits: its extra MSB bits must be FALSE
+            conjuncts.extend([Not(f_bits[i]) for i in range(pad)])
+            for f_bit, g_bit in zip(f_bits[pad:], g_bits):
+                conjuncts.append(Iff(f_bit, g_bit))
+        else:
+            # Same width: direct bit-by-bit
+            for f_bit, g_bit in zip(f_bits, g_bits):
+                conjuncts.append(Iff(f_bit, g_bit))
+
+        if len(conjuncts) == 1:
+            return conjuncts[0]
+        return And(conjuncts)
+
+    def _binary_lt_constant(self, fluent_ref: FNode, value: int, new_problem: Problem) -> FNode:
+        """Encode f < c using bit-by-bit comparison from MSB to LSB.
+
+        f < c means there exists an index i such that:
+          - f_j = c_j for all j < i (in MSB order, so j < i means more significant)
+          - c_i = 1 AND f_i = 0
+
+        Since c is constant, each c_j simplifies the disjunct.
+        """
+        fluent_type = fluent_ref.fluent().type
+        lb = fluent_type.lower_bound
+        ub = fluent_type.upper_bound
+
+        # Trivial cases
+        if value <= lb:
+            return FALSE()  # No value in f's range is < lb+1 = ...
+        if value > ub:
+            return TRUE()  # All values in f's range are < value
+
+        # value is within (lb, ub]. Compute bit pattern of (value - offset)
+        # to shift into f's bit space.
+        c_shifted = value - lb
+        n_bits = self._num_bits(fluent_type)
+        c_bits = self._to_bits(value, n_bits, lb)
+
+        f_bits = self._get_bit_fluents(fluent_ref, new_problem)
+
+        # Build disjuncts: for each bit i where c_i = 1, add:
+        #   (all more significant bits of f are equal to c) AND (f_i is 0)
+        disjuncts = []
+        for i in range(n_bits):
+            if c_bits[i]:  # c has a 1 at position i
+                # Prefix condition: f_j equals c_j for j < i
+                prefix = []
+                for j in range(i):
+                    prefix.append(f_bits[j] if c_bits[j] else Not(f_bits[j]))
+                # This bit condition: f_i is 0
+                this_bit = Not(f_bits[i])
+
+                if prefix:
+                    disjuncts.append(And(*prefix, this_bit) if len(prefix) > 0 else this_bit)
+                else:
+                    disjuncts.append(this_bit)
+
+        if not disjuncts:
+            return FALSE()
+        if len(disjuncts) == 1:
+            return disjuncts[0]
+        return Or(*disjuncts)
+
+    def _binary_lt_fluents(self, f_ref: FNode, g_ref: FNode, new_problem: Problem) -> FNode:
+        """Encode f < g using bit-by-bit comparison from MSB to LSB.
+
+        f < g <==> there exists an index i such that:
+          - f_j = g_j for all j < i (in MSB order)
+          - f_i = 0 AND g_i = 1
+
+        Requires f and g to have the same offset. Different bit widths are
+        handled by padding.
+        """
+        f_type = f_ref.fluent().type
+        g_type = g_ref.fluent().type
+
+        if f_type.lower_bound != g_type.lower_bound:
+            raise UPProblemDefinitionError(
+                f"Basic binary compiler requires the same offset for fluent comparison: "
+                f"{f_ref} has lb={f_type.lower_bound}, {g_ref} has lb={g_type.lower_bound}"
+            )
+
+        f_bits = self._get_bit_fluents(f_ref, new_problem)
+        g_bits = self._get_bit_fluents(g_ref, new_problem)
+
+        # Pad the shorter side with FALSE at the MSB (conceptually)
+        max_bits = max(len(f_bits), len(g_bits))
+        if len(f_bits) < max_bits:
+            # Pad f with implicit FALSE at MSB
+            f_padded = [FALSE()] * (max_bits - len(f_bits)) + f_bits
+        else:
+            f_padded = f_bits
+        if len(g_bits) < max_bits:
+            g_padded = [FALSE()] * (max_bits - len(g_bits)) + g_bits
+        else:
+            g_padded = g_bits
+
+        # For each bit position i, add disjunct:
+        #   (all more significant bits equal) AND (f_i is 0) AND (g_i is 1)
+        disjuncts = []
+        for i in range(max_bits):
+            # Prefix condition: f_j iff g_j for j < i
+            prefix = []
+            for j in range(i):
+                prefix.append(Iff(f_padded[j], g_padded[j]))
+            # This bit condition: not f_i AND g_i
+            this_bit = And(Not(f_padded[i]), g_padded[i])
+
+            if prefix:
+                disjuncts.append(And(*prefix, this_bit))
+            else:
+                disjuncts.append(this_bit)
+
+        if len(disjuncts) == 1:
+            return disjuncts[0]
+        return Or(*disjuncts)
+
+    def _transform_lt_binary(self, left: FNode, right: FNode, new_problem: Problem) -> FNode:
+        """Handle left < right for binary representation."""
+        # Both constants
+        if left.is_int_constant() and right.is_int_constant():
+            return TRUE() if left.constant_value() < right.constant_value() else FALSE()
+
+        # Fluent < constant
+        if left.is_fluent_exp() and right.is_int_constant():
+            return self._binary_lt_constant(left, right.constant_value(), new_problem)
+
+        # constant < fluent  ->  fluent > constant  ->  not(fluent <= constant)  ->  not(fluent < constant+1)
+        if left.is_int_constant() and right.is_fluent_exp():
+            # c < f <==> f > c <==> not (f <= c) <==> not (f < c + 1)
+            return Not(self._binary_lt_constant(right, left.constant_value() + 1, new_problem))
+
+        # Fluent < fluent
+        if left.is_fluent_exp() and right.is_fluent_exp():
+            return self._binary_lt_fluents(left, right, new_problem)
+
+        raise UPProblemDefinitionError(
+            f"Basic binary compiler cannot handle less-than: {left} < {right}"
+        )
+
+    def _transform_le_binary(self, left: FNode, right: FNode, new_problem: Problem) -> FNode:
+        """Handle left <= right for binary representation."""
+        if left.is_int_constant() and right.is_int_constant():
+            return TRUE() if left.constant_value() <= right.constant_value() else FALSE()
+
+        if left.is_fluent_exp() and right.is_int_constant():
+            return self._binary_lt_constant(left, right.constant_value() + 1, new_problem)
+
+        if left.is_int_constant() and right.is_fluent_exp():
+            # c <= f == not (f < c)
+            return Not(self._binary_lt_constant(right, left.constant_value(), new_problem))
+
+        if left.is_fluent_exp() and right.is_fluent_exp():
+            # left <= right == not (right < left)
+            return Not(self._binary_lt_fluents(right, left, new_problem))
+
+        raise UPProblemDefinitionError(
+            f"Basic binary compiler cannot handle less-or-equal: {left} <= {right}"
+        )
 
     # ============================================================
     # TRANSFORMATION: FLUENTS
@@ -808,24 +1110,260 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
     def _transform_effect_binary(
             self, effect: Effect, new_problem: Problem
     ) -> Tuple[FNode, List[Effect]]:
-        """Transform an effect for the binary representation."""
-        raise NotImplementedError("Binary effect transformation not yet implemented")
+        """Transform an effect for the binary representation.
+
+        Returns (bound_precondition, list_of_effects).
+        """
+        new_condition = self._transform_expression(effect.condition, new_problem)
+        if new_condition == FALSE():
+            return TRUE(), []
+
+        # Increase/decrease with constant delta
+        if effect.is_increase() or effect.is_decrease():
+            return self._expand_increase_decrease_binary(effect, new_condition, new_problem)
+
+        # Simple assignment (f := c or f := g)
+        return self._transform_assign_binary(effect, new_condition, new_problem)
+
+    def _transform_assign_binary(
+            self, effect: Effect, new_condition: FNode, new_problem: Problem
+    ) -> Tuple[FNode, List[Effect]]:
+        """Transform f := c or f := g in binary representation."""
+        f_ref = effect.fluent
+        f_type = f_ref.fluent().type
+        f_name = f_ref.fluent().name
+        f_nbits = self.n_bits[f_name]
+        f_offset = self.offsets[f_name]
+
+        # Get bit fluents for f
+        f_bits = [new_problem.fluent(f"{f_name}_{i}")(*f_ref.args) for i in range(f_nbits)]
+
+        # Case: f := constant
+        if effect.value.is_int_constant():
+            value = effect.value.constant_value()
+            if value < f_type.lower_bound or value > f_type.upper_bound:
+                # Out of range: this action is unsatisfiable
+                return FALSE(), []
+
+            bit_pattern = self._to_bits(value, f_nbits, f_offset)
+            result_effects = []
+            for bit_flu, bit_val in zip(f_bits, bit_pattern):
+                new_value = TRUE() if bit_val else FALSE()
+                result_effects.append(Effect(
+                    bit_flu, new_value, new_condition, EffectKind.ASSIGN, effect.forall
+                ))
+            return TRUE(), result_effects
+
+        # Case: f := g (fluent copy)
+        if effect.value.is_fluent_exp() and effect.value.fluent().type.is_int_type():
+            g_ref = effect.value
+            g_type = g_ref.fluent().type
+            g_name = g_ref.fluent().name
+            g_nbits = self.n_bits[g_name]
+
+            # Require same offset (as we did for equality)
+            if f_offset != g_type.lower_bound:
+                raise UPProblemDefinitionError(
+                    f"Basic binary compiler requires the same offset for fluent assignment: "
+                    f"{f_ref} has lb={f_offset}, {g_ref} has lb={g_type.lower_bound}. "
+                    f"Use IntegerFluentsGeneralRemover instead."
+                )
+
+            # Bound precondition if g can hold values outside f's range
+            bound_prec = TRUE()
+            constraints = []
+            if g_type.upper_bound > f_type.upper_bound:
+                # g <= f.upper_bound
+                constraints.append(self._transform_le_binary(
+                    g_ref,
+                    effect.environment.expression_manager.Int(f_type.upper_bound),
+                    new_problem
+                ))
+            if g_type.lower_bound < f_type.lower_bound:
+                # g >= f.lower_bound
+                constraints.append(Not(self._transform_lt_binary(
+                    g_ref,
+                    effect.environment.expression_manager.Int(f_type.lower_bound),
+                    new_problem
+                )))
+            if len(constraints) == 1:
+                bound_prec = constraints[0]
+            elif len(constraints) > 1:
+                bound_prec = And(constraints)
+
+            # Assign each bit of f from the corresponding bit of g
+            g_bits = [new_problem.fluent(f"{g_name}_{i}")(*g_ref.args) for i in range(g_nbits)]
+
+            result_effects = []
+
+            # Handle padding: if f has more bits than g, extra MSB bits of f become FALSE
+            if f_nbits > g_nbits:
+                pad = f_nbits - g_nbits
+                for i in range(pad):
+                    result_effects.append(Effect(
+                        f_bits[i], FALSE(), new_condition, EffectKind.ASSIGN, effect.forall
+                    ))
+                # Then aligned bits
+                for f_bit, g_bit in zip(f_bits[pad:], g_bits):
+                    result_effects.append(Effect(
+                        f_bit, g_bit, new_condition, EffectKind.ASSIGN, effect.forall
+                    ))
+            elif g_nbits > f_nbits:
+                # g has more bits than f: only assign the LSB bits, ignore MSB.
+                # This is safe only if the MSB bits of g are guaranteed to be FALSE
+                # by the bound precondition.
+                pad = g_nbits - f_nbits
+                for f_bit, g_bit in zip(f_bits, g_bits[pad:]):
+                    result_effects.append(Effect(
+                        f_bit, g_bit, new_condition, EffectKind.ASSIGN, effect.forall
+                    ))
+            else:
+                # Same width
+                for f_bit, g_bit in zip(f_bits, g_bits):
+                    result_effects.append(Effect(
+                        f_bit, g_bit, new_condition, EffectKind.ASSIGN, effect.forall
+                    ))
+
+            return bound_prec, result_effects
+
+        raise UPProblemDefinitionError(
+            f"Basic binary compiler cannot handle assignment with value {effect.value}"
+        )
+
+    def _expand_increase_decrease_binary(
+            self, effect: Effect, new_condition: FNode, new_problem: Problem
+    ) -> Tuple[FNode, List[Effect]]:
+        """Expand increase/decrease as conditional effects for binary representation.
+
+        For each valid starting value i of f, generate a conditional effect that
+        sets each bit of f to the bit pattern of (i + delta) or (i - delta).
+
+        Returns (bound_precondition, list_of_effects).
+        """
+        fluent = effect.fluent.fluent()
+        lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
+        delta = effect.value.constant_value()
+        f_name = fluent.name
+        f_nbits = self.n_bits[f_name]
+        f_offset = self.offsets[f_name]
+
+        f_bits = [new_problem.fluent(f"{f_name}_{i}")(*effect.fluent.args) for i in range(f_nbits)]
+
+        if effect.is_increase():
+            min_safe = lb
+            max_safe = ub - delta
+        else:  # decrease
+            min_safe = lb + delta
+            max_safe = ub
+
+        # Bound precondition: min_safe <= f <= max_safe
+        em = effect.environment.expression_manager
+        bound_constraints = []
+        if min_safe > lb:
+            # f >= min_safe: not (f < min_safe)
+            bound_constraints.append(Not(self._transform_lt_binary(
+                effect.fluent, em.Int(min_safe), new_problem
+            )))
+        if max_safe < ub:
+            # f <= max_safe
+            bound_constraints.append(self._transform_le_binary(
+                effect.fluent, em.Int(max_safe), new_problem
+            ))
+
+        if not bound_constraints:
+            bound_prec = TRUE()
+        elif len(bound_constraints) == 1:
+            bound_prec = bound_constraints[0]
+        else:
+            bound_prec = And(bound_constraints)
+
+        # For each valid current value, generate conditional effects on each bit
+        result_effects = []
+        for i in range(min_safe, max_safe + 1):
+            next_val = i + delta if effect.is_increase() else i - delta
+
+            # Value condition: f == i (in binary form)
+            current_bits = self._to_bits(i, f_nbits, f_offset)
+            value_cond_parts = []
+            for bit_flu, bit_val in zip(f_bits, current_bits):
+                value_cond_parts.append(bit_flu if bit_val else Not(bit_flu))
+            if len(value_cond_parts) == 1:
+                value_cond = value_cond_parts[0]
+            else:
+                value_cond = And(value_cond_parts)
+
+            # Combine with existing condition
+            full_condition = (
+                And(value_cond, new_condition).simplify()
+                if new_condition != TRUE() else value_cond
+            )
+
+            # Generate one effect per bit: assign the bit pattern of next_val
+            next_bits = self._to_bits(next_val, f_nbits, f_offset)
+            for bit_flu, next_bit_val in zip(f_bits, next_bits):
+                new_value = TRUE() if next_bit_val else FALSE()
+                result_effects.append(Effect(
+                    bit_flu, new_value, full_condition, EffectKind.ASSIGN, effect.forall
+                ))
+
+        return bound_prec, result_effects
 
     # ============================================================
     # TRANSFORMATION: GOALS
     # ============================================================
 
-    def _transform_goals(self, problem: Problem, new_problem: Problem):
-        """Transform each goal."""
-        for goal in problem.goals:
-            print("goal", goal)
-            new_goal = self._transform_expression(goal, new_problem)
-            print("new_goal", new_goal)
-            if new_goal == FALSE():
-                raise UPProblemDefinitionError("Goal is unsatisfiable after transformation")
-            if new_goal == TRUE():
+    def _add_goal_as_axiom(self, problem: Problem, new_problem: Problem, goal_expr: FNode, index: int) -> None:
+        """Create a derived Boolean fluent and axiom for a complex goal."""
+
+        # Create a new derived Boolean fluent
+        goal_name = get_fresh_name(new_problem, f"goal_derived_{index}")
+        goal_derived_fluent = Fluent(goal_name, DerivedBoolType())
+        new_problem.add_fluent(goal_derived_fluent, default_initial_value=FALSE())
+
+        # Create the axiom
+        axiom = Axiom(goal_name, {}, new_problem.environment)
+        axiom.set_head(goal_derived_fluent)
+
+        # Transform the goal expression using transformation
+        axiom_condition = self._transform_expression(goal_expr, new_problem)
+
+        if axiom_condition == TRUE():
+            axiom.add_body_condition(TRUE())
+        elif axiom_condition == FALSE():
+            raise UPProblemDefinitionError("Goal is unsatisfiable")
+        else:
+            axiom.add_body_condition(axiom_condition)
+
+        new_problem.add_axiom(axiom)
+        new_problem.add_goal(goal_derived_fluent())
+
+    def _transform_goals(self, problem: Problem, new_problem: Problem) -> None:
+        """Transform goals: separate direct (simple) and complex (via axiom)."""
+        direct_goals = []
+        axiom_goals = []
+        goals = problem.goals
+        if len(goals) == 1 and goals[0].is_and():
+            goals = problem.goals[0].args
+
+        for goal in goals:
+            if is_complex_goal(goal):
+                axiom_goals.append(goal)
+            else:
+                direct_goals.append(goal)
+
+        # 1. Direct goals: translate and add directly
+        for goal in direct_goals:
+            translated_goal = self._transform_expression(goal, new_problem)
+            if translated_goal == TRUE():
                 continue
-            new_problem.add_goal(new_goal)
+            if translated_goal == FALSE():
+                raise UPProblemDefinitionError("Goal is unsatisfiable")
+            new_problem.add_goal(translated_goal)
+
+        # 2. Complex goals: wrap in axiom
+        for i, goal in enumerate(axiom_goals):
+            j = len(direct_goals) + i
+            self._add_goal_as_axiom(problem, new_problem, goal, j)
 
     # ============================================================
     # AXIOMS
@@ -908,15 +1446,6 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                 f"IntegerFluentsBasicRemover does not support arithmetic expression "
                 f"'{expr}' in {context}. Use IntegerFluentsGeneralRemover instead."
             )
-
-        # For binary representation, comparisons between two fluents are not supported
-        if self.representation == 'binary' and (expr.is_lt() or expr.is_le()):
-            left, right = expr.arg(0), expr.arg(1)
-            if left.is_fluent_exp() and right.is_fluent_exp():
-                raise UPProblemDefinitionError(
-                    f"IntegerFluentsBasicRemover (binary) does not support comparison "
-                    f"between two fluents '{expr}' in {context}."
-                )
 
         for arg in expr.args:
             self._check_expression_compatible(arg, context)
