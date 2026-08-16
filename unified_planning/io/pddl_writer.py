@@ -566,8 +566,8 @@ class PDDLWriter:
                 else:
                     raise UPTypeError("PDDL supports only user type parameters")
             out.write(")\n")
+            precond_str: List[str] = []
             if len(a.preconditions) > 0:
-                precond_str: List[str] = []
                 for p in (c.simplify() for c in a.preconditions):
                     if not p.is_true():
                         if p.is_and():

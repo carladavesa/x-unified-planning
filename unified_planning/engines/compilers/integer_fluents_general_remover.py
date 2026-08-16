@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-"""This module defines the integers remover class."""
+"""This module defines the integer fluents general remover class."""
 import operator
 import unified_planning as up
 import unified_planning.engines as engines
@@ -40,7 +40,7 @@ from functools import partial
 from unified_planning.shortcuts import And, Or, Equals, Not, FALSE, UserType, TRUE, ObjectExp, DerivedBoolType, BoolType
 from typing import Dict
 
-class IntegerFluentsRemover(engines.engine.Engine, CompilerMixin):
+class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
     """
     Compiler that removes bounded integer fluents from a planning problem.
 
@@ -48,14 +48,17 @@ class IntegerFluentsRemover(engines.engine.Engine, CompilerMixin):
     Integer arithmetic and comparisons are handled by enumerating possible value combinations.
     """
 
-    def __init__(self):
+    def __init__(self, representation: str = 'object'):
+        assert representation in ('object', 'binary'), \
+            f"representation must be 'object' or 'binary', got {representation}"
         engines.engine.Engine.__init__(self)
-        CompilerMixin.__init__(self, CompilationKind.INTEGER_FLUENTS_REMOVING)
+        CompilerMixin.__init__(self, CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING)
         self._conditions: Dict[FNode, str] = {}
+        self.representation = representation
 
     @property
     def name(self):
-        return "irm"
+        return "iofgr" if self.representation == 'object' else "ilfgr"
 
     @staticmethod
     def supported_kind() -> ProblemKind:
@@ -123,11 +126,11 @@ class IntegerFluentsRemover(engines.engine.Engine, CompilerMixin):
 
     @staticmethod
     def supports(problem_kind):
-        return problem_kind <= IntegerFluentsRemover.supported_kind()
+        return problem_kind <= IntegerFluentsGeneralRemover.supported_kind()
 
     @staticmethod
     def supports_compilation(compilation_kind: CompilationKind) -> bool:
-        return compilation_kind == CompilationKind.INTEGER_FLUENTS_REMOVING
+        return compilation_kind == CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING
 
     @staticmethod
     def resulting_problem_kind(
