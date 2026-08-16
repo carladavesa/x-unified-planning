@@ -274,14 +274,16 @@ def solve_problem(
                     if plan is None:
                         print(f"No plan (status: {res.status})")
                         continue
-                    for result in reversed(compilation_results):
-                        plan = plan.replace_action_instances(result.map_back_action_instance)
-                    print(plan)
-                    print(f"Actions: {len(plan.actions)}")
+                    # Validate plan
                     from unified_planning.shortcuts import PlanValidator
                     with PlanValidator(problem_kind=problem.kind) as validator:
                         is_valid = validator.validate(problem, plan)
                         print(result.status)
+
+                    for result in reversed(compilation_results):
+                        plan = plan.replace_action_instances(result.map_back_action_instance)
+                    print(plan)
+                    print(f"Actions: {len(plan.actions)}")
                     if not is_valid:
                         print("Plan is not valid!")
 
@@ -297,16 +299,17 @@ def solve_problem(
                 if result.plan is not None:
                     print("Solution found!\n")
                     plan = result.plan
+                    # Validate plan
+                    from unified_planning.shortcuts import PlanValidator
+                    with PlanValidator(problem_kind=problem.kind) as validator:
+                        is_valid = validator.validate(problem, plan)
+
                     for comp_result in reversed(compilation_results):
                         plan = plan.replace_action_instances(
                             comp_result.map_back_action_instance
                         )
                     print(plan)
                     print(f"\nActions: {len(plan.actions)}")
-                    # Validate plan
-                    from unified_planning.shortcuts import PlanValidator
-                    with PlanValidator(problem_kind=problem.kind) as validator:
-                        is_valid = validator.validate(problem, plan)
                     if not is_valid:
                         print("Plan is not valid!")
                 else:
