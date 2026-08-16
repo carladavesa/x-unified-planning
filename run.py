@@ -40,66 +40,74 @@ from unified_planning.shortcuts import (
 # Each key maps a short alias to an ordered list of compilation steps.
 # Pipelines marked "numeric" keep integer fluents.
 COMPILATION_PIPELINES = {
-    "up": [
+    "cls": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        CompilationKind.ARRAY_FLUENTS_REMOVING,
-        #CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "int": [  # numeric
-        #CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        #CompilationKind.ARRAY_FLUENTS_REMOVING,
-        CompilationKind.BOUNDED_TYPES_REMOVING
-    ],
-    "uti": [
-        #CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        #CompilationKind.ARRAY_FLUENTS_REMOVING,
-        CompilationKind.GROUNDING,
-        CompilationKind.INTEGER_FLUENTS_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "log": [
-        #CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        #CompilationKind.ARRAY_FLUENTS_REMOVING,
-        CompilationKind.GROUNDING,
-        CompilationKind.LOGARITHMIC_REMOVING,
-        #CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "c": [
+    "num": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        CompilationKind.ARRAY_FLUENTS_REMOVING,
-        CompilationKind.COUNT_TO_BOOL_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        CompilationKind.BOUNDED_TYPES_REMOVING,
+    ],
+    "uti_basic": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "ci": [
+    "log_basic": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        CompilationKind.ARRAY_FLUENTS_REMOVING,
-        CompilationKind.COUNT_TO_INT_REMOVING,
-        #CompilationKind.INTEGER_FLUENTS_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "binary"}),
+    ],
+    "uti_general": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "cin": [  # numeric
-        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        CompilationKind.ARRAY_FLUENTS_REMOVING,
-        CompilationKind.COUNT_TO_INT_REMOVING,
-    ],
-    "sc": [
-        CompilationKind.SET_FLUENTS_REMOVING,
-        #CompilationKind.COUNT_TO_BOOL_REMOVING,
-        CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "sci": [
-        CompilationKind.SET_FLUENTS_REMOVING,
-        #CompilationKind.COUNT_TO_INT_REMOVING,
-        #CompilationKind.INTEGER_FLUENTS_REMOVING,
-        # CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "scin": [  # numeric
-        CompilationKind.SET_FLUENTS_REMOVING,
-        CompilationKind.COUNT_TO_INT_REMOVING,
-        # CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
+    #"log_general": [
+    #    CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+    #    (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+    #    (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+    #],
     "none": [],
 }
+    #"c": [
+    #    CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+    #    (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+    #    CompilationKind.COUNT_TO_BOOL_REMOVING,
+    #    CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    #],
+    #"ci": [
+    #    CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+    #    CompilationKind.ARRAY_FLUENTS_REMOVING,
+    #    CompilationKind.COUNT_TO_INT_REMOVING,
+    #    CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING,
+    #    CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    #],
+    #"cin": [  # numeric
+    #    CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+    #    CompilationKind.ARRAY_FLUENTS_REMOVING,
+    #    CompilationKind.COUNT_TO_INT_REMOVING,
+    #],
+    #"sc": [
+    #    CompilationKind.SET_FLUENTS_REMOVING,
+    #    #CompilationKind.COUNT_TO_BOOL_REMOVING,
+    #    CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    #],
+    #"sci": [
+    #    CompilationKind.SET_FLUENTS_REMOVING,
+    #    #CompilationKind.COUNT_TO_INT_REMOVING,
+    #    #CompilationKind.INTEGER_FLUENTS_REMOVING,
+    #    # CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    #],
+    #"scin": [  # numeric
+    #    CompilationKind.SET_FLUENTS_REMOVING,
+    #    CompilationKind.COUNT_TO_INT_REMOVING,
+    #    # CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    #],
 
 # Maps a base solver name to its mode-specific variant.
 SOLVER_MODES = {
@@ -175,12 +183,14 @@ def compile_problem(
     signal.alarm(timeout)
 
     try:
-        for ck in compilation_kinds:
-            print(f"Compiling {ck}")
-            params = {}
-            if ck == CompilationKind.ARRAY_FLUENTS_REMOVING:
-                params = {"mode": "permissive"}
+        for step in compilation_kinds:
+            # Allow either CompilationKind alone or (CompilationKind, params) tuple
+            if isinstance(step, tuple):
+                ck, params = step
+            else:
+                ck, params = step, {}
 
+            print(f"Compiling {ck}")
             with Compiler(problem_kind=problem.kind, compilation_kind=ck, params=params) as compiler:
                 result = compiler.compile(problem, ck)
                 results.append(result)
@@ -270,8 +280,10 @@ def solve_problem(
                     print(f"Actions: {len(plan.actions)}")
                     from unified_planning.shortcuts import PlanValidator
                     with PlanValidator(problem_kind=problem.kind) as validator:
-                        result = validator.validate(problem, plan)
+                        is_valid = validator.validate(problem, plan)
                         print(result.status)
+                    if not is_valid:
+                        print("Plan is not valid!")
 
             signal.alarm(0)
             solving_time = time.time() - start_time
@@ -285,17 +297,16 @@ def solve_problem(
                 if result.plan is not None:
                     print("Solution found!\n")
                     plan = result.plan
-                    # Validate plan
-                    from unified_planning.shortcuts import PlanValidator
-                    with PlanValidator(problem_kind=problem.kind) as validator:
-                        is_valid = validator.validate(problem, plan)
-
                     for comp_result in reversed(compilation_results):
                         plan = plan.replace_action_instances(
                             comp_result.map_back_action_instance
                         )
                     print(plan)
                     print(f"\nActions: {len(plan.actions)}")
+                    # Validate plan
+                    from unified_planning.shortcuts import PlanValidator
+                    with PlanValidator(problem_kind=problem.kind) as validator:
+                        is_valid = validator.validate(problem, plan)
                     if not is_valid:
                         print("Plan is not valid!")
                 else:
