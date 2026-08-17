@@ -663,14 +663,6 @@ def requires_csp(node: FNode) -> bool:
     # The rest (arithmetic, <, <=, >, >=)
     return True
 
-def count_subexpressions(node):
-    """Counts the total number of subexpressions of a node."""
-    count = 1
-    for arg in node.args:
-        count += count_subexpressions(arg)
-    return count
-
-
 def is_complex_goal(node):
     """
     True if the goal benefits from being wrapped in an axiom, either because:
@@ -689,108 +681,6 @@ def is_complex_goal(node):
     if node.is_and() and len(node.args) >= 2:
         return True
     return any(is_complex_goal(arg) for arg in node.args)
-
-def needs_axiom(node):
-    """
-    Decides if a goal needs an axiom. If:
-    1. Has arithmetic/comparisons that require CP-SAT
-    2. Its structure is complex (multiple boolean operators)
-    """
-    return requires_csp(node) or is_complex_goal(node)
-
-def compute_integer_range(problem: Problem) -> tuple[int, int]:
-    """
-    Scan the entire problem to find the full range of integer values needed.
-
-    The range is determined by:
-    - Bounds of all integer fluents (lb, ub)
-    - Integer constants appearing in expressions (e.g. the 6 in a+b <= 6),
-      because these constants become Number objects in lt(val, n6).
-
-    We do NOT consider the possible values of arithmetic sub-expressions
-    (sums, differences, etc.) because those are always assigned to fluents
-    whose domain already bounds the result.
-
-    Returns (global_lb, global_ub).
-    """
-    global_lb = 0
-    global_ub = 0
-
-    # 1. Bounds from integer fluents
-    for fluent in problem.fluents:
-        if fluent.type.is_int_type():
-            lb = fluent.type.lower_bound
-            ub = fluent.type.upper_bound
-            if lb is not None:
-                global_lb = min(global_lb, lb)
-            if ub is not None:
-                global_ub = max(global_ub, ub)
-
-    # 2. Integer constants in expressions (e.g. comparisons like count <= 1)
-    all_expressions = []
-    for action in problem.actions:
-        all_expressions.extend(action.preconditions)
-        for effect in action.effects:
-            all_expressions.append(effect.value)
-            all_expressions.append(effect.condition)
-    all_expressions.extend(problem.goals)
-
-    def scan(node: FNode):
-        if node is None:
-            return
-        if node.is_int_constant():
-            v = node.constant_value()
-            nonlocal global_lb, global_ub
-            global_lb = min(global_lb, v)
-            global_ub = max(global_ub, v)
-        for arg in node.args:
-            scan(arg)
-
-    for expr in all_expressions:
-        if expr is not None:
-            scan(expr)
-    return global_lb, global_ub
-
-def compute_cp_signature(action, problem, cp_precs, dependent_effects):
-    """Compute a string signature of the CP-SAT call for caching purposes."""
-    parts = []
-    # Arithmetic preconditions (sorted for stability)
-    for prec in sorted(cp_precs, key=lambda p: str(p)):
-        parts.append(f"P:{str(prec)}")
-    # Dependent effects: full structural representation
-    for effect in dependent_effects:
-        parts.append(
-            f"E:{str(effect.fluent)}|{str(effect.value)}|"
-            f"inc={effect.is_increase()}|dec={effect.is_decrease()}|"
-            f"cond={str(effect.condition)}"
-        )
-    # Bounds of all integer fluents involved
-    fluent_names = set()
-    for prec in cp_precs:
-        for f in get_fluent_exps_in_expression(prec):
-            if f.is_fluent_exp() and f.fluent().type.is_int_type():
-                fluent_names.add(f.fluent().name)
-    for effect in dependent_effects:
-        for f in get_fluent_exps_in_expression(effect.fluent):
-            if f.is_fluent_exp() and f.fluent().type.is_int_type():
-                fluent_names.add(f.fluent().name)
-        for f in get_fluent_exps_in_expression(effect.value):
-            if f.is_fluent_exp() and f.fluent().type.is_int_type():
-                fluent_names.add(f.fluent().name)
-    for fname in sorted(fluent_names):
-        fluent = problem.fluent(fname)
-        parts.append(f"B:{fname}:{fluent.type.lower_bound}:{fluent.type.upper_bound}")
-    return "||".join(parts)
-
-def make_cp_signature(cp_precs, dependent_effects, fluent_bounds):
-    sig_parts = []
-    for prec in sorted(str(p) for p in cp_precs):
-        sig_parts.append(f"PREC:{prec}")
-    for eff in dependent_effects:
-        sig_parts.append(f"EFF:{eff.fluent}:{eff.value}:{eff.kind}")
-    for fname, (lb, ub) in sorted(fluent_bounds.items()):
-        sig_parts.append(f"BND:{fname}:{lb}:{ub}")
-    return "||".join(sig_parts)
 
 def solve_with_cp_sat(variables, cp_model_obj):
     """
@@ -1032,22 +922,6 @@ def add_effect_bounds_constraints(
                 model.Add(expr >= lb)
                 model.Add(expr <= ub)
 
-def register_fluent_variables(
-    problem: Problem, node: FNode, variables: bidict, model: cp_model.CpModel, object_to_index: dict,
-) -> None:
-    """Register fluent variables from an expression without adding any constraints."""
-    if node.is_fluent_exp():
-        if node not in variables:
-            fluent = node.fluent()
-            if fluent.type.is_int_type():
-                var = model.NewIntVar(
-                    fluent.type.lower_bound, fluent.type.upper_bound, str(node)
-                )
-                variables[node] = var
-        return
-    for arg in node.args:
-        register_fluent_variables(problem, arg, variables, model, object_to_index)
-
 def evaluate_with_solution(
         problem,
         expr: FNode,
@@ -1138,74 +1012,6 @@ def evaluate_with_solution(
 
     return expr
 
-def substitute_modified_fluents(action: Action, expr: FNode) -> FNode:
-    """
-    Substitute fluents modified by the action with their 'after' expression.
-
-    For increase(f, d): f → f + d
-    For decrease(f, d): f → f - d
-    For assign(f, v):   f → v
-    """
-    em = expr.environment.expression_manager
-
-    # Build map: fluent → after expression
-    after_map = {}
-    for effect in action.effects:
-        if not effect.fluent.is_fluent_exp():
-            continue
-        if effect.is_increase():
-            after_map[effect.fluent] = em.Plus(effect.fluent, effect.value)
-        elif effect.is_decrease():
-            after_map[effect.fluent] = em.Minus(effect.fluent, effect.value)
-        else:
-            after_map[effect.fluent] = effect.value
-
-    def substitute(node: FNode) -> FNode:
-        if node.is_fluent_exp() and node in after_map:
-            return after_map[node]
-        if not node.args:
-            return node
-        new_args = [substitute(arg) for arg in node.args]
-        if all(n is o for n, o in zip(new_args, node.args)):
-            return node
-        return em.create_node(node.node_type, tuple(new_args))
-
-    return substitute(expr)
-
-def evaluate_goal_in_initial_state(problem: Problem, goal: FNode) -> bool:
-    """Evaluates the goal initial value."""
-
-    def eval_node(node):
-        if node.is_int_constant():
-            return node.constant_value()
-        if node.is_fluent_exp():
-            val = problem.initial_values.get(node)
-            if val is None:
-                for f, v in problem.initial_values.items():
-                    if str(f) == str(node):
-                        return v.constant_value() if v.is_constant() else None
-            return val.constant_value() if val is not None and val.is_constant() else None
-        if node.is_lt():
-            l, r = eval_node(node.arg(0)), eval_node(node.arg(1))
-            return (l < r) if l is not None and r is not None else None
-        if node.is_le():
-            l, r = eval_node(node.arg(0)), eval_node(node.arg(1))
-            return (l <= r) if l is not None and r is not None else None
-        if node.is_plus():
-            vals = [eval_node(a) for a in node.args]
-            return sum(vals) if all(v is not None for v in vals) else None
-        if node.is_minus():
-            vals = [eval_node(a) for a in node.args]
-            if all(v is not None for v in vals):
-                return vals[0] - sum(vals[1:])
-        if node.is_equals():
-            l, r = eval_node(node.arg(0)), eval_node(node.arg(1))
-            return (l == r) if l is not None and r is not None else None
-        return None
-
-    result = eval_node(goal)
-    return bool(result) if result is not None else False
-
 def get_fluent_exps_in_expression(node: FNode) -> set:
     """Get all fluent expressions that appear in an expression."""
     result = set()
@@ -1214,7 +1020,6 @@ def get_fluent_exps_in_expression(node: FNode) -> set:
     for arg in node.args:
         result.update(get_fluent_exps_in_expression(arg))
     return result
-
 
 def remove_write_only_fluents(problem: Problem) -> Problem:
     """
@@ -1265,46 +1070,3 @@ def remove_write_only_fluents(problem: Problem) -> Problem:
         new_problem.add_action(new_action)
 
     return new_problem
-
-def group_conditions_by_shared_fluents(conditions: List[FNode]) -> List[List[FNode]]:
-    """
-    Groups conditions that share numeric fluents.
-    """
-    def get_numeric_fluents(cond):
-        return {str(f) for f in get_fluent_exps_in_expression(cond)
-                if f.fluent().type.is_int_type()}
-
-    def get_bool_fluents(cond):
-        return {str(f) for f in get_fluent_exps_in_expression(cond)
-                if f.fluent().type.is_bool_type()}
-
-    numeric_fluents = [get_numeric_fluents(c) for c in conditions]
-    bool_fluents = [get_bool_fluents(c) for c in conditions]
-
-    parent = list(range(len(conditions)))
-
-    def find(x):
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
-
-    def union(x, y):
-        parent[find(x)] = find(y)
-
-    for i in range(len(conditions)):
-        for j in range(i + 1, len(conditions)):
-            shared_numeric = numeric_fluents[i] & numeric_fluents[j]
-            shared_bool = bool_fluents[i] & bool_fluents[j]
-
-            if shared_numeric:
-                union(i, j)
-            elif shared_bool and (numeric_fluents[i] or numeric_fluents[j]):
-                union(i, j)
-
-    groups = {}
-    for i in range(len(conditions)):
-        root = find(i)
-        groups.setdefault(root, []).append(conditions[i])
-
-    return list(groups.values())
