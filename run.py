@@ -20,6 +20,7 @@ import signal
 import time
 
 from domains import DOMAINS
+from unified_planning.exceptions import UPNoSuitableEngineAvailableException
 from unified_planning.io import PDDLReader
 
 try:
@@ -67,11 +68,11 @@ COMPILATION_PIPELINES = {
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    #"log_general": [
-    #    CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-    #    (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
-    #    (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
-    #],
+    "log_general": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+    ],
     "none": [],
 }
     #"c": [
@@ -271,21 +272,22 @@ def solve_problem(
                     print(f"\n--- Solution {solution_count} ---")
 
                     plan = res.plan
-                    if plan is None:
-                        print(f"No plan (status: {res.status})")
-                        continue
                     # Validate plan
                     from unified_planning.shortcuts import PlanValidator
-                    with PlanValidator(problem_kind=problem.kind) as validator:
-                        is_valid = validator.validate(problem, plan)
-                        print(result.status)
+                    try:
+                        with PlanValidator(problem_kind=problem.kind) as validator:
+                            is_valid = validator.validate(problem, plan)
+                        if not is_valid:
+                            print("Plan is not valid!")
 
-                    for result in reversed(compilation_results):
-                        plan = plan.replace_action_instances(result.map_back_action_instance)
+                    except UPNoSuitableEngineAvailableException:
+                        print("Plan cannot be validated!")
+                    for comp_result in reversed(compilation_results):
+                        plan = plan.replace_action_instances(
+                            comp_result.map_back_action_instance
+                        )
                     print(plan)
-                    print(f"Actions: {len(plan.actions)}")
-                    if not is_valid:
-                        print("Plan is not valid!")
+                    print(f"\nActions: {len(plan.actions)}")
 
             signal.alarm(0)
             solving_time = time.time() - start_time
@@ -301,17 +303,21 @@ def solve_problem(
                     plan = result.plan
                     # Validate plan
                     from unified_planning.shortcuts import PlanValidator
-                    with PlanValidator(problem_kind=problem.kind) as validator:
-                        is_valid = validator.validate(problem, plan)
+                    try:
+                        with PlanValidator(problem_kind=problem.kind) as validator:
+                            is_valid = validator.validate(problem, plan)
+                        if not is_valid:
+                            print("Plan is not valid!")
 
+                    except UPNoSuitableEngineAvailableException:
+                        print("Plan cannot be validated!")
                     for comp_result in reversed(compilation_results):
                         plan = plan.replace_action_instances(
                             comp_result.map_back_action_instance
                         )
                     print(plan)
                     print(f"\nActions: {len(plan.actions)}")
-                    if not is_valid:
-                        print("Plan is not valid!")
+
                 else:
                     print("No solution found")
                     print(f"Status: {result.status}")
