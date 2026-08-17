@@ -113,10 +113,6 @@ DEFAULT_ENGINES = {
         "unified_planning.engines.compilers.array_fluents_remover",
         "ArrayFluentsRemover",
     ),
-    "up_logarithmic_remover": (
-        "unified_planning.engines.compilers.logarithmic_remover",
-        "LogarithmicRemover",
-    ),
     "up_set_fluents_remover": (
         "unified_planning.engines.compilers.set_fluents_remover",
         "SetFluentsRemover",
@@ -209,7 +205,6 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "up_count_to_bool_remover",
     "up_count_to_int_remover",
     "up_array_fluents_remover",
-    "up_logarithmic_remover",
     "up_set_fluents_remover",
     "up_int_parameters_and_variables_remover",
     "up_integer_fluents_general_remover",
