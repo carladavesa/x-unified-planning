@@ -513,7 +513,9 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             object_solution_conds = []
             for fnode, var in variables.items():
                 var_str = str(fnode)
-                if var_str in modified_fluent_strs or var_str not in solution:
+                if var_str not in solution:
+                    continue
+                if self.representation == 'object' and var_str in modified_fluent_strs:
                     continue
                 value = solution[var_str]
                 if self.representation == 'object':
@@ -546,10 +548,14 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         return new_actions
 
     def _add_binary_solution_preconditions(self, new_action, fnode, value, new_problem):
-        """For binary representation: add bit-level preconditions asserting fnode has the given value."""
+        """For binary representation: add preconditions asserting fnode has the given value.
+
+        Handles: integer fluents (bit-level), user-type fluents (Equals), and boolean fluents.
+        """
         if not fnode.is_fluent_exp():
             return
         fluent = fnode.fluent()
+
         if fluent.type.is_int_type():
             name_fluent = fluent.name
             if name_fluent in self.n_bits:
@@ -558,11 +564,21 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 new_fluents = self._get_bit_fluents(new_problem, fnode)
                 for f, bit_val in zip(new_fluents, value_bits):
                     new_action.add_precondition(f if bit_val else Not(f))
-        else:
+        elif fluent.type.is_user_type():
+            # User-type fluent: use Equals with corresponding object
+            obj = self._get_object_from_index(fluent.type, value)
+            if obj is not None:
+                new_action.add_precondition(Equals(fnode, ObjectExp(obj)))
+        elif fluent.type.is_bool_type():
+            # Boolean fluent: direct or negated
             if value == 1:
                 new_action.add_precondition(fnode)
             else:
                 new_action.add_precondition(Not(fnode))
+        else:
+            raise UPProblemDefinitionError(
+                f"Cannot generate solution precondition for fluent {fnode} of type {fluent.type}"
+            )
 
     def _add_independent_effect(self, new_action, effect, problem, new_problem, solution, old_action):
         """Add a single independent effect, representation-specific."""
@@ -645,10 +661,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 )
 
         if not clauses:
-            if self.representation == 'object':
-                raise ValueError("No valid expansions found for condition with CP-SAT.")
-            else:  # binary
-                return []
+            return FALSE()
 
         return Or(clauses).simplify() if len(clauses) > 1 else clauses[0]
 
@@ -657,21 +670,39 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
         Representation-specific:
         - object: uses Number objects and Equals (via _create_precondition_from_variable)
-        - binary: uses bit-level conditions
+        - binary: uses bit-level conditions for integers, Equals for user-types
         """
         if self.representation == 'object':
             return self._create_precondition_from_variable(fnode, value, new_problem)
-        else:  # binary
-            if not fnode.is_fluent_exp():
-                return None
-            fluent = fnode.fluent()
-            if not (fluent.type.is_int_type() and fluent.name in self.n_bits):
+
+        # binary
+        if not fnode.is_fluent_exp():
+            return None
+
+        fluent = fnode.fluent()
+
+        # Integer fluent: bit-level condition
+        if fluent.type.is_int_type():
+            if fluent.name not in self.n_bits:
                 return None
             n_bits = self.n_bits[fluent.name]
             value_bits = self._convert_value(value, n_bits, self.offsets.get(fluent.name, 0))
             bit_fluents = self._get_bit_fluents(new_problem, fnode)
             bit_conds = [f if b else Not(f) for f, b in zip(bit_fluents, value_bits)]
             return And(bit_conds) if len(bit_conds) > 1 else bit_conds[0]
+
+        # User-type fluent: Equals with the object at index `value`
+        if fluent.type.is_user_type():
+            obj = self._get_object_from_index(fluent.type, value)
+            if obj is not None:
+                return Equals(fnode, ObjectExp(obj))
+            return None
+
+        # Boolean fluent
+        if fluent.type.is_bool_type():
+            return fnode if value == 1 else Not(fnode)
+
+        return None
 
     def _add_effects_for_solution(self, new_action, problem, new_problem, solution, old_effects):
         """Add effects to a new action, given a CP-SAT solution.
@@ -760,6 +791,8 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     continue
 
                 cond = self._maybe_expand_cond(new_condition, needs_cp_expansion, problem, new_problem, solution)
+                if cond == FALSE():
+                    continue
                 new_action.add_effect(new_fluent, new_value, cond, old_effect.forall)
 
     def _maybe_expand_cond(self, new_condition, needs_cp_expansion, problem, new_problem, solution):
