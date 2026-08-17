@@ -14,29 +14,21 @@
 #
 """This module defines the integer fluents basic remover class."""
 import math
-import operator
 import unified_planning as up
 import unified_planning.engines as engines
-from bidict import bidict
-from ortools.sat.python import cp_model
-from unified_planning.engines.compilers.utils import (
-    add_cp_constraints, add_effect_bounds_constraints, solve_with_cp_sat,
-    substitute_modified_fluents, evaluate_goal_in_initial_state, get_fluent_exps_in_expression, evaluate_with_solution,
-    remove_write_only_fluents, requires_csp, is_complex_goal
-)
-from typing import Any, List, Tuple
+from unified_planning.engines.compilers.utils import remove_write_only_fluents, is_complex_goal
+from typing import List, Tuple
 from unified_planning.model.expression import ListExpression
 from unified_planning.model.operators import OperatorKind
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
 from unified_planning.exceptions import UPProblemDefinitionError
 from unified_planning.model import (
-    Problem, Action, ProblemKind, Effect, EffectKind, Object, FNode, InstantaneousAction, Axiom, Fluent,
-    MinimizeActionCosts
+    Problem, ProblemKind, Effect, EffectKind, Object, FNode, InstantaneousAction, Axiom, Fluent,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.engines.compilers.utils import get_fresh_name, replace_action, updated_minimize_action_costs
-from typing import Optional, Iterator, OrderedDict, Union
+from typing import Optional, OrderedDict
 from functools import partial
 from unified_planning.shortcuts import And, Or, Equals, Not, FALSE, UserType, TRUE, ObjectExp, DerivedBoolType, \
     BoolType, Iff
@@ -961,11 +953,6 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                     if f.fluent() == fluent:
                         new_problem.set_initial_value(f, v)
 
-    def _to_bits(self, value: int, n_bits: int, offset: int) -> List[bool]:
-        """Convert an integer to a list of n_bits booleans."""
-        shifted = value - offset
-        return [b == '1' for b in bin(shifted)[2:].zfill(n_bits)]
-
     # ============================================================
     # TRANSFORMATION: ACTIONS
     # ============================================================
@@ -1125,6 +1112,23 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         # Simple assignment (f := c or f := g)
         return self._transform_assign_binary(effect, new_condition, new_problem)
 
+    def _bool_assign_as_conditional(self, target, source, condition, forall):
+        """Convert `target := source` (both booleans) into two conditional effects.
+
+        Necessary because PDDL doesn't support non-constant boolean assignments directly.
+        """
+        if source.is_true() or source.is_false():
+            # Already a constant, no conversion needed
+            return [Effect(target, source, condition, EffectKind.ASSIGN, forall)]
+
+        # Non-constant: split into two conditional effects
+        pos_cond = And(condition, source).simplify() if condition != TRUE() else source
+        neg_cond = And(condition, Not(source)).simplify() if condition != TRUE() else Not(source)
+        return [
+            Effect(target, TRUE(), pos_cond, EffectKind.ASSIGN, forall),
+            Effect(target, FALSE(), neg_cond, EffectKind.ASSIGN, forall),
+        ]
+
     def _transform_assign_binary(
             self, effect: Effect, new_condition: FNode, new_problem: Problem
     ) -> Tuple[FNode, List[Effect]]:
@@ -1205,24 +1209,24 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                     ))
                 # Then aligned bits
                 for f_bit, g_bit in zip(f_bits[pad:], g_bits):
-                    result_effects.append(Effect(
-                        f_bit, g_bit, new_condition, EffectKind.ASSIGN, effect.forall
-                    ))
+                    result_effects.extend(
+                        self._bool_assign_as_conditional(f_bit, g_bit, new_condition, effect.forall)
+                    )
             elif g_nbits > f_nbits:
                 # g has more bits than f: only assign the LSB bits, ignore MSB.
                 # This is safe only if the MSB bits of g are guaranteed to be FALSE
                 # by the bound precondition.
                 pad = g_nbits - f_nbits
                 for f_bit, g_bit in zip(f_bits, g_bits[pad:]):
-                    result_effects.append(Effect(
-                        f_bit, g_bit, new_condition, EffectKind.ASSIGN, effect.forall
-                    ))
+                    result_effects.extend(
+                        self._bool_assign_as_conditional(f_bit, g_bit, new_condition, effect.forall)
+                    )
             else:
                 # Same width
                 for f_bit, g_bit in zip(f_bits, g_bits):
-                    result_effects.append(Effect(
-                        f_bit, g_bit, new_condition, EffectKind.ASSIGN, effect.forall
-                    ))
+                    result_effects.extend(
+                        self._bool_assign_as_conditional(f_bit, g_bit, new_condition, effect.forall)
+                    )
 
             return bound_prec, result_effects
 
