@@ -121,10 +121,6 @@ DEFAULT_ENGINES = {
         "unified_planning.engines.compilers.set_fluents_remover",
         "SetFluentsRemover",
     ),
-    "up_conditions_to_predicates_simplifier": (
-        "unified_planning.engines.compilers.conditions_to_predicates_simplifier",
-        "ConditionsToPredicatesSimplifier",
-    ),
     "up_int_parameters_and_variables_remover": (
         "unified_planning.engines.compilers.int_parameters_and_variables_remover",
         "IntParametersAndVariablesRemover",
@@ -215,7 +211,6 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "up_array_fluents_remover",
     "up_logarithmic_remover",
     "up_set_fluents_remover",
-    "up_conditions_to_predicates_simplifier",
     "up_int_parameters_and_variables_remover",
     "up_integer_fluents_general_remover",
     "up_integer_fluents_basic_remover",
