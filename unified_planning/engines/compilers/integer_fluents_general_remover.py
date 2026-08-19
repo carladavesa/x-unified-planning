@@ -515,8 +515,14 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 var_str = str(fnode)
                 if var_str not in solution:
                     continue
+                # Object: skip if modified unconditionally
                 if self.representation == 'object' and var_str in modified_fluent_strs:
                     continue
+
+                # Binary: only add preconditions for fluents that actually appear in the action's original preconditions
+                if self.representation == 'binary' and var_str not in prec_fluent_strs:
+                    continue
+
                 value = solution[var_str]
                 if self.representation == 'object':
                     cond = self._create_precondition_from_variable(fnode, value, new_problem)
@@ -580,6 +586,44 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 f"Cannot generate solution precondition for fluent {fnode} of type {fluent.type}"
             )
 
+    def _add_binary_int_effect(self, new_action, effect_fluent, effect_value,
+                               effect_forall, base_cond, new_problem):
+        """Add a binary integer effect (f := g or f := c) with bit-level handling.
+
+        - f := g (fluent copy): emits conditional effects (one positive, one negative per bit)
+        - f := c (constant or expression): emits direct bit assignments via _convert_fluent_and_value
+
+        Assumes effect_fluent is an integer fluent expression.
+        """
+        # Detect f := g (fluent copy)
+        if (effect_value.is_fluent_exp()
+                and effect_value.fluent().type.is_int_type()):
+            f_name = effect_fluent.fluent().name
+            g_name = effect_value.fluent().name
+            n_bits = self.n_bits[f_name]
+
+            f_bits = [new_problem.fluent(f"{f_name}_{i}")(*effect_fluent.args)
+                      for i in range(n_bits)]
+            g_bits = [new_problem.fluent(f"{g_name}_{i}")(*effect_value.args)
+                      for i in range(n_bits)]
+
+            for f_bit, g_bit in zip(f_bits, g_bits):
+                pos_cond = And(base_cond, g_bit).simplify() if base_cond != TRUE() else g_bit
+                new_action.add_effect(f_bit, TRUE(), pos_cond, effect_forall)
+                neg_cond = And(base_cond, Not(g_bit)).simplify() if base_cond != TRUE() else Not(g_bit)
+                new_action.add_effect(f_bit, FALSE(), neg_cond, effect_forall)
+        else:
+            # f := constant/expression: direct bit assignment
+            new_fluents, new_values = self._convert_fluent_and_value(
+                new_problem, effect_fluent, effect_value
+            )
+            for f, v in zip(new_fluents, new_values):
+                if isinstance(v, FNode):
+                    v_fnode = v
+                else:
+                    v_fnode = TRUE() if v else FALSE()
+                new_action.add_effect(f, v_fnode, base_cond, effect_forall)
+
     def _add_independent_effect(self, new_action, effect, problem, new_problem, solution, old_action):
         """Add a single independent effect, representation-specific."""
         # Increase/decrease
@@ -589,16 +633,28 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     f"Independent increase/decrease with arithmetic condition not supported: "
                     f"{effect} in action {old_action.name}"
                 )
-            if self.representation == 'binary':
-                raise NotImplementedError(
-                    f"Independent increase/decrease should be dependent in binary: {effect}"
-                )
-            # Object: expand
+            # Both object and binary: expand via _transform_increase_decrease_effect
             for new_eff in self._transform_increase_decrease_effect(effect, problem, new_problem):
                 new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
             return
 
-        # Non-increase/decrease effect: transform fluent and value
+        # Binary integer effect (f := g fluent copy OR f := c constant/expression)
+        if (self.representation == 'binary'
+                and effect.fluent.type.is_int_type()):
+
+            # Handle condition
+            if effect.condition != TRUE() and requires_csp(effect.condition):
+                base_cond = self._expand_condition_with_cp(problem, new_problem, effect.condition, solution)
+            else:
+                base_cond = self._get_new_expression(new_problem, effect.condition) or TRUE()
+
+            self._add_binary_int_effect(
+                new_action, effect.fluent, effect.value,
+                effect.forall, base_cond, new_problem
+            )
+            return
+
+        # Non-integer effect: transform fluent and value
         if self.representation == 'object':
             new_fluent = self._transform_node_object(problem, new_problem, effect.fluent)
             new_value = self._transform_node_object(problem, new_problem, effect.value)
@@ -853,11 +909,10 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                         )
                 else:  # binary
                     if old_effect.fluent.type.is_int_type():
-                        new_fluents, new_values = self._convert_fluent_and_value(
-                            new_problem, old_effect.fluent, old_effect.value
+                        self._add_binary_int_effect(
+                            new_action, old_effect.fluent, old_effect.value,
+                            old_effect.forall, new_cond, new_problem
                         )
-                        for f, v in zip(new_fluents, new_values):
-                            new_action.add_effect(f, v, new_cond, old_effect.forall)
                     else:
                         new_action.add_effect(
                             old_effect.fluent, old_effect.value, new_cond, old_effect.forall
@@ -876,31 +931,28 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         dependent_effects = []
         independent_effects = []
 
-        if self.representation == 'object':
-            # Object: fine-grained classification
-            for effect in old_action.effects:
-                if effect.is_increase() or effect.is_decrease():
-                    effect_vars = get_fluent_exps_in_expression(effect.fluent)
-                    value_vars = get_fluent_exps_in_expression(effect.value)
-                    if any(str(v) in prec_vars for v in effect_vars | value_vars):
-                        dependent_effects.append(effect)
-                    else:
-                        independent_effects.append(effect)
-                elif requires_csp(effect.value):
-                    value_vars = get_fluent_exps_in_expression(effect.value)
-                    if any(str(v) in prec_vars for v in value_vars):
-                        dependent_effects.append(effect)
-                    else:
-                        independent_effects.append(effect)
-                else:
-                    independent_effects.append(effect)
-        else:  # binary
-            # Binary (LR-style): any effect on an integer is dependent
-            for effect in old_action.effects:
-                if effect.fluent.type.is_int_type() or effect.is_increase() or effect.is_decrease():
+        for effect in old_action.effects:
+            if effect.is_increase() or effect.is_decrease():
+                effect_vars = get_fluent_exps_in_expression(effect.fluent)
+                value_vars = get_fluent_exps_in_expression(effect.value)
+                if any(str(v) in prec_vars for v in effect_vars | value_vars):
                     dependent_effects.append(effect)
                 else:
                     independent_effects.append(effect)
+            elif (self.representation == 'binary'
+                  and effect.fluent.type.is_int_type()
+                  and effect.value.is_fluent_exp()
+                  and effect.value.fluent().type.is_int_type()):
+                # Binary-specific: fluent copy always independent (handled via bit-level conditional effects)
+                independent_effects.append(effect)
+            elif requires_csp(effect.value):
+                value_vars = get_fluent_exps_in_expression(effect.value)
+                if any(str(v) in prec_vars for v in value_vars):
+                    dependent_effects.append(effect)
+                else:
+                    independent_effects.append(effect)
+            else:
+                independent_effects.append(effect)
 
         # Separate preconditions: those needing CP-SAT vs directly transformable
         cp_precs = []
@@ -935,7 +987,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         else:  # binary
             add_effect_bounds_constraints(
                 problem, variables, cp_model_obj, dependent_effects,
-                self._object_to_index, True
+                self._object_to_index, False
             )
 
         # Solve CP-SAT
