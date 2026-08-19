@@ -55,9 +55,6 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         CompilerMixin.__init__(self, CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING)
         self.representation = representation
 
-        # lt predicate (per object representation)
-        self._lt_fluent: Optional[Fluent] = None
-
         if representation == 'object':
             # Number objects (object representation)
             self._number_objects: Dict[int, Object] = {}
@@ -226,83 +223,6 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
             scan(goal)
         return needed
 
-    def _needs_lt_predicate(self, problem: Problem) -> bool:
-        """Return True if the problem requires the lt predicate.
-
-        We need it when:
-        - Any lt/le comparison appears in the problem
-        - Any increase/decrease effect exists (bound preconditions)
-        - Any fluent-to-fluent assignment with mismatched bounds exists
-        """
-
-        def scan(node):
-            if node.is_lt() or node.is_le():
-                return True
-            return any(scan(arg) for arg in node.args)
-
-        for action in problem.actions:
-            for prec in action.preconditions:
-                if scan(prec):
-                    return True
-            for effect in action.effects:
-                if scan(effect.condition):
-                    return True
-                # increase/decrease need lt for bound preconditions
-                if effect.is_increase() or effect.is_decrease():
-                    return True
-                # f := g with mismatched ranges needs lt
-                if (effect.value.is_fluent_exp()
-                        and effect.value.fluent().type.is_int_type()
-                        and effect.fluent.fluent().type.is_int_type()):
-                    f_type = effect.fluent.fluent().type
-                    g_type = effect.value.fluent().type
-                    if (g_type.lower_bound < f_type.lower_bound
-                            or g_type.upper_bound > f_type.upper_bound):
-                        return True
-        for goal in problem.goals:
-            if scan(goal):
-                return True
-        return False
-
-    def _needs_succ_predicate(self, problem: Problem) -> bool:
-        """Return True if the problem requires the succ predicate.
-
-        We need it when there are equalities matching successor patterns:
-        - a == b + 1
-        - a + 1 == b
-        - a == b - 1
-        - a - 1 == b
-        """
-
-        def scan(node):
-            if node.is_equals():
-                left, right = node.arg(0), node.arg(1)
-                # Check if either side is (X + 1), (1 + X), (X - 1), or (X + Y with Y=1)
-                for side in (left, right):
-                    if side.is_plus() and len(side.args) == 2:
-                        a, b = side.arg(0), side.arg(1)
-                        if b.is_int_constant() and b.constant_value() == 1:
-                            return True
-                        if a.is_int_constant() and a.constant_value() == 1:
-                            return True
-                    if side.is_minus() and len(side.args) == 2:
-                        a, b = side.arg(0), side.arg(1)
-                        if b.is_int_constant() and b.constant_value() == 1:
-                            return True
-            return any(scan(arg) for arg in node.args)
-
-        for action in problem.actions:
-            for prec in action.preconditions:
-                if scan(prec):
-                    return True
-            for effect in action.effects:
-                if scan(effect.condition):
-                    return True
-        for goal in problem.goals:
-            if scan(goal):
-                return True
-        return False
-
     def _create_number_objects(self, problem: Problem, new_problem: Problem):
         """Create Number objects for all needed values."""
         number_ut = UserType('Number')
@@ -312,67 +232,27 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
             new_problem.add_object(obj)
             self._number_objects[v] = obj
 
-    def _setup_lt_predicate(self, new_problem: Problem):
-        """Create the static 'lt' predicate and initialize its extension."""
-        number_ut = UserType('Number')
-        lt_fluent = Fluent(
-            'lt',
-            BoolType(),
-            OrderedDict([('a', number_ut), ('b', number_ut)])
-        )
-        new_problem.add_fluent(lt_fluent, default_initial_value=FALSE())
-        self._lt_fluent = lt_fluent
-
-        values = sorted(self._number_objects.keys())
-        for i in values:
-            for j in values:
-                if i < j:
-                    new_problem.set_initial_value(
-                        lt_fluent(
-                            ObjectExp(self._number_objects[i]),
-                            ObjectExp(self._number_objects[j])
-                        ),
-                        TRUE()
-                    )
-
-    def _setup_succ_predicate(self, new_problem: Problem):
-        """Create the static 'succ' predicate: succ(a, b) iff b = a + 1."""
-        number_ut = UserType('Number')
-        succ_fluent = Fluent(
-            'succ',
-            BoolType(),
-            OrderedDict([('a', number_ut), ('b', number_ut)])
-        )
-        new_problem.add_fluent(succ_fluent, default_initial_value=FALSE())
-        self._succ_fluent = succ_fluent
-
-        values = sorted(self._number_objects.keys())
-        for v in values:
-            if (v + 1) in self._number_objects:
-                new_problem.set_initial_value(
-                    succ_fluent(
-                        ObjectExp(self._number_objects[v]),
-                        ObjectExp(self._number_objects[v + 1])
-                    ),
-                    TRUE()
-                )
-
     # ============================================================
     # TRANSFORMATION: EXPRESSIONS
     # ============================================================
 
-    def _emit_upper_bound_prec(self, fluent_ref: FNode, upper: int) -> FNode:
-        """Emit precondition: fluent_ref <= upper, using lt predicate."""
-        n_upper_plus_1 = ObjectExp(self._number_objects[upper + 1])
-        assert self._lt_fluent is not None, "lt predicate should have been set up"
-        return self._lt_fluent(fluent_ref, n_upper_plus_1)
+    def _emit_upper_bound_prec(self, fluent_ref: FNode, lb: int, upper: int) -> FNode:
+        """Emit precondition: fluent_ref <= upper, given the fluent's lower bound lb."""
+        allowed_objs = [ObjectExp(self._number_objects[v]) for v in range(lb, upper + 1)]
+        if not allowed_objs:
+            return FALSE()
+        if len(allowed_objs) == 1:
+            return Equals(fluent_ref, allowed_objs[0])
+        return Or([Equals(fluent_ref, obj) for obj in allowed_objs])
 
-    def _emit_lower_bound_prec(self, fluent_ref: FNode, lower: int) -> FNode:
-        """Emit precondition: fluent_ref >= lower, using lt predicate."""
-        n_lower = ObjectExp(self._number_objects[lower])
-        assert self._lt_fluent is not None, "lt predicate should have been set up"
-        # fluent >= lower == not (fluent < lower)
-        return Not(self._lt_fluent(fluent_ref, n_lower))
+    def _emit_lower_bound_prec(self, fluent_ref: FNode, lower: int, ub: int) -> FNode:
+        """Emit precondition: fluent_ref >= lower, given the fluent's upper bound ub."""
+        allowed_objs = [ObjectExp(self._number_objects[v]) for v in range(lower, ub + 1)]
+        if not allowed_objs:
+            return FALSE()
+        if len(allowed_objs) == 1:
+            return Equals(fluent_ref, allowed_objs[0])
+        return Or([Equals(fluent_ref, obj) for obj in allowed_objs])
 
     def _try_simplify_arithmetic(self, expr: FNode) -> FNode:
         """Try to simplify arithmetic expressions to non-arithmetic ones.
@@ -522,66 +402,9 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                 f"Binary representation of fluent references outside of assignments is not yet implemented."
             )
 
-    def _try_succ_pattern(self, left: FNode, right: FNode, new_problem: Problem) -> Optional[FNode]:
-        """Detect equality patterns that translate to succ predicate.
-
-        Handles:
-        - a == b + 1  →  succ(b, a)
-        - a + 1 == b  →  succ(a, b)
-        - a == b - 1  →  succ(a, b)  (equivalent)
-        - a - 1 == b  →  succ(b, a)  (equivalent)
-        """
-        # a == b + 1
-        if right.is_plus() and len(right.args) == 2:
-            b, c = right.arg(0), right.arg(1)
-            if c.is_int_constant() and c.constant_value() == 1:
-                new_a = self._transform_expression(left, new_problem)
-                new_b = self._transform_expression(b, new_problem)
-                return self._succ_fluent(new_b, new_a)
-            if b.is_int_constant() and b.constant_value() == 1:
-                # a == 1 + c'
-                new_a = self._transform_expression(left, new_problem)
-                new_c = self._transform_expression(c, new_problem)
-                return self._succ_fluent(new_c, new_a)
-
-        # a + 1 == b
-        if left.is_plus() and len(left.args) == 2:
-            a, c = left.arg(0), left.arg(1)
-            if c.is_int_constant() and c.constant_value() == 1:
-                new_a = self._transform_expression(a, new_problem)
-                new_b = self._transform_expression(right, new_problem)
-                return self._succ_fluent(new_a, new_b)
-            if a.is_int_constant() and a.constant_value() == 1:
-                new_c = self._transform_expression(c, new_problem)
-                new_b = self._transform_expression(right, new_problem)
-                return self._succ_fluent(new_c, new_b)
-
-        # a == b - 1 <=> a + 1 == b <=> succ(a, b)
-        if right.is_minus() and len(right.args) == 2:
-            b, c = right.arg(0), right.arg(1)
-            if c.is_int_constant() and c.constant_value() == 1:
-                new_a = self._transform_expression(left, new_problem)
-                new_b = self._transform_expression(b, new_problem)
-                return self._succ_fluent(new_a, new_b)
-
-        # a - 1 == b  <==>  a == b + 1  <==>  succ(b, a)
-        if left.is_minus() and len(left.args) == 2:
-            a, c = left.arg(0), left.arg(1)
-            if c.is_int_constant() and c.constant_value() == 1:
-                new_a = self._transform_expression(a, new_problem)
-                new_b = self._transform_expression(right, new_problem)
-                return self._succ_fluent(new_b, new_a)
-
-        return None
-
     def _transform_equality_object(self, expr: FNode, new_problem: Problem) -> FNode:
         """Transform f == c, f == g, c == c'."""
         left, right = expr.arg(0), expr.arg(1)
-
-        # Detect a == b + c or a + c == b (successor patterns)
-        succ_result = self._try_succ_pattern(left, right, new_problem)
-        if succ_result is not None:
-            return succ_result
 
         # Not integers
         left_is_int = (left.is_int_constant() or (left.is_fluent_exp() and left.fluent().type.is_int_type()))
@@ -602,30 +425,146 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         new_right = self._transform_expression(right, new_problem)
         return Equals(new_left, new_right)
 
-    def _transform_lt_object(self, left: FNode, right: FNode, new_problem: Problem) -> FNode:
-        """Transform 'left < right'."""
-        assert self._lt_fluent is not None, "lt predicate should have been set up"
+    def _transform_lt_object(self, left, right, new_problem):
+        """Transform f_1 < f_2 as a disjunction over concrete values.
+
+        Handles: fluent < constant, constant < fluent, fluent < fluent.
+        """
         # Both constants
         if left.is_int_constant() and right.is_int_constant():
             return TRUE() if left.constant_value() < right.constant_value() else FALSE()
 
-        new_left = self._transform_expression(left, new_problem)
-        new_right = self._transform_expression(right, new_problem)
-        return self._lt_fluent(new_left, new_right)
+        # Case: fluent < constant  →  f = v for v in [lb, c-1]
+        if left.is_fluent_exp() and right.is_int_constant():
+            c = right.constant_value()
+            left_type = left.fluent().type
+            lb = left_type.lower_bound
+            ub = min(left_type.upper_bound, c - 1)
+            if lb > ub:
+                return FALSE()
+            new_left = self._transform_expression(left, new_problem)
+            allowed = [ObjectExp(self._number_objects[v]) for v in range(lb, ub + 1)]
+            if len(allowed) == 1:
+                return Equals(new_left, allowed[0])
+            return Or([Equals(new_left, obj) for obj in allowed])
 
-        raise NotImplementedError("Binary representation of < not implemented in Basic.")
+        # Case: constant < fluent  →  f = v for v in [c+1, ub]
+        if left.is_int_constant() and right.is_fluent_exp():
+            c = left.constant_value()
+            right_type = right.fluent().type
+            lb = max(right_type.lower_bound, c + 1)
+            ub = right_type.upper_bound
+            if lb > ub:
+                return FALSE()
+            new_right = self._transform_expression(right, new_problem)
+            allowed = [ObjectExp(self._number_objects[v]) for v in range(lb, ub + 1)]
+            if len(allowed) == 1:
+                return Equals(new_right, allowed[0])
+            return Or([Equals(new_right, obj) for obj in allowed])
 
-    def _transform_le_object(self, left: FNode, right: FNode, new_problem: Problem) -> FNode:
-        """Transform 'left <= right' as 'left < right or left == right'."""
-        assert self._lt_fluent is not None, "lt predicate should have been set up"
+        # Case: fluent < fluent  →  disjunction over pairs
+        if left.is_fluent_exp() and right.is_fluent_exp():
+            left_type = left.fluent().type
+            right_type = right.fluent().type
+            lb_l, ub_l = left_type.lower_bound, left_type.upper_bound
+            lb_r, ub_r = right_type.lower_bound, right_type.upper_bound
+
+            new_left = self._transform_expression(left, new_problem)
+            new_right = self._transform_expression(right, new_problem)
+
+            clauses = []
+            for v in range(lb_l, min(ub_l, ub_r - 1) + 1):
+                n_v = self._get_number_object(new_problem, v)
+                greater_values = [
+                    self._get_number_object(new_problem, v_r)
+                    for v_r in range(max(v + 1, lb_r), ub_r + 1)
+                ]
+                if not greater_values:
+                    continue
+                if len(greater_values) == 1:
+                    f2_gt_v = Equals(new_right, greater_values[0])
+                else:
+                    f2_gt_v = Or([Equals(new_right, n) for n in greater_values])
+                clauses.append(And(Equals(new_left, n_v), f2_gt_v))
+
+            if not clauses:
+                return FALSE()
+            return Or(clauses) if len(clauses) > 1 else clauses[0]
+
+        # Unsupported case (e.g., parameter < parameter)
+        raise UPProblemDefinitionError(
+            f"Cannot transform < between unsupported expressions: {left} < {right}"
+        )
+
+    def _transform_le_object(self, left, right, new_problem):
+        """Transform f_1 <= f_2 as a disjunction over concrete values.
+
+        Handles: fluent <= constant, constant <= fluent, fluent <= fluent.
+        """
+        # Both constants
         if left.is_int_constant() and right.is_int_constant():
             return TRUE() if left.constant_value() <= right.constant_value() else FALSE()
 
-        new_left = self._transform_expression(left, new_problem)
-        new_right = self._transform_expression(right, new_problem)
-        return Or(self._lt_fluent(new_left, new_right), Equals(new_left, new_right))
+        # Case: fluent <= constant  →  f = v for v in [lb, c]
+        if left.is_fluent_exp() and right.is_int_constant():
+            c = right.constant_value()
+            left_type = left.fluent().type
+            lb = left_type.lower_bound
+            ub = min(left_type.upper_bound, c)
+            if lb > ub:
+                return FALSE()
+            new_left = self._transform_expression(left, new_problem)
+            allowed = [ObjectExp(self._number_objects[v]) for v in range(lb, ub + 1)]
+            if len(allowed) == 1:
+                return Equals(new_left, allowed[0])
+            return Or([Equals(new_left, obj) for obj in allowed])
 
-        raise NotImplementedError("Binary representation of <= not implemented in Basic.")
+        # Case: constant <= fluent  →  f = v for v in [c, ub]
+        if left.is_int_constant() and right.is_fluent_exp():
+            c = left.constant_value()
+            right_type = right.fluent().type
+            lb = max(right_type.lower_bound, c)
+            ub = right_type.upper_bound
+            if lb > ub:
+                return FALSE()
+            new_right = self._transform_expression(right, new_problem)
+            allowed = [ObjectExp(self._number_objects[v]) for v in range(lb, ub + 1)]
+            if len(allowed) == 1:
+                return Equals(new_right, allowed[0])
+            return Or([Equals(new_right, obj) for obj in allowed])
+
+        # Case: fluent <= fluent  →  disjunction over pairs
+        if left.is_fluent_exp() and right.is_fluent_exp():
+            left_type = left.fluent().type
+            right_type = right.fluent().type
+            lb_l, ub_l = left_type.lower_bound, left_type.upper_bound
+            lb_r, ub_r = right_type.lower_bound, right_type.upper_bound
+
+            new_left = self._transform_expression(left, new_problem)
+            new_right = self._transform_expression(right, new_problem)
+
+            clauses = []
+            for v in range(lb_l, min(ub_l, ub_r) + 1):
+                n_v = self._get_number_object(new_problem, v)
+                ge_values = [
+                    self._get_number_object(new_problem, v_r)
+                    for v_r in range(max(v, lb_r), ub_r + 1)
+                ]
+                if not ge_values:
+                    continue
+                if len(ge_values) == 1:
+                    f2_ge_v = Equals(new_right, ge_values[0])
+                else:
+                    f2_ge_v = Or([Equals(new_right, n) for n in ge_values])
+                clauses.append(And(Equals(new_left, n_v), f2_ge_v))
+
+            if not clauses:
+                return FALSE()
+            return Or(clauses) if len(clauses) > 1 else clauses[0]
+
+        raise UPProblemDefinitionError(
+            f"Cannot transform <= between unsupported expressions: {left} <= {right}"
+        )
 
     def _transform_equality_binary(self, expr: FNode, new_problem: Problem) -> FNode:
         """Transform an integer equality for the binary representation.
@@ -636,6 +575,18 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         - f == g   (both fluents): conjunction of Iff over corresponding bits
         """
         left, right = expr.arg(0), expr.arg(1)
+
+        # Detect if this equality involves integer fluents/constants
+        def is_int_related(node):
+            if node.is_int_constant():
+                return True
+            if node.is_fluent_exp() and node.fluent().type.is_int_type():
+                return True
+            return False
+
+        if not (is_int_related(left) or is_int_related(right)):
+            # Non-integer equality: pass through unchanged
+            return expr
 
         # Both constants
         if left.is_int_constant() and right.is_int_constant():
@@ -1027,11 +978,9 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
             g_type = effect.value.fluent().type
             constraints = []
             if g_type.lower_bound < f_type.lower_bound:
-                # g >= f_lb
-                constraints.append(self._emit_lower_bound_prec(new_value, f_type.lower_bound))
+                constraints.append(self._emit_lower_bound_prec(new_value, f_type.lower_bound, g_type.upper_bound))
             if g_type.upper_bound > f_type.upper_bound:
-                # g <= f_ub
-                constraints.append(self._emit_upper_bound_prec(new_value, f_type.upper_bound))
+                constraints.append(self._emit_upper_bound_prec(new_value, g_type.lower_bound, f_type.upper_bound))
             if len(constraints) == 1:
                 bound_prec = constraints[0]
             elif len(constraints) > 1:
@@ -1067,9 +1016,9 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         # Build bound precondition: min_safe <= f <= max_safe
         bound_constraints = []
         if min_safe > lb:
-            bound_constraints.append(self._emit_lower_bound_prec(new_fluent, min_safe))
+            bound_constraints.append(self._emit_lower_bound_prec(new_fluent, min_safe, ub))
         if max_safe < ub:
-            bound_constraints.append(self._emit_upper_bound_prec(new_fluent, max_safe))
+            bound_constraints.append(self._emit_upper_bound_prec(new_fluent, lb, max_safe))
 
         if not bound_constraints:
             bound_prec = TRUE()
@@ -1422,27 +1371,19 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
             self._check_expression_compatible(goal, context="goal")
 
     def _check_expression_compatible(self, expr: FNode, context: str) -> None:
-        """Recursively check that an expression contains no unsupported operations."""
+        """Raise error if the problem uses expressions the basic compiler cannot handle.
+
+        The basic compiler does not support:
+        - Arithmetic operations (+, -, *, /) in preconditions or effects that don't
+          match one of the recognised simplifiable patterns (a+1<=b, etc.)
+        - Non-constant deltas in increase/decrease effects
+        - Arithmetic expressions on the RHS of assignments
+        """
         # Try simplification first (e.g. a + 1 <= b becomes a < b)
         simplified = self._try_simplify_arithmetic(expr)
         if simplified is not expr:
             self._check_expression_compatible(simplified, context)
             return
-
-        # Try successor pattern (a == b + 1 becomes succ(b, a))
-        if expr.is_equals():
-            left, right = expr.arg(0), expr.arg(1)
-            for l, r in [(left, right), (right, left)]:
-                # Check if right side is (X + 1), (1 + X), (X - 1)
-                if r.is_plus() and len(r.args) == 2:
-                    a, b = r.arg(0), r.arg(1)
-                    if (b.is_int_constant() and b.constant_value() == 1) or \
-                            (a.is_int_constant() and a.constant_value() == 1):
-                        return  # This will be handled by _try_succ_pattern
-                if r.is_minus() and len(r.args) == 2:
-                    a, b = r.arg(0), r.arg(1)
-                    if b.is_int_constant() and b.constant_value() == 1:
-                        return  # This will be handled by _try_succ_pattern
 
         # Otherwise, arithmetic operations are not supported
         if expr.node_type in self.ARITHMETIC_OPS:
@@ -1507,10 +1448,6 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         # Step 3: setup representation-specific structures
         if self.representation == 'object':
             self._create_number_objects(problem, new_problem)
-            if self._needs_lt_predicate(problem):
-                self._setup_lt_predicate(new_problem)
-            if self._needs_succ_predicate(problem):
-                self._setup_succ_predicate(new_problem)
 
         # Step 4: transform fluents
         self._transform_fluents(cleaned_problem, new_problem)

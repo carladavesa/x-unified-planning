@@ -607,6 +607,9 @@ def requires_csp(node: FNode) -> bool:
     - Comparisons <, <=, >, >=
     - Any other that contains the previous ones
     """
+    if node.is_constant() or node.is_parameter_exp() or node.is_object_exp():
+        return False
+
     if node.is_fluent_exp():
         return False
 
@@ -862,6 +865,15 @@ def add_cp_constraints(
                 result = temp
         return result
 
+    # -- COUNT --
+    if node.node_type == OperatorKind.COUNT:
+        # Sum of boolean children equals the count
+        children = [add_cp_constraints(problem, a, variables, model, object_to_index) for a in node.args]
+        n = len(children)
+        count_var = model.NewIntVar(0, n, f"count_{id(node)}")
+        model.Add(count_var == sum(children))
+        return count_var
+
     raise NotImplementedError(f"Node type {node.node_type} not implemented in CP-SAT translation")
 
 def add_effect_bounds_constraints(
@@ -937,8 +949,20 @@ def evaluate_with_solution(
     if expr.is_fluent_exp():
         var_name = str(expr)
         if var_name in solution:
-            return em.Int(solution[var_name])
-        return expr  # retorna l'expressió original si no és a la solució
+            value = solution[var_name]
+            fluent = expr.fluent()
+            if fluent.type.is_int_type():
+                return em.Int(value)
+            elif fluent.type.is_user_type():
+                # value is an index into the type's objects
+                objects = list(problem.objects(fluent.type))
+                if 0 <= value < len(objects):
+                    return em.ObjectExp(objects[value])
+                return expr  # fallback, invalid index
+            elif fluent.type.is_bool_type():
+                return em.TRUE() if value else em.FALSE()
+            return expr
+        return expr  # not in solution
 
     if expr.is_plus():
         args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
