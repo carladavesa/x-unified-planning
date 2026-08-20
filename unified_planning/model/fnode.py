@@ -484,6 +484,7 @@ class FNode(object):
     #
 
     def __getitem__(self, index):
+        # Chaining/composition case for `expr[i]`: self is already an expression
         assert self.type.is_array_type(), "This FNode does not have array type"
         em = self._env.expression_manager
         if type(index) is int:

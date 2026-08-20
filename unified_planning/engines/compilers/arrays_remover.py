@@ -286,28 +286,39 @@ class ArraysRemover(engines.engine.Engine, CompilerMixin):
         Transform ARRAY_READ or ARRAY_WRITE into an indexed fluent call.
         Supports N-dimensional arrays by unwinding the chain of ARRAY_READ/WRITE nodes.
         Expects all indices to be constant integers (i.e., after int-param removal).
-        (read (board ?a) Int(1) Int(2)) → board(i1, i2, ?a)
+        Pre: (read (read board(?a) 1) 3)
+        Post: board(i1, i3, ?a)
         """
-        # Unwind the chain of ARRAY_READ/ARRAY_WRITE nodes to collect all indices
+        # Unwind the chain of ARRAY_READ/ARRAY_WRITE nodes to collect all indices.
+        # Nesting goes: read(read(board, 1), 2) -> board[1][2],
         indices = []
         current = node
         while current.is_array_read() or current.is_array_write():
+            # The index can be an expression
             idx = self._transform_expression(old_problem, new_problem, current.arg(1))
             if idx is None or not idx.is_int_constant():
                 return None
+            # insert(0, idx) restores outer-to-inner
             indices.insert(0, idx.constant_value())
             current = current.arg(0)
 
+        # The base of the chain is the array fluent
         if not current.is_fluent_exp():
             return None
 
+        # Rebuild the flattened name the grounding step uses, e.g. "board[1][2]".
+        # split('[') drops any indices already baked into the fluent name.
         base_name = current.fluent().name.split('[')[0]
         indexed_name = base_name + "".join(f"[{k}]" for k in indices)
 
+        # Validate the position against the fluent's domain and map each index to its
+        # Index object (i0, i1, ...)
         index_params = self._extract_array_indices(new_problem, indexed_name)
         if index_params is None:
             return None
 
+        # Non-index arguments of the base fluent (e.g. action parameters on a
+        # parametric array fluent) still need transforming and are kept after the indices.
         new_fluent = new_problem.fluent(base_name)
         new_args = [
             self._transform_expression(old_problem, new_problem, a)
@@ -315,6 +326,7 @@ class ArraysRemover(engines.engine.Engine, CompilerMixin):
         ]
         if any(a is None for a in new_args):
             return None
+        # Final call: fluent(index objects..., original args...)
         return new_fluent(*(index_params + new_args))
 
     def _transform_expression(
@@ -330,8 +342,7 @@ class ArraysRemover(engines.engine.Engine, CompilerMixin):
             return self._transform_fluent_exp(old_problem, new_problem, node)
         if node.is_forall() or node.is_exists():
             return self._transform_quantifier(old_problem, new_problem, node)
-        # ARRAY_READ/ARRAY_WRITE: resolve to indexed fluent — must come before the
-        # array-comparison check below, which would misinterpret these nodes.
+        # ARRAY_READ/ARRAY_WRITE
         if node.is_array_read() or node.is_array_write():
             return self._transform_array_access(old_problem, new_problem, node)
         # Special case: array fluent comparisons
@@ -395,26 +406,35 @@ class ArraysRemover(engines.engine.Engine, CompilerMixin):
 
         Handles two value forms:
           - array constant (array.mk): dst[pos] := literal[pos]
+            Pre:  pos(?t) := [4, 5, 6]
+            Post: pos(i0, ?t) := 4 && pos(i1, ?t) := 5 && pos(i2, ?t) := 6
           - another array fluent (SV-to-SV copy): dst[pos] := src[pos]
+            Pre:  dst(?t) := src(?t)
+            Post: dst(i0, ?t) := src(i0, ?t) && ... && dst(i2, ?t) := src(i2, ?t)
         """
+        # Destination must be a known array fluent
         dst_name = effect.fluent.fluent().name.split('[')[0]
         if dst_name not in self.domains:
             return False
         new_dst_fluent = new_problem.fluent(dst_name)
+        # Shared by every generated effect, so transform it once
         new_condition = self._transform_expression(problem, new_problem, effect.condition)
         if new_condition is None:
             return False
 
-        # Preserve any non-index fluent args (e.g. action parameters on parametric fluents)
+        # Preserve any non-index fluent args
         extra_args = [
             self._transform_expression(problem, new_problem, a) for a in effect.fluent.args
         ]
         if any(a is None for a in extra_args):
             return False
 
+        # Pick the value form: array fluent on the rhs -> per-element copy,
+        # otherwise it must be an array constant
         val_node = effect.value
         is_sv_copy = val_node.is_fluent_exp() and val_node.fluent().type.is_array_type()
         if is_sv_copy:
+            # Resolve the source the same way as the destination
             src_name = val_node.fluent().name.split('[')[0]
             if src_name not in self.domains:
                 return False
@@ -425,14 +445,18 @@ class ArraysRemover(engines.engine.Engine, CompilerMixin):
             if any(a is None for a in src_extra_args):
                 return False
         elif not val_node.is_constant():
+            # Computed rhs (e.g. src + 1)
             return False
 
+        # One effect per position. pos is an index tuple -> (1, 2) for dst[1][2]
         for pos in self.domains[dst_name]:
             index_params = [self._get_index_object(new_problem, i) for i in pos]
             dst_elem = new_dst_fluent(*(index_params + extra_args))
             if is_sv_copy:
+                # Same position on the source fluent
                 elem_val = new_src_fluent(*(index_params + src_extra_args))
             else:
+                # Literal sitting at that position in the nested array constant
                 elem_val = self._get_element_value(val_node, pos)
             self._add_effect_to_action(new_action, 'none', dst_elem, elem_val, new_condition, effect.forall)
 
@@ -446,12 +470,11 @@ class ArraysRemover(engines.engine.Engine, CompilerMixin):
             new_action: Action,
     ) -> bool:
         """Add single effect to action. Returns False if action should be pruned."""
-        # Whole-array assignment: (assign arr value) where arr is a bare array fluent.
+        # Whole-array assignment: (assign arr value)
         # Expand into one per-element effect instead of returning None for the fluent.
         if effect.fluent.is_fluent_exp():
             base_name = effect.fluent.fluent().name.split('[')[0]
-            if (problem.has_fluent(base_name) and
-                    problem.fluent(base_name).type.is_array_type() and
+            if (problem.has_fluent(base_name) and problem.fluent(base_name).type.is_array_type() and
                     not re.findall(r'\[([0-9]+)\]', effect.fluent.fluent().name)):
                 return self._expand_whole_array_effect(problem, new_problem, effect, new_action)
 

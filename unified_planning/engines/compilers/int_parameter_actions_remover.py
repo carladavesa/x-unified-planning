@@ -13,6 +13,7 @@
 # limitations under the License.
 #
 """This module defines the integer parameter actions remover and range variable remover compiler."""
+import re
 from itertools import product
 from unified_planning.exceptions import UPProblemDefinitionError
 from unified_planning.model.fnode import FNode
@@ -30,9 +31,7 @@ from functools import partial
 from unified_planning.shortcuts import Int, FALSE, TRUE, Exists, Forall
 
 
-# Sentinel returned by _transform_array_access when an index is a valid concrete
-# integer but falls outside the array's declared bounds.  Distinct from None, which
-# means the index could not be evaluated to a concrete integer at all.
+# Returned by _transform_array_access distinct from None, means a concrete but out-of-bounds index.
 _OOB = object()
 
 
@@ -42,67 +41,14 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
 
     Transforms:
     1. Integer action parameters -> grounded instantiated actions for each valid integer value
-    2. Range variables -> expanded quantifiers over concrete integer ranges.
-    3. Array accesses with integer-parameter indices  ->  the same read/write chain with
-       concrete integer constants substituted in place of the parameters.
-
-       Crucially, the base array fluent itself is *not* renamed or split.  A read like
-       ``(read (read card_at r) c)`` with ``r=1, c=0`` becomes
-       ``(read (read card_at 1) 0)`` — the declared fluent ``card_at`` is unchanged and
-       the expression remains a proper ARRAY_READ node that the C++ backend understands
-       natively.  Creating an indexed-name alias (``card_at[1][0]``) would produce a
-       FLUENT_EXP referencing a fluent that is never declared in the compiled problem,
-       breaking the proto fluent registry that the backend relies on.
+    2. Range variables -> expanded quantifiers (forall/exists) over instantiated ranges
+    3. Array fluents and accesses with integer-parameter indices  ->  read/write chain with explicit array accesses
 
     Example:
         action(p: Int[1,3]) with precondition p < 2
     Becomes:
         action_p1 (where p=1), action_p2 (where p=2), action_p3 (where p=3)
         But only action_p1 is created since 1 < 2 is true, while 2 < 2 and 3 < 2 are false.
-
-    Dead-action pruning — boundary actions
-    ──────────────────────────────────────
-    A common PDDL design pattern uses preconditions to guard against boundary
-    parameter values.  Consider a sliding-tile action:
-
-        (:action move_up
-            :parameters (?i ?j - (number 0 3))
-            :precondition (= (blank_row) (- ?i 1))
-            :effect       (write ((board) (- ?i 1) ?j) (read (board) ?i ?j)) ...)
-
-    When IPAR instantiates ?i=0 it produces:
-
-        move_up_0_j:
-            precondition: (= blank_row -1)          ← always false; blank_row ∈ [0,3]
-            effect:       (write board[-1][j] ...)   ← index -1 is out of bounds
-
-    The action is unreachable at runtime (the precondition prevents it), so the
-    out-of-bounds write can never execute.  However, the C++ SemanticValidationPass
-    performs static analysis on every action it receives and would raise an error
-    on the -1 index before any plan search begins.
-
-    IPAR handles this by detecting, after substitution and simplification, that a
-    transformed precondition contains an equality of the form
-
-        (= <bounded-int-fluent> <constant-outside-its-type-range>)
-
-    and discarding the entire action.  This is implemented in
-    ``_precondition_is_infeasible`` and called from ``_create_instantiated_action``.
-    The same pattern covers upper-boundary cases: instantiating ?i=N-1 into
-    ``(= blank_row (+ ?i 1))`` yields ``(= blank_row N)``, which is equally infeasible.
-
-    Important distinctions:
-    - This pruning applies *only to preconditions*, not goals.  An out-of-bounds
-      constant in a goal (e.g., ``(= (score) 99)`` for score ∈ [0,5]) is a domain
-      error that should make the problem UNSOLVABLE — IPAR preserves it so the
-      planner can report the correct status.
-    - The check runs on the *transformed* precondition (after parameter substitution
-      and UP's algebraic simplifier), not on the raw expression.  ``(- ?i 1)`` at
-      ?i=0 is simplified to ``Int(-1)`` by the expression manager before the type
-      range test is applied.
-    - It is *not* called on goals, conditional-effect conditions, or effect values —
-      only on action preconditions where an infeasible conjunct makes the whole
-      action unreachable.
     """
 
     def __init__(self):
@@ -110,7 +56,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         CompilerMixin.__init__(self, CompilationKind.INT_PARAMETER_ACTIONS_REMOVING)
         self.domains: Dict[str, List[Tuple[int, ...]]] = {}
         self._expression_cache: Dict[Tuple[int, Tuple[int, ...]], FNode] = {}
-        # Maps base fluent name → (int_param_indices, {int_vals_tuple: grounded_fluent})
+        # Maps base fluent name: (int_param_indices, {int_vals_tuple: grounded_fluent})
         self._int_param_fluents: Dict[str, Tuple[Tuple[int, ...], Dict[Tuple[int, ...], Fluent]]] = {}
 
     @property
@@ -322,8 +268,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
                 if transformed is not None:
                     expanded_args.append(transformed)
         if not expanded_args:
-            # Empty range: forall over nothing is vacuously True; exists over nothing is False.
-            # Returning None here caused the action to be silently discarded downstream.
+            # Empty range: forall over nothing is True; exists over nothing is False.
             em = new_problem.environment.expression_manager
             return em.TRUE() if node.is_forall() else em.FALSE()
 
@@ -364,17 +309,23 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         old_fluent = old_problem.fluent(fluent_base_name)
         # Array fluent: extract indices from name
         if old_fluent.type.is_array_type():
-            # Whole-array reference: let ARRAYS_REMOVING expand it into element-wise comparisons.
+            # Whole-array reference
             return node.fluent()(*new_args)
 
         # Integer-parametered fluent: substitute concrete int values into grounded name
         if fluent_base_name in self._int_param_fluents:
+            # Which argument positions are integers, and the val[i] -> val_i table built for 
+            # them by _transform_int_param_fluents.
             int_param_indices, grounded = self._int_param_fluents[fluent_base_name]
+            # The loop above already folded those args to constants, so they read directly.
             int_vals = tuple(new_args[i].constant_value() for i in int_param_indices)
             int_param_set = set(int_param_indices)
+            # The integer args are encoded in the grounded name(user-type args stay in the signature)
             non_int_args = [new_args[i] for i in range(len(new_args)) if i not in int_param_set]
             grounded_fluent = grounded.get(int_vals)
             if grounded_fluent is None:
+                # No grounded variant for these values: they fall outside the declared
+                # bounds, so the access is impossible and the caller prunes it.
                 return None
             return grounded_fluent(*non_int_args)
 
@@ -424,41 +375,30 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             instantiations: Tuple[int, ...]
     ) -> Union[FNode, None]:
         """
-        Transform an ARRAY_READ or ARRAY_WRITE node by substituting concrete integer
-        values into its index positions while preserving the read/write node structure.
+        Substitute concrete integers into the indices of an ARRAY_READ/ARRAY_WRITE
+        node, keeping the node structure and the base fluent intact:
 
-        The key design constraint is that array fluents must remain declared in the
-        compiled problem for the proto fluent registry to be consistent.  An earlier
-        approach created indexed-name aliases like ``board[1][2]`` (a new Fluent object
-        whose name encodes the concrete indices), but those objects were never registered
-        via ``new_problem.add_fluent()``.  Every downstream consumer — the proto writer,
-        the C++ backend, and any subsequent UP compiler — resolves fluent references by
-        looking up the declared fluent list.  A FLUENT_EXP that points to an undeclared
-        fluent therefore causes a ``Fluent definition not found`` error at runtime.
+            (read (read card_at r) c)  with r=1, c=0  ->  (read (read card_at 1) 0)
 
-        The fix: keep the original ARRAY_READ / ARRAY_WRITE node type and only replace
-        the index sub-expressions with concrete integer constants.
-
-        Examples (N-dimensional, any mix of read/write layers):
-
-            (read (read card_at r) c)    with r=1, c=0
-                → (read (read card_at 1) 0)      -- ARRAY_READ chain, base fluent unchanged
-
-            (write (write board i) j)    with i=2, j=3
-                → (write (write board 2) 3)       -- ARRAY_WRITE chain, base fluent unchanged
-
-        The base array fluent (``card_at``, ``board``) is never renamed, so its declaration
-        in ``new_problem.fluents`` is always present and the backend can resolve every
-        read/write expression it encounters.
-
-        Returns None when an index evaluates to a non-integer, or when the resulting
-        index tuple falls outside the pre-computed valid domain (out-of-bounds access).
+        Handles four cases (board: Int[4][4], r=1, c=0):
+          - all indices concrete and in domain: rebuild the chain
+            Pre:  (read (read board(?a) r) c)
+            Post: (read (read board(?a) 1) 0)
+          - partial access, fewer indices than dimensions: checked on the indexed prefix
+            Pre:  (read board(?a) r)
+            Post: (read board(?a) 1)
+          - index not a concrete integer, chain not rooted in a fluent, or base fluent
+            with no recorded domain
+            Pre:  (read board(?a) (blank_row))
+            Post: None
+          - concrete indices out of bounds or on an undefined position
+            Pre:  (read (read board(?a) -1) 0)
+            Post: _OOB
         """
         em = old_problem.environment.expression_manager
 
         # Unwind the read/write chain from outermost to innermost, recording each
-        # layer as (is_write: bool, concrete_index: FNode).  The outermost layer
-        # corresponds to the last (highest) dimension; the innermost to dimension 0.
+        # layer as (is_write: bool, concrete_index: FNode)
         layers: List[Tuple[bool, FNode]] = []
         current = node
         while current.is_array_read() or current.is_array_write():
@@ -467,7 +407,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
                 old_problem, new_problem, current.arg(1), int_params, instantiations
             )
             if idx is None or not idx.is_int_constant():
-                # Index could not be evaluated to a concrete integer — cannot transform.
+                # Index could not be evaluated to a concrete integer
                 return None
             layers.append((is_write, idx))
             current = current.arg(0)
@@ -479,12 +419,22 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         base_name = base_fluent.name.split('[')[0]
 
         # Build the index tuple in innermost-first order (dim0, dim1, ...) by reversing
-        # the outermost-first collection order, then validate against the domain.
+        # the outermost-first collection order
         indices = tuple(idx.constant_value() for _, idx in reversed(layers))
-        if indices not in self.domains.get(base_name, []):
+        valid_positions = self.domains.get(base_name)
+        if valid_positions is None:
+            # No domain to check against: cannot decide
+            return None
+        if not valid_positions:
+            return _OOB
+        # A partial access (e.g. the row `board[i]` of an Int[n][n]) indexes fewer
+        # dimensions than self.domains records, so compare on the indexed prefix.
+        if len(indices) == len(valid_positions[0]):
+            in_domain = indices in valid_positions
+        else:
+            in_domain = any(pos[:len(indices)] == indices for pos in valid_positions)
+        if not in_domain:
             # OOB or undefined position: the access is provably impossible.
-            # Return the _OOB sentinel (not None) so the caller can distinguish
-            # this case from a non-evaluable index and propagate infeasibility.
             return _OOB
 
         # Transform the base fluent's own arguments (e.g., object-typed parameters).
@@ -495,10 +445,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         if any(a is None for a in new_fluent_args):
             return None
 
-        # Rebuild the read/write chain from innermost to outermost with concrete indices.
-        # reversed(layers) processes innermost first, which is correct: the innermost
-        # read/write is applied directly to the base fluent expression, and each
-        # subsequent iteration wraps the result with the next outer operation.
+        # Rebuild the read/write chain from inner to outer with concrete indices.
         result: FNode = em.FluentExp(base_fluent, new_fluent_args)
         for is_write, concrete_idx in reversed(layers):
             result = em.ArrayWrite(result, concrete_idx) if is_write \
@@ -524,7 +471,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             int_params = {}
         if instantiations is None:
             instantiations = ()
-        cache_key = (id(node), instantiations)
+        cache_key = (id(node), instantiations, tuple(sorted(int_params.items())))
         if cache_key in self._expression_cache:
             if self._expression_cache[cache_key] is None:
                 return None
@@ -534,7 +481,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         if node.is_constant() or node.is_timing_exp():
             return node
 
-        # If experssion wraps a RangeVariable, substitute with integer
+        # If expression wraps a RangeVariable, substitute with integer
         if node.is_variable_exp():
             v = node.variable()
             if isinstance(v, RangeVariable) and v.name in int_params:
@@ -581,18 +528,13 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         if node.is_array_read() or node.is_array_write():
             result = self._transform_array_access(old_problem, new_problem, node, int_params, instantiations)
             if result is _OOB:
-                # Index is a valid concrete integer but out of bounds: the access is
-                # provably impossible, so the surrounding expression is infeasible.
-                # Propagate None so _handle_none_args / precondition checks prune the action.
+                # Provably impossible access
                 self._expression_cache[cache_key] = None
                 return None
             if result is not None:
                 self._expression_cache[cache_key] = result
                 return result
-            # _transform_array_access returned None: index could not be evaluated to a
-            # concrete integer (state fluent as index, nested array read, etc.).
-            # Fall through to generic transformation — preserve the ARRAY_READ/ARRAY_WRITE
-            # structure so the C++ SemanticValidationPass can detect and report the error.
+            # _transform_array_access returned None: index could not be evaluated to a concrete integer
 
         result = self._transform_generic(old_problem, new_problem, node, int_params, instantiations)
         self._expression_cache[cache_key] = result
@@ -607,13 +549,21 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         Replace each integer-parametered fluent with one parameterless grounded fluent per
         combination of integer values, and rewrite explicit initial values accordingly.
 
-        Example: val[i: int[0,4]] → val_0, val_1, val_2, val_3, val_4
-        Non-integer parameters (user-type) are preserved in each grounded fluent's signature.
+        Handles three fluent shapes:
+          - integer parameters only: one grounded fluent per combination of values
+            Pre:  val(i: int[0, 2])       val(1) := 7
+            Post: val_0, val_1, val_2     val_1 := 7
+          - mixed parameters: the user-type ones stay in the grounded signature
+            Pre:  at(i: int[0, 1], ?t)    at(0, t1) := true
+            Post: at_0(?t), at_1(?t)      at_0(t1) := true
+          - array fluent, or no integer parameter at all: copied unchanged
+            Pre:  board: int[4][4]
+            Post: board: int[4][4]
         """
         for fluent in problem.fluents:
             default_value = problem.fluents_defaults.get(fluent)
 
-            # Array fluents are handled by the array-access machinery; keep unchanged.
+            # Array fluents are handled by the array-access
             if fluent.type.is_array_type():
                 new_problem.add_fluent(fluent, default_initial_value=default_value)
                 for f, v in problem.explicit_initial_values.items():
@@ -734,10 +684,6 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         regular_forall, range_vars = self._extract_variables(effect.forall)
         if not range_vars:
             new_fluent = self._transform_expression(problem, new_problem, effect.fluent, int_param_map, instantiation)
-            # cells[i] → ArrayRead in read ctx; upgrade to ArrayWrite for effect target.
-            if new_fluent is not None and new_fluent.is_array_read():
-                em = problem.environment.expression_manager
-                new_fluent = em.ArrayWrite(new_fluent.arg(0), new_fluent.arg(1))
             new_value = self._transform_expression(problem, new_problem, effect.value, int_param_map, instantiation)
             new_condition = self._transform_expression(problem, new_problem, effect.condition, int_param_map, instantiation)
 
@@ -757,10 +703,6 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         for range_inst in range_insts:
             full_inst = instantiation + range_inst
             new_fluent = self._transform_expression(problem, new_problem, effect.fluent, expanded_int_params, full_inst)
-            # cells[i] → ArrayRead in read ctx; upgrade to ArrayWrite for effect target.
-            if new_fluent is not None and new_fluent.is_array_read():
-                em = problem.environment.expression_manager
-                new_fluent = em.ArrayWrite(new_fluent.arg(0), new_fluent.arg(1))
             new_value = self._transform_expression(problem, new_problem, effect.value, expanded_int_params, full_inst)
             new_condition = self._transform_expression(problem, new_problem, effect.condition, expanded_int_params, full_inst)
             success = self._add_single_effect(
@@ -794,63 +736,35 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
 
     @staticmethod
     def _precondition_is_infeasible(node: FNode) -> bool:
-        """Detect a trivially-false precondition arising from boundary parameter instantiation.
-
-        Returns True if ``node``, or any conjunct of an AND ``node``, is an equality of the
-        form ``(= <bounded-int-fluent> <integer-constant>)`` where the constant lies
-        outside the fluent's declared ``(number lo hi)`` type range.
-
-        Background
-        ----------
-        IPAR expands each bounded-int action parameter over its full type range, including
-        boundary values.  Many PDDL domains guard boundary cases via preconditions rather
-        than restricting the parameter range.  A typical pattern:
-
-            (:action move_up
-                :parameters (?i - (number 0 3))
-                :precondition (= (blank_row) (- ?i 1))  ; blank_row must equal i-1
-                :effect (write ((board) (- ?i 1) ...) ...)
-
-        When IPAR instantiates ?i=0 it substitutes and simplifies, producing:
-
-            move_up_0:
-                precondition: (= (blank_row) -1)        ; blank_row ∈ [0,3], so always false
-                effect:       (write board[-1] ...)      ; index -1 is out of bounds
-
-        This action is unreachable (no state satisfies the precondition) and should be
-        discarded.  However, UP's algebraic simplifier does not know about type bounds, so
-        ``(= (blank_row) -1)`` is not reduced to ``FALSE()``.  If the action is forwarded
-        to the C++ backend, ``SemanticValidationPass`` will raise a runtime error on the
-        -1 array index even though that index can never be reached.
-
-        The same pattern occurs at upper boundaries: ``(= (blank_row) 4)`` when
-        blank_row ∈ [0,3].
-
-        Implementation notes
-        --------------------
-        - Recursion into AND is required because UP stores the entire precondition as a
-          single AND FNode, not as a flat list of conjuncts.  A top-level equality check
-          alone would miss the infeasible conjunct nested inside the AND.
-        - Only EQUALS nodes are examined.  Inequality constraints (e.g. ``(> (blank_row) -1)``)
-          are not evaluated because they rarely arise from parameter substitution and their
-          safe handling would require interval arithmetic.
-        - The check is applied only to *preconditions*, never to goals.  An out-of-bounds
-          constant in a goal (e.g., ``(= (score) 99)`` for score ∈ [0,5]) is a domain
-          modelling error that should make the problem UNSOLVABLE, not silently disappear.
-        - This method is called on the *post-transformation* node (after parameter
-          substitution and simplification), so arithmetic expressions like ``(- ?i 1)``
-          at ?i=0 have already been folded to the concrete integer -1 by the expression
-          manager before this check runs.
         """
+        Detect a precondition that no state can satisfy because it equates a bounded-int
+        fluent to a constant outside its declared range.
+        Runs on the already-transformed node, so `(- ?i 1)` at ?i=0 is the constant -1.
+
+        Handles three cases (blank_row: int[0, 3]):
+          - equality with a constant outside the fluent's range, either side
+            Pre:  (= (blank_row) -1)
+            Post: True
+          - conjunct of an AND (a precondition is stored as one AND node)
+            Pre:  (and (= (blank_row) 4) (not (done)))
+            Post: True
+          - anything else: constant in range, non-equality, or a non-fluent side
+            Pre:  (= (blank_row) 2)  /  (> (blank_row) -1)
+            Post: False
+        """
+        # One infeasible conjunct makes the whole conjunction infeasible.
         if node.is_and():
             return any(IntParameterActionsRemover._precondition_is_infeasible(arg)
                        for arg in node.args)
+        # Only binary equalities carry the bound information needed here.
         if not node.is_equals() or len(node.args) != 2:
             return False
+        # The fluent may sit on either side, so try both orientations.
         for sv_side, const_side in [(node.arg(0), node.arg(1)),
                                      (node.arg(1), node.arg(0))]:
             if sv_side.is_fluent_exp() and const_side.is_int_constant():
                 ftype = sv_side.fluent().type
+                # Only a bounded int type has a range to fall outside of.
                 if ftype.is_int_type():
                     v = const_side.constant_value()
                     if not (ftype.lower_bound <= v <= ftype.upper_bound):
@@ -868,23 +782,8 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
     ) -> Union[Action, None]:
         """
         Create a single instantiated action for a specific integer parameter assignment.
-
         Transforms all preconditions and effects by substituting the given integer
-        parameter values.  Returns None (discards the action) in any of these cases:
-
-        1. A transformed precondition simplifies to FALSE() or None — the action is
-           provably unreachable (e.g., ``(< 3 2)`` after constant folding).
-        2. A transformed precondition satisfies ``_precondition_is_infeasible`` — it
-           equates a bounded-int fluent to a constant outside its declared type range,
-           which is the canonical boundary-action pattern (see class docstring and
-           ``_precondition_is_infeasible``).
-        3. Effect transformation fails or produces no valid effects — typically because
-           an array index resolved to an out-of-domain position.
-
-        Pruning here is critical: boundary actions (e.g., move_up_0 where i=0 forces
-        blank_row=-1) are dead by construction but their array-write expressions contain
-        out-of-bounds indices that ``SemanticValidationPass`` in C++ would reject.
-        Discarding them before the protobuf serialisation step prevents false errors.
+        parameter values and pruning the action if any become false/invalid
         """
         # Generate unique name
         action_name = get_fresh_name(new_problem, action.name, list(map(str, instantiation)))
@@ -898,8 +797,8 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             )
             if new_precondition in [FALSE(), None]:
                 return None
-            # Boundary-action check: precondition requires a bounded-int fluent to equal
-            # a constant outside its type range → action is unreachable, discard it.
+            # Boundary-int-action check: precondition requires a bounded-int fluent to equal
+            # a constant outside its type range
             if self._precondition_is_infeasible(new_precondition):
                 return None
             new_action.add_precondition(new_precondition)
@@ -985,7 +884,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             if skip_axiom:
                 continue
             new_problem.add_axiom(new_axiom)
-            new_to_old[new_axiom] = axiom
+            new_to_old[new_axiom] = (axiom, tuple())
 
     # ==================== QUALITY METRICS TRANSFORMATION ====================
 
@@ -1034,8 +933,12 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
     def _transform_goals(self, problem: Problem, new_problem: Problem):
         for goal in problem.goals:
             transformed = self._transform_expression(problem, new_problem, goal)
-            if transformed is not None and transformed != FALSE():
-                new_problem.add_goal(transformed)
+            if transformed is None:
+                # The goal references a provably impossible construct (e.g. an
+                # out-of-bounds array access). Dropping it would make an
+                # unsolvable problem appear solvable; keep the problem UNSOLVABLE.
+                transformed = FALSE()
+            new_problem.add_goal(transformed)
 
     def _compile(
         self,
@@ -1047,8 +950,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
         self._expression_cache.clear()
         self._int_param_fluents.clear()
 
-        # Create new problem, then rebuild fluents and init from scratch so that
-        # integer-parametered fluents can be replaced by their grounded variants.
+        # Create new problem, and rebuild fluents and init
         new_problem = problem.clone()
         new_problem.name = f"{self.name}_{problem.name}"
         new_problem.clear_fluents()

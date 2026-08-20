@@ -175,6 +175,11 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         if all(n is o for n, o in zip(new_args, node.args)):
             return node
         em = node.environment.expression_manager
+        # The payload carries the node's identity for FLUENT_EXP (the Fluent),
+        # EXISTS/FORALL (the bound Variables) and DOT (the agent).  This generic
+        # rebuild is reached for those kinds -- e.g. a static fluent nested in
+        # another fluent's arguments -- so dropping the payload yields an
+        # ill-formed node and a type-checker crash.
         return em.create_node(node.node_type, tuple(new_args), payload=node._content.payload).simplify()
 
     def _get_number_object(self, problem: Problem, value: int) -> FNode:
@@ -200,26 +205,18 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             return True
         return any(self._has_arithmetic(arg) for arg in node.args)
 
-    def _involves_int_fluent(self, node: FNode) -> bool:
-        """Return True if the expression tree contains any integer-typed fluent."""
-        if node.is_fluent_exp():
-            return node.fluent().type.is_int_type()
-        if node.is_constant() or node.is_parameter_exp() or node.is_object_exp():
-            return False
-        return any(self._involves_int_fluent(arg) for arg in node.args)
-
     def _requires_cp_in_condition(self, node: FNode) -> bool:
         """
         Determine if a condition requires CP-SAT solver.
 
-        Only routes to CP-SAT when arithmetic or comparisons involve at least
-        one bounded-integer fluent.  Real-valued fluents (RealType) appear in
-        preconditions of numeric domains (e.g. zenotravel's fuel/distance
-        expressions) but are outside the scope of this compiler — they must
-        pass through _transform_node unchanged, not be fed to CP-SAT.
+        Returns True if the condition contains arithmetic operations or
+        integer comparisons that need to be solved via constraint programming.
+        This includes arithmetic expressions and comparisons over integer domains.
         """
-        if node.node_type in self.ARITHMETIC_OPS or node.is_lt() or node.is_le():
-            return self._involves_int_fluent(node)
+        if node.node_type in self.ARITHMETIC_OPS:
+            return True
+        if node.is_lt() or node.is_le():
+            return True
         return any(self._requires_cp_in_condition(arg) for arg in node.args)
 
     # ==================== CP-SAT Constraint Solving ====================
@@ -232,7 +229,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         for intermediate multiplication results.  CP-SAT's AddMultiplicationEquality
         requires a named IntVar with explicit bounds; those bounds must be derived
         from the original UP expression tree (node.args), not from the CP-SAT
-        variables returned by the recursive _add_cp_constraints call — CP-SAT
+        variables returned by the recursive _add_cp_constraints call -- CP-SAT
         IntVar objects have no .type attribute.
         """
         if node.is_constant():
@@ -244,7 +241,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 return (t.lower_bound, t.upper_bound)
             if t.is_user_type():
                 return (0, max(0, len(list(problem.objects(t))) - 1))
-            return (-(2**31), 2**31 - 1)  # real or other numeric type
+            return (-(2**31), 2**31 - 1)
         if node.is_parameter_exp():
             t = node.parameter().type
             return (0, max(0, len(list(problem.objects(t))) - 1))
@@ -435,7 +432,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
         if node.is_times():
             # Build CP-SAT vars for each factor (recursive), and track bounds
-            # from the original UP nodes (node.args[i]) — NOT from cp_args[i].
+            # from the original UP nodes (node.args[i]) -- NOT from cp_args[i].
             # cp_args[i] is a CP-SAT IntVar/LinearExpr that has no .type field;
             # _get_expr_bounds works on UP FNodes only.
             cp_args = [self._add_cp_constraints(problem, arg, variables, model)
@@ -518,56 +515,13 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         conditional effects where the condition specifies which variable assignments
         lead to each result.
         """
-        em = problem.environment.expression_manager
-
-        # Normalise INCREASE/DECREASE effects before the main loop.
-        #
-        # _transform_increase_decrease_effect iterates over range(lb, ub+1) and
-        # therefore requires (a) an integer-typed fluent and (b) a constant delta.
-        # Two PDDL patterns break that assumption:
-        #
-        #   (a) PDDL `decrease (fuel ?a) (* ...)` on a REAL-typed fluent:
-        #       lb/ub are None → range(None, None+1) → TypeError.
-        #       Fix: rewrite as an explicit ASSIGN (fuel := fuel - delta) so the
-        #       arithmetic effect branch handles it and it passes through unchanged.
-        #
-        #   (b) PDDL `increase (value ?c) (rate_value ?c)` — int fluent but
-        #       non-constant delta: the try/except in _transform_increase_decrease_effect
-        #       silently skips every iteration, producing no effects and making the
-        #       action appear useless (pruned by the solver).
-        #       Fix: rewrite as ASSIGN (value := value + rate_value); the arithmetic
-        #       branch evaluates it per CP-SAT solution.
-        #
-        # Only INCREASE/DECREASE on integer fluents with a CONSTANT integer delta
-        # keep their kind and go through _transform_increase_decrease_effect as before.
-        pre_normalized = []
-        for eff in normalized_effects:
-            if eff.is_increase() or eff.is_decrease():
-                fl_type = eff.fluent.fluent().type
-                is_int = fl_type.is_int_type()
-                try:
-                    delta_const = eff.value.constant_value()
-                    is_const_delta = isinstance(delta_const, int)
-                except Exception:
-                    is_const_delta = False
-                if is_int and is_const_delta:
-                    pre_normalized.append(eff)
-                else:
-                    base = eff.fluent
-                    delta = eff.value
-                    assign_val = (Plus(base, delta) if eff.is_increase()
-                                  else Minus(base, delta))
-                    pre_normalized.append(Effect(base, assign_val.simplify(), eff.condition,
-                                                 EffectKind.ASSIGN, eff.forall))
-            else:
-                pre_normalized.append(eff)
-        normalized_effects = pre_normalized
-
         var_str_to_fnode = {str(node_key): node_key for node_key in variables.keys()}
 
         for effect in normalized_effects:
             if effect.is_increase() or effect.is_decrease():
-                # Only integer-typed fluents with constant delta reach here.
+                # The caller (_transform_action_integers) has already normalised
+                # increase/decrease effects: only integer-typed fluents with a
+                # constant delta reach here.
                 for new_effect in self._transform_increase_decrease_effect(effect, new_problem):
                     new_action.add_effect(new_effect.fluent, new_effect.value,
                                           new_effect.condition, new_effect.forall)
@@ -617,24 +571,12 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                     if solution_clauses:
                         solutions_or = Or(solution_clauses) if len(solution_clauses) > 1 else solution_clauses[0]
                         full_cond = And(base_cond, solutions_or).simplify() if base_cond != TRUE() else solutions_or
-                    else:
-                        # No CP-SAT variables constrain this effect (e.g., real-typed fluent
-                        # not registered in CP-SAT): apply under the original effect condition.
-                        full_cond = base_cond
-                    if full_cond != FALSE():
                         new_action.add_effect(new_fluent, data['value'], full_cond)
 
             else:
                 # Simple assignment
-                original_fluent_type = (effect.fluent.fluent().type
-                                        if effect.fluent.is_fluent_exp() else None)
                 new_fluent = self._transform_node(problem, new_problem, effect.fluent)
-                if original_fluent_type and not original_fluent_type.is_int_type():
-                    # Non-int fluent: preserve value as-is to avoid converting numeric
-                    # constants (e.g. Int(0)) into Number objects (e.g. n0).
-                    new_value = effect.value
-                else:
-                    new_value = self._transform_node(problem, new_problem, effect.value)
+                new_value = self._transform_node(problem, new_problem, effect.value)
                 new_cond = self._transform_node(problem, new_problem, effect.condition)
                 if new_cond is None:
                     new_cond = TRUE()
@@ -680,29 +622,17 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
         if node.is_object_exp() or node.is_constant() or node.is_parameter_exp():
             return node
 
-        # Arithmetic operations: raise for integer-typed operands (must go through
-        # CP-SAT, not direct transformation), but pass through real-valued arithmetic
-        # unchanged so numeric constants are not incorrectly converted to Number objects.
+        # Check for arithmetic operations
         if node.node_type in self.ARITHMETIC_OPS:
-            if self._involves_int_fluent(node):
-                raise UPProblemDefinitionError(
-                    f"Arithmetic operation {self.ARITHMETIC_OPS[node.node_type]} "
-                    f"not supported as external expression"
-                )
-            return node  # Real-valued: pass through unchanged
+            raise UPProblemDefinitionError(
+                f"Arithmetic operation {self.ARITHMETIC_OPS[node.node_type]} "
+                f"not supported as external expression"
+            )
 
-        # Equality involving non-int fluents: pass through unchanged.
-        # If neither argument is an int-typed fluent, no int-to-Number conversion is
-        # needed — converting numeric constants (e.g. Int(0)) to Number objects would
-        # produce an ill-formed expression (e.g. (= real_fluent n0)).
-        if node.is_equals():
-            lhs, rhs = node.arg(0), node.arg(1)
-            lhs_int = lhs.is_fluent_exp() and lhs.fluent().type.is_int_type()
-            rhs_int = rhs.is_fluent_exp() and rhs.fluent().type.is_int_type()
-            if not lhs_int and not rhs_int:
-                return node
-
-        # Bounded-int comparisons in effect conditions: expand to Equals disjunction.
+        # Bounded-int comparisons reaching this method (effect conditions, axiom
+        # bodies) must be expanded to a disjunction of Equals over the Number
+        # objects: transforming the operands in place would build (c <= n3),
+        # which compares two user-typed objects and is not well-formed.
         # GE/GT are stored as LE/LT internally (flipped args), so only LE/LT needed.
         if node.is_le() or node.is_lt():
             lhs, rhs = node.arg(0), node.arg(1)
@@ -722,7 +652,8 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                         return em.FALSE()
                     clauses = [em.Equals(new_fluent_exp, self._get_number_object(new_problem, v)) for v in sat_list]
                     return em.Or(clauses).simplify() if len(clauses) > 1 else clauses[0]
-            # No int-type fluent+constant pair: real-valued comparison, pass through unchanged.
+            # Neither side is a bare int fluent compared against a constant (2 <= (card_bins_i0 - 1))
+            # Recursing would reach the ARITHMETIC_OPS raise below, so leave the comparison untouched.
             return node
 
         # Recursively transform children
@@ -733,6 +664,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 return None
             new_args.append(transformed)
 
+        # See _replace_static: the payload must survive the rebuild.
         return em.create_node(node.node_type, tuple(new_args), payload=node._content.payload).simplify()
 
     # ==================== EFFECT TRANSFORMATION ====================
@@ -777,13 +709,10 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
             old_obj = self._get_number_object(new_problem, i)
             new_obj = self._get_number_object(new_problem, next_val_int)
-            cond = And(Equals(new_fluent, old_obj), effect.condition).simplify()
-            if cond == FALSE():
-                continue
             new_effect = Effect(
                 new_fluent,
                 new_obj,
-                cond,
+                And(Equals(new_fluent, old_obj), effect.condition).simplify(),
                 EffectKind.ASSIGN,
                 effect.forall
             )
@@ -829,14 +758,15 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
 
         # Normalise INCREASE/DECREASE effects *before* building the CP-SAT model so
         # that _register_int_fluents visits the full Plus/Minus expressions and adds
-        # any fluents that appear only as deltas (e.g. prod-by-association in
-        # pathwaysmetric) to the CP-SAT variable set.  Without this, _evaluate_with_solution
-        # would find those fluents absent from the solution dict and fall back to
-        # returning the original FNode, which has an integer type (not Number), causing
-        # a type-mismatch error when the compiled effect is added.
+        # any fluents that appear only as deltas to the CP-SAT variable set.  Without
+        # this, _evaluate_with_solution would find those fluents absent from the
+        # solution dict and fall back to returning the original FNode, which has an
+        # integer type (not Number), causing a type-mismatch error when the compiled
+        # effect is added.
         #
-        # See also the identical normalisation inside _add_effects_dnf_mode — that
-        # copy runs a second time on the already-normalised list, which is a no-op.
+        # _add_effects_dnf_mode relies on this normalisation having been applied:
+        # it assumes any remaining increase/decrease effect has an integer-typed
+        # fluent and a constant delta.
         unstatic_effects_normalized = []
         for eff in unstatic_effects:
             if eff.is_increase() or eff.is_decrease():
@@ -850,7 +780,7 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                 if is_int and is_const_delta:
                     unstatic_effects_normalized.append(eff)
                 else:
-                    base  = eff.fluent
+                    base = eff.fluent
                     delta = eff.value
                     assign_val = (Plus(base, delta) if eff.is_increase()
                                   else Minus(base, delta))
@@ -886,13 +816,8 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             for transformed in transformed_direct_preconditions:
                 new_action.add_precondition(transformed)
             for effect in unstatic_effects:
-                original_fluent_type = (effect.fluent.fluent().type
-                                        if effect.fluent.is_fluent_exp() else None)
                 new_fluent = self._transform_node(problem, new_problem, effect.fluent)
-                if original_fluent_type and not original_fluent_type.is_int_type():
-                    new_value = effect.value
-                else:
-                    new_value = self._transform_node(problem, new_problem, effect.value)
+                new_value = self._transform_node(problem, new_problem, effect.value)
                 new_cond = self._transform_node(problem, new_problem, effect.condition)
                 if new_cond is None:
                     new_cond = TRUE()
@@ -914,9 +839,10 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             result_var = self._add_cp_constraints(problem, And(cp_preconditions), variables, cp_model_obj)
             cp_model_obj.Add(result_var == 1)
 
-        # Previously only the effect fluent was registered, so operands that appear
-        # in the effect value (e.g. height in area:=height*2) were absent from the
-        # CP solution dict and could not be evaluated by _evaluate_with_solution.
+        # Register integer fluents from effects (so CP-SAT knows their domains).
+        # Registering only the effect fluent is not enough: operands appearing in
+        # the effect value (e.g. height in area := height * 2) would be absent from
+        # the CP solution dict and could not be evaluated by _evaluate_with_solution.
         def _register_int_fluents(node):
             if node.is_fluent_exp() and node.fluent().type.is_int_type():
                 self._add_cp_constraints(problem, node, variables, cp_model_obj)
@@ -962,9 +888,6 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
             new_action = self._transform_action_integers(problem, new_problem, action)
             if not new_action:
                 # CP-SAT found no solutions: action is always infeasible, skip it.
-                continue
-            if not list(new_action.effects):
-                # All conditional effects evaluated to false at compile time; skip.
                 continue
             new_problem.add_action(new_action)
             new_to_old[new_action] = action
@@ -1142,8 +1065,8 @@ class IntegersRemover(engines.engine.Engine, CompilerMixin):
                     if len(values) == 1:
                         return -values[0]
                     return values[0] - sum(values[1:])
-            # is_times / is_div were missing; without them, arithmetic effect values
-            # like (height * 2) could not be evaluated and caused a type mismatch error.
+            # Without is_times/is_div, arithmetic effect values such as (height * 2)
+            # cannot be evaluated and cause a type mismatch when the effect is added.
             if node.is_times():
                 values = [evaluate_recursive(arg) for arg in node.args]
                 if all(v is not None for v in values):

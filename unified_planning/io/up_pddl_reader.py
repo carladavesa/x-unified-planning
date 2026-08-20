@@ -460,7 +460,10 @@ class UPPDDLReader:
                     i += 1
                     break
                 else:
-                    i += 1
+                    raise SyntaxError(
+                        f"Malformed quantifier variable declaration: unexpected "
+                        f"token '{tok.value}' (expected '?variable' or '- type')"
+                    )
             if not var_names:
                 break
             if i >= n:
@@ -470,18 +473,30 @@ class UPPDDLReader:
             type_tok = exp_vars[i]
             i += 1
             if isinstance(type_tok.value, str):
-                t = types_map[type_tok.value]
+                try:
+                    t = types_map[type_tok.value]
+                except KeyError:
+                    raise SyntaxError(
+                        f"Undefined variable's type: {type_tok.value}."
+                    )
                 for o in var_names:
                     if t.is_int_type() and t.lower_bound is not None and t.upper_bound is not None:
                         result[o] = up.model.RangeVariable(o, t.lower_bound, t.upper_bound, self._env)
                     else:
                         result[o] = up.model.Variable(o, t, self._env)
             else:
-                # Inline (number lo hi) — bounds may be integer literals or ?param references.
+                # Inline (number lo hi): bounds may be integer literals or ?param references.
                 if type_tok[0].value != "number":
                     raise SyntaxError(f"Unsupported inline quantifier type: ({type_tok[0].value} ...)")
                 def _bound(s):
-                    return act.parameter(s[1:]) if s.startswith("?") else int(s)
+                    if s.startswith("?"):
+                        if act is None:
+                            raise SyntaxError(
+                                f"Parameter-dependent bound '{s}' in a quantifier "
+                                "type is only allowed inside action definitions"
+                            )
+                        return act.parameter(s[1:])
+                    return int(s)
                 lo = _bound(type_tok[1].value)
                 hi = _bound(type_tok[2].value)
                 for o in var_names:
@@ -545,7 +560,7 @@ class UPPDDLReader:
                         solved.append(base_exp)
                     else:
                         # Array read: chain one ArrayRead per index
-                        # (read (board ?a) ?i ?j) → ArrayRead(ArrayRead(board(a), i), j)
+                        # (read (board ?a) ?i ?j) -> ArrayRead(ArrayRead(board(a), i), j)
                         result = base_exp
                         for idx in args[1:]:
                             if not result.type.is_array_type():
@@ -606,7 +621,6 @@ class UPPDDLReader:
                     elif exp[0].value in ["exists", "forall"]:  # quantifier operators
                         new_vars = self._parse_quantifier_vars(exp[1], act, types_map)
                         # new_vars are the variables defined by the quantifier currently being solved
-                        # all_vars are the variables defined by all the quantifiers around this expression
                         stack.append((new_vars, exp, True))
                         all_vars = var.copy()
                         all_vars.update(new_vars)
@@ -1559,7 +1573,7 @@ class UPPDDLReader:
 
         # extract all type declarations into a dictionary
         type_declarations: Dict[str, typing.Optional[str]] = {}
-        compound_declarations: list = []  # (name, constructor
+        compound_declarations: list = []  # (name, constructor) pairs
 
         for type_line in domain_res.get("types", []):
             if len(type_line) <= 1:

@@ -14,10 +14,10 @@ Usage:
       --problem docs/extensions/domains/15-puzzle/handcrafted/korf1.pddl \\
       --compilation None --solver fast-downward
 
-  # Python problem module:
+  # Python problem module (--instance picks a line from that domain's instances.txt):
   python3 -m docs.extensions.solve --format python \\
       --module docs.extensions.domains.15-puzzle.15Puzzle \\
-      --compilation uti --solver fast-downward
+      --instance korf1 --compilation uti --solver fast-downward
 
   # Compare PDDL-XTS vs Python translations:
   python3 -m docs.extensions.solve --compare \\
@@ -30,6 +30,7 @@ Usage:
 import argparse
 import difflib
 import importlib
+import inspect
 import re
 import sys
 from unittest.mock import patch
@@ -74,6 +75,12 @@ def _build_parser() -> argparse.ArgumentParser:
         '--module',
         help='Dotted module path (e.g. docs.extensions.domains.15-puzzle.15Puzzle).',
     )
+    py.add_argument(
+        '--instance',
+        help='Instance passed to the module\'s get_problem() — a name from that '
+             'domain\'s instances.txt, or a size for the generated domains '
+             '(dump-trucks, storytellers). Default: the domain\'s own default.',
+    )
 
     return p
 
@@ -90,35 +97,90 @@ def _load_pddl(domain_path: str, problem_path: str, reader_kind: str):
     return reader.parse_problem(domain_path, problem_path)
 
 
-def _load_python(module_path: str):
-    """Import a domain module and capture its Problem via compile_and_solve interception."""
+def _call_get_problem(get_problem, instance):
+    """Call a domain module's get_problem(), passing --instance positionally.
+
+    Domains disagree on the first parameter: most take an instance name from
+    instances.txt (get_problem(instance_name=None)), but dump-trucks and
+    storytellers take a size (get_problem(n_packages=10)). The default's type
+    tells us which, so a numeric --instance reaches those as an int.
+    """
+    if instance is None:
+        return get_problem()
+
+    params = list(inspect.signature(get_problem).parameters.values())
+    if not params:
+        raise RuntimeError(
+            f"get_problem() takes no arguments, so --instance {instance!r} cannot be applied."
+        )
+    if isinstance(params[0].default, int) and not isinstance(params[0].default, bool):
+        try:
+            instance = int(instance)
+        except ValueError:
+            raise RuntimeError(
+                f"This domain's get_problem({params[0].name}=...) expects a number, "
+                f"got --instance {instance!r}."
+            )
+    return get_problem(instance)
+
+
+def _load_python(module_path: str, instance=None, compilation=None, solver=None):
+    """Import a domain module and return its Problem.
+
+    Current convention: the module exposes get_problem(<instance>) and guards its
+    own solve behind `if __name__ == "__main__"`, so importing it is side-effect
+    free. Legacy convention (labyrinth_v2): the module builds the problem at
+    import time and calls compile_and_solve() itself — for those we patch that
+    call to capture the Problem instead of solving it.
+    """
     captured = {}
 
     def _intercept(problem, *args, **kwargs):
         captured['problem'] = problem
 
+    # Legacy modules run argparse at import and assert on the pipeline name, so
+    # hand them the values the user actually asked for.
     saved_argv = sys.argv[:]
-    sys.argv = [sys.argv[0], '--compilation', 'uti', '--solving', 'fast-downward']
+    sys.argv = [sys.argv[0]]
+    if compilation:
+        sys.argv += ['--compilation', compilation]
+    if solver:
+        sys.argv += ['--solving', solver]
 
     try:
         sys.modules.pop(module_path, None)
         with patch('docs.extensions.domains.compilation_solving.compile_and_solve', _intercept):
-            importlib.import_module(module_path)
+            module = importlib.import_module(module_path)
     finally:
         sys.argv = saved_argv
 
+    get_problem = getattr(module, 'get_problem', None)
+    if get_problem is not None:
+        return _call_get_problem(get_problem, instance)
+
     if 'problem' not in captured:
         raise RuntimeError(
-            f"Module '{module_path}' did not call compilation_solving.compile_and_solve(). "
-            "Ensure it follows the convention of calling compile_and_solve(problem, ...)."
+            f"Module '{module_path}' exposes no get_problem() and never called "
+            "compilation_solving.compile_and_solve(). Add a get_problem(instance_name=None) "
+            "that builds and returns the Problem."
         )
+    if instance is not None:
+        print(f"  Warning: '{module_path}' has no get_problem(); ignoring --instance {instance!r}.")
     return captured['problem']
 
 
 # ── Comparison helpers ───────────────────────────────────────────────────────
 
-# Sections whose entries are one-per-line and safe to sort for canonical comparison.
-_SORTABLE_SECTIONS = {'initial values', 'goals', 'types', 'objects'}
+# Sections whose entries are one-per-line and order-independent, so sorting them
+# yields a canonical form. Preconditions are a conjunction and an action's effects
+# are applied simultaneously, so neither carries meaning in its ordering — but the
+# compilers emit them in whatever order they walked the source, which is what makes
+# a PDDL-XTS build differ textually from the equivalent Python one. 'actions' is
+# deliberately absent: its entries are multi-line blocks that sorting would shred.
+_SORTABLE_SECTIONS = {
+    'initial values', 'goals', 'types', 'objects',
+    'fluents', 'initial fluents default', 'preconditions', 'effects',
+}
 
 
 def _normalize(problem_str: str) -> str:
@@ -181,25 +243,13 @@ def _normalize(problem_str: str) -> str:
     return '\n'.join(out)
 
 
-def _section_stats(problem_str: str) -> dict:
-    """Extract coarse statistics from a UP problem string for the summary table."""
-    stats = {}
-    for label, pattern in [
-        ('actions',        r'Number of actions:\s*(\d+)'),
-        ('lines',          r'Lines:\s*(\d+)'),
-        ('characters',     r'Characters:\s*(\d+)'),
-    ]:
-        m = re.search(pattern, problem_str)
-        stats[label] = int(m.group(1)) if m else '?'
-    return stats
-
-
 def _compare(
     domain_path: str,
     problem_path: str,
     reader_kind: str,
     module_path: str,
     compilation: str,
+    instance=None,
 ) -> bool:
     """Compile both sources and diff them. Returns True if identical."""
     import io, contextlib
@@ -210,7 +260,7 @@ def _compare(
     print(f"  {prob_pddl.name}  |  {len(prob_pddl.actions)} actions\n")
 
     print("Loading Python problem...")
-    prob_py = _load_python(module_path)
+    prob_py = _load_python(module_path, instance, compilation)
     print(f"  {prob_py.name}  |  {len(prob_py.actions)} actions\n")
 
     # ── Compile (suppress noisy output) ─────────────────────────────────────
@@ -222,8 +272,6 @@ def _compare(
 
     pddl_str = str(compiled_pddl)
     py_str   = str(compiled_py)
-
-    stats_pddl = _section_stats(buf.getvalue().split('Pipeline: uti')[1] if 'Pipeline: uti' in buf.getvalue() else buf.getvalue())
 
     # ── Summary table ────────────────────────────────────────────────────────
     w = 42
@@ -276,7 +324,8 @@ def main():
                    if not v]
         if missing:
             parser.error(f'--compare requires: {", ".join(missing)}')
-        _compare(args.domain, args.problem, args.reader, args.module, args.compilation)
+        _compare(args.domain, args.problem, args.reader, args.module,
+                 args.compilation, args.instance)
         return
 
     # ── Solve mode ──────────────────────────────────────────────────────────
@@ -293,7 +342,7 @@ def main():
     if args.format == 'pddl':
         problem = _load_pddl(args.domain, args.problem, args.reader)
     else:
-        problem = _load_python(args.module)
+        problem = _load_python(args.module, args.instance, args.compilation, args.solver)
     print(f"  Problem: {problem.name}  |  Actions: {len(problem.actions)}")
 
     compilation_solving.compile_and_solve(problem, args.solver, args.compilation)

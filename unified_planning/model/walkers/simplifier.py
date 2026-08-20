@@ -418,9 +418,9 @@ class Simplifier(walkers.dag.DagWalker):
     def walk_set_union(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
         if args[1] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[0])
+            return args[0]
         elif args[0] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[1])
+            return args[1]
 
         # implementar simplificador!
         return self.manager.SetUnion(*args)

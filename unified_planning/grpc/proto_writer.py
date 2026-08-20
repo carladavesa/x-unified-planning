@@ -81,12 +81,10 @@ def map_operator(op: int) -> str:
         return "up:sometime_after"
     elif op == OperatorKind.SOMETIME_BEFORE:
         return "up:sometime_before"
-    # --- Extension: array operators ---
     elif op == OperatorKind.ARRAY_READ:
         return "up:array_read"
     elif op == OperatorKind.ARRAY_WRITE:
         return "up:array_write"
-    # --- Extension: set operators ---
     elif op == OperatorKind.SET_MEMBER:
         return "up:set_member"
     elif op == OperatorKind.SET_SUBSETEQ:
@@ -160,6 +158,73 @@ def array_expression(elements: list) -> proto.Expression:
     )
 
 
+def set_expression(elements: list) -> proto.Expression:
+    """Serialize a set constant as FUNCTION_APPLICATION("up:set_constant", v0, v1, ...)."""
+    func_sym = proto.Expression(
+        atom=proto.Atom(symbol="up:set_constant"),
+        list=[],
+        kind=proto.ExpressionKind.Value("FUNCTION_SYMBOL"),
+        type="up:operator",
+    )
+    return proto.Expression(
+        list=[func_sym] + list(elements),
+        kind=proto.ExpressionKind.Value("FUNCTION_APPLICATION"),
+        type="up:set",
+    )
+
+
+def range_var_expression(rv: "model.range_variable.RangeVariable") -> proto.Expression:
+    """Encode a RangeVariable as FUNCTION_APPLICATION "range_var(var, lo, hi)".
+
+    The three arguments are:
+      [0] VARIABLE node carrying the variable name and its conservative type
+          (integer[lo_type, hi_type] derived from the parameter's declared bounds)
+      [1] lo bound — CONSTANT int if static, PARAMETER reference if dynamic
+      [2] hi bound — CONSTANT int if static, PARAMETER reference if dynamic
+
+    The C++ side (action_instantiator / ForallGrounderPass) detects the
+    "range_var" head, substitutes any PARAMETER bounds with the concrete
+    action-parameter value, then expands the forall for each integer in [lo, hi].
+    """
+    conservative_type = proto_type(rv.type)
+
+    var_expr = proto.Expression(
+        atom=proto.Atom(symbol=rv.name),
+        list=[],
+        kind=proto.ExpressionKind.Value("VARIABLE"),
+        type=conservative_type,
+    )
+
+    def _bound_expr(bound) -> proto.Expression:
+        if isinstance(bound, int):
+            return proto.Expression(
+                atom=proto.Atom(int=bound),
+                list=[],
+                kind=proto.ExpressionKind.Value("CONSTANT"),
+                type="up:integer",
+            )
+        # Parameter reference — encode as PARAMETER with name=bound (string)
+        return proto.Expression(
+            atom=proto.Atom(symbol=bound),
+            list=[],
+            kind=proto.ExpressionKind.Value("PARAMETER"),
+            type=conservative_type,
+        )
+
+    func_sym = proto.Expression(
+        atom=proto.Atom(symbol="range_var"),
+        list=[],
+        kind=proto.ExpressionKind.Value("FUNCTION_SYMBOL"),
+        type="up:integer",
+    )
+
+    return proto.Expression(
+        list=[func_sym, var_expr, _bound_expr(rv.initial), _bound_expr(rv.last)],
+        kind=proto.ExpressionKind.Value("FUNCTION_APPLICATION"),
+        type=conservative_type,
+    )
+
+
 def num_expression(value: Union[int, fractions.Fraction]) -> proto.Expression:
     if isinstance(value, int):
         return int_expression(value)
@@ -217,72 +282,12 @@ class FNode2Protobuf(walkers.DagWalker):
         self, expression: model.FNode, args: List[proto.Expression]
     ) -> proto.Expression:
         # args contains the converted payload elements, courtesy of _get_children.
-        sub_list = [
-            proto.Expression(
-                atom=proto.Atom(symbol="up:set_constant"),
-                list=[],
-                kind=proto.ExpressionKind.Value("FUNCTION_SYMBOL"),
-                type="up:operator",
-            )
-        ] + list(args)
-        return proto.Expression(
-            list=sub_list,
-            kind=proto.ExpressionKind.Value("FUNCTION_APPLICATION"),
-            type="up:set",
-        )
+        return set_expression(args)
 
     def walk_range_variable_exp(
         self, expression: model.FNode, args: List[proto.Expression]
     ) -> proto.Expression:
-        # Encode a RangeVariable as FUNCTION_APPLICATION "range_var(var, lo, hi)".
-        #
-        # The three arguments are:
-        #   [0] VARIABLE node carrying the variable name and its conservative type
-        #       (integer[lo_type, hi_type] derived from the parameter's declared bounds)
-        #   [1] lo bound — CONSTANT int if static, PARAMETER reference if dynamic
-        #   [2] hi bound — CONSTANT int if static, PARAMETER reference if dynamic
-        #
-        # The C++ action_instantiator detects this "range_var" head, substitutes
-        # any PARAMETER bounds with the concrete action-parameter value, then
-        # expands the forall effect for each integer in [lo, hi].
-        rv = expression.range_variable()
-        conservative_type = proto_type(rv.type)
-
-        var_expr = proto.Expression(
-            atom=proto.Atom(symbol=rv.name),
-            list=[],
-            kind=proto.ExpressionKind.Value("VARIABLE"),
-            type=conservative_type,
-        )
-
-        def _bound_expr(bound) -> proto.Expression:
-            if isinstance(bound, int):
-                return proto.Expression(
-                    atom=proto.Atom(int=bound),
-                    list=[],
-                    kind=proto.ExpressionKind.Value("CONSTANT"),
-                    type="up:integer",
-                )
-            # Parameter reference — encode as PARAMETER with name=bound (string)
-            return proto.Expression(
-                atom=proto.Atom(symbol=bound),
-                list=[],
-                kind=proto.ExpressionKind.Value("PARAMETER"),
-                type=conservative_type,
-            )
-
-        func_sym = proto.Expression(
-            atom=proto.Atom(symbol="range_var"),
-            list=[],
-            kind=proto.ExpressionKind.Value("FUNCTION_SYMBOL"),
-            type="up:integer",
-        )
-
-        return proto.Expression(
-            list=[func_sym, var_expr, _bound_expr(rv.initial), _bound_expr(rv.last)],
-            kind=proto.ExpressionKind.Value("FUNCTION_APPLICATION"),
-            type=conservative_type,
-        )
+        return range_var_expression(expression.range_variable())
 
     def walk_param_exp(
         self, expression: model.FNode, args: List[proto.Expression]
@@ -1002,44 +1007,7 @@ class ProtobufWriter(Converter):
     def _convert_range_variable(
         self, rv: model.range_variable.RangeVariable
     ) -> proto.Expression:
-        # RangeVariable (bounded-int forall variable) — encode as FUNCTION_APPLICATION
-        # "range_var(var, lo, hi)" so the C++ ForallGrounderPass can expand it.
-        conservative_type = proto_type(rv.type)
-
-        var_expr = proto.Expression(
-            atom=proto.Atom(symbol=rv.name),
-            list=[],
-            kind=proto.ExpressionKind.Value("VARIABLE"),
-            type=conservative_type,
-        )
-
-        def _bound_expr(bound) -> proto.Expression:
-            if isinstance(bound, int):
-                return proto.Expression(
-                    atom=proto.Atom(int=bound),
-                    list=[],
-                    kind=proto.ExpressionKind.Value("CONSTANT"),
-                    type="up:integer",
-                )
-            return proto.Expression(
-                atom=proto.Atom(symbol=bound),
-                list=[],
-                kind=proto.ExpressionKind.Value("PARAMETER"),
-                type=conservative_type,
-            )
-
-        func_sym = proto.Expression(
-            atom=proto.Atom(symbol="range_var"),
-            list=[],
-            kind=proto.ExpressionKind.Value("FUNCTION_SYMBOL"),
-            type="up:integer",
-        )
-
-        return proto.Expression(
-            list=[func_sym, var_expr, _bound_expr(rv.initial), _bound_expr(rv.last)],
-            kind=proto.ExpressionKind.Value("FUNCTION_APPLICATION"),
-            type=conservative_type,
-        )
+        return range_var_expression(rv)
 
     @handles(unified_planning.plans.ActionInstance)
     def _convert_action_instance(

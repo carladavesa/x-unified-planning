@@ -76,6 +76,7 @@ class Effect:
         forall: Iterable[Union["up.model.variable.Variable", "up.model.range_variable.RangeVariable"]] = tuple(),
     ):
         fve = fluent.environment.free_vars_extractor
+        # ARRAY_WRITE targets legitimately wrap a fluent (the array being written).
         if not fluent.is_array_write():
             fluents_in_fluent = set(fve.get(fluent))
             fluents_in_fluent.remove(fluent)

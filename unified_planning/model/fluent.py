@@ -122,6 +122,7 @@ class Fluent:
         return res ^ hash(self._name)
 
     def __getitem__(self, index: Union["up.model.parameter.Parameter", "up.model.fnode.FNode", "up.model.range_variable.RangeVariable", int]) -> "up.model.fnode.FNode":
+        # Entry point for `fluent[i]`: promote the Fluent to a FLUENT_EXP first, then read.
         assert self.type.is_array_type(), "The Fluent has no array type"
         em = self._env.expression_manager
         if type(index) is int:

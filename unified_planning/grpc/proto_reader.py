@@ -52,7 +52,7 @@ def convert_type_str(s: str, problem: Problem) -> model.types.Type:
         elem_type = convert_type_str(elem_str, problem)
         return problem.environment.type_manager.ArrayType(size, elem_type)
     elif s.startswith("up:set{"):
-        # Format: "up:set{<elem_type_str>}"  or "up:set{}" for empty/untyped
+        # Format: "up:set{<elem_type_str>}"
         inner = s[len("up:set{"):-1]          # strip prefix and trailing "}"
         elem_type = convert_type_str(inner, problem) if inner else None
         return problem.environment.type_manager.SetType(elem_type)
@@ -122,12 +122,10 @@ def op_to_node_type(op: str) -> OperatorKind:
         return OperatorKind.SOMETIME_BEFORE
     elif op == "up:present":
         return OperatorKind.PRESENT_EXP
-    # --- Extension: array operators ---
     elif op == "up:array_read":
         return OperatorKind.ARRAY_READ
     elif op == "up:array_write":
         return OperatorKind.ARRAY_WRITE
-    # --- Extension: set operators (routed through walk_operator) ---
     elif op == "up:set_member":
         return OperatorKind.SET_MEMBER
     elif op == "up:set_subseteq":
@@ -217,6 +215,19 @@ class ProtobufReader(Converter):
                 )
             else:
                 raise UPException(f"Unable to form fluent expression {msg}")
+        elif (
+            msg.kind == proto.ExpressionKind.Value("FUNCTION_APPLICATION")
+            and len(msg.list) > 0
+            and msg.list[0].atom.symbol == "up:array_constant"
+        ):
+            # ARRAY_CONSTANT: elements are encoded as FUNCTION_APPLICATION args.
+            # Reconstruct via create_node so elements go into payload (not args).
+            elements = tuple(self.convert(m, problem) for m in msg.list[1:])
+            return problem.environment.expression_manager.create_node(
+                node_type=OperatorKind.ARRAY_CONSTANT,
+                args=tuple(),
+                payload=elements,
+            )
         elif (
             msg.kind == proto.ExpressionKind.Value("FUNCTION_APPLICATION")
             and len(msg.list) > 0
@@ -390,10 +401,13 @@ class ProtobufReader(Converter):
             problem = Problem(name=problem_name, environment=environment)
 
         for t in msg.types:
-            # Composite types (array/set) are reconstructed on-the-fly by
-            # convert_type_str; they are not user-defined types and must not
-            # be registered via _add_user_type (which asserts is_user_type()).
-            if t.type_name.startswith("up:array[") or t.type_name.startswith("up:set{"):
+            # Builtin types (bool/int/real/time and composite array/set) carry
+            # the "up:" prefix and are reconstructed on-the-fly by
+            # convert_type_str; they are not user-defined types and must not be
+            # registered via _add_user_type (which asserts is_user_type()).
+            # This includes bounded-int declarations such as "up:integer[3, 6]"
+            # that the writer emits as extra TypeDeclarations for the C++ side.
+            if t.type_name.startswith("up:"):
                 continue
             problem._add_user_type(self.convert(t, problem))
         for obj in msg.objects:
@@ -460,7 +474,9 @@ class ProtobufReader(Converter):
             problem.add_variable(var.name, var.type)
 
         for t in msg.types:
-            if t.type_name.startswith("up:array[") or t.type_name.startswith("up:set{"):
+            # See _convert_problem: skip all builtin ("up:"-prefixed) types,
+            # including bounded ints emitted as extra TypeDeclarations.
+            if t.type_name.startswith("up:"):
                 continue
             problem._add_user_type(self.convert(t, problem))
         for obj in msg.objects:

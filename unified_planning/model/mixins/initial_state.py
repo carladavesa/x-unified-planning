@@ -31,11 +31,10 @@ def _check_container_literal_ranges(
     container_type: "up.model.types.Type",
     fluent_name: str,
 ) -> None:
-    """[XTS check #9] Recursively verify every literal element in an
+    """
+    Recursively verify every literal element in an
     ARRAY_CONSTANT or SET_CONSTANT is within the declared element type bounds.
-
-    Only bounded-int element types are range-checked; object/bool element
-    types are validated by category elsewhere and are skipped here.
+    Only bounded-int element types are range-checked
     """
     if value_fnode.is_array_constant():
         elem_type = container_type.elements_type

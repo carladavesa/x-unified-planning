@@ -16,10 +16,7 @@
         :precondition ()
         :effect (and
             (forall (?i - (number 0 ?f))
-                (write
-                    (pancake_stack) (?i)
-                    (read (pancake_stack) (- ?f ?i))
-                )
+                (write (pancake_stack) (?i) (read (pancake_stack) (- ?f ?i)))
             )
         )
     )

@@ -149,6 +149,7 @@
         
         ;Define the cars 
         (SMALL red)
+        (CAR red)
         (QUAD vehicle1)
         (CAR vehicle2)
         (QUAD vehicle3)
@@ -225,8 +226,8 @@
     )
     ; Setting the goal,such that the red car will be placed in the rightmost edge
     (:goal (and
-        (containsVehicle loc_3_6 red)
-        (containsVehicle loc_3_7 red)
+        (containsVehicle loc3_6 red)
+        (containsVehicle loc3_7 red)
     ))
     (:metric minimize (total-cost))
 )

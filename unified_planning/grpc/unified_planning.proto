@@ -609,7 +609,6 @@ message Problem {
 // Features of the problem.
 // Features are essential in that not supporting a feature `X` should allow disregarding any field tagged with `features: [X]`.
 enum Feature {
-    option allow_alias = true;
     // PROBLEM_CLASS
     ACTION_BASED = 0;
     HIERARCHICAL = 26;
@@ -641,7 +640,7 @@ enum Feature {
     EQUALITIES = 11;
     EXISTENTIAL_CONDITIONS = 12;
     UNIVERSAL_CONDITIONS = 13;
-    COUNTING = 69;
+    COUNTING = 75;
     // EFFECTS_KIND
     CONDITIONAL_EFFECTS = 14;
     INCREASE_EFFECTS = 15;
@@ -661,15 +660,7 @@ enum Feature {
     OBJECT_FLUENTS = 20;
     INT_FLUENTS = 60;
     REAL_FLUENTS = 61;
-    // ARRAY_FLUENTS = 68; UNDEFINED_INITIAL_NUMERIC is an alias for the same wire value
-    // as defined in the UP fork proto (allow_alias = true above).
-    ARRAY_FLUENTS = 68;
-    UNDEFINED_INITIAL_NUMERIC = 68;
-    // COUNTING = 69; UNDEFINED_INITIAL_SYMBOLIC is an alias for the same wire value.
-    COUNTING = 69;
-    UNDEFINED_INITIAL_SYMBOLIC = 69;
-    OPTIONAL_ACTIVITIES = 70;
-    SCOPED_CONSTRAINTS = 71;
+    ARRAY_FLUENTS = 74;
     SET_FLUENTS = 72;
     // CONDITIONS_KIND (set)
     MEMBERING = 73;
