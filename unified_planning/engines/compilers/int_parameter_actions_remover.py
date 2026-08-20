@@ -387,7 +387,8 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
           - partial access, fewer indices than dimensions: checked on the indexed prefix
             Pre:  (read board(?a) r)
             Post: (read board(?a) 1)
-          - index not a concrete integer, chain not rooted in a fluent, or base fluent with no recorded domain
+          - index not a concrete integer, chain not rooted in a fluent, or base fluent
+            with no recorded domain
             Pre:  (read board(?a) (blank_row))
             Post: None
           - concrete indices out of bounds or on an undefined position
@@ -470,7 +471,7 @@ class IntParameterActionsRemover(engines.engine.Engine, CompilerMixin):
             int_params = {}
         if instantiations is None:
             instantiations = ()
-        cache_key = (id(node), instantiations)
+        cache_key = (id(node), instantiations, tuple(sorted(int_params.items())))
         if cache_key in self._expression_cache:
             if self._expression_cache[cache_key] is None:
                 return None

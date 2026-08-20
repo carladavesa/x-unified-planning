@@ -485,7 +485,7 @@ class UPPDDLReader:
                     else:
                         result[o] = up.model.Variable(o, t, self._env)
             else:
-                # Inline (number lo hi) — bounds may be integer literals or ?param references.
+                # Inline (number lo hi): bounds may be integer literals or ?param references.
                 if type_tok[0].value != "number":
                     raise SyntaxError(f"Unsupported inline quantifier type: ({type_tok[0].value} ...)")
                 def _bound(s):
@@ -560,7 +560,7 @@ class UPPDDLReader:
                         solved.append(base_exp)
                     else:
                         # Array read: chain one ArrayRead per index
-                        # (read (board ?a) ?i ?j) → ArrayRead(ArrayRead(board(a), i), j)
+                        # (read (board ?a) ?i ?j) -> ArrayRead(ArrayRead(board(a), i), j)
                         result = base_exp
                         for idx in args[1:]:
                             if not result.type.is_array_type():

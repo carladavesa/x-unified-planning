@@ -3,9 +3,9 @@
     (:requirements :arrays)
 
     (:types
-        size - (number 0 3)
-        range - (number 0 15)
-        puzzle15 - (array 4 4 range)
+        size - (number 0 3)             ;; rang [0..3]
+        range - (number 0 15)           ;; rang [0..15]
+        puzzle15 - (array 4 4 range)    ;; array[4, array[4, rang[0..15]]]
     )
 
     (:functions
