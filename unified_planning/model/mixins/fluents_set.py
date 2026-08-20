@@ -14,7 +14,6 @@
 #
 
 from warnings import warn
-from fractions import Fraction
 import unified_planning as up
 from unified_planning.environment import get_environment
 from unified_planning.model.expression import ConstantExpression
@@ -147,15 +146,6 @@ class FluentsSetMixin:
             else:
                 warn(msg)
         self._fluents.append(fluent)
-        # [XTS] Bounded-int and bounded-real types are distinct TypeManager instances
-        # from IntType()/RealType(), so they don't inherit the base default of 0.
-        # Auto-register 0 when the type is first seen, matching the unbounded-int behaviour.
-        if default_initial_value is None and fluent.type not in self._initial_defaults:
-            em = self._env.expression_manager
-            if fluent.type.is_int_type():
-                self._initial_defaults[fluent.type] = em.Int(0)
-            elif fluent.type.is_real_type():
-                self._initial_defaults[fluent.type] = em.Real(Fraction(0))
         if not default_initial_value is None:
             assert not (type(default_initial_value) == list), \
                 f"The default initial value must match the type of the deepest elements in the structure."

@@ -3,7 +3,7 @@ from docs.extensions.domains import compilation_solving
 from docs.extensions.domains.instance_loading import resolve_instance
 import argparse
 
-# Run: python -m docs.extensions.domains.pancake-sorting.PancakeSorting --compilation int --solving fast-downward
+# Run: python -m docs.extensions.domains.pancake-sorting.PancakeSorting --compilation uti --solving fast-downward
 
 
 def get_problem(instance_name=None):
