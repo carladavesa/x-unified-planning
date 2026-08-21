@@ -201,15 +201,27 @@ class CountToIntRemover(engines.engine.Engine, CompilerMixin):
             fluents.extend(self._find_affected_fluents(arg))
         return fluents
 
+    def _get_params_in_expression(self, expression: FNode) -> List:
+        """Return all Parameter objects that appear anywhere in the expression tree."""
+        params = []
+        if expression.is_parameter_exp():
+            params.append(expression.parameter())
+        for arg in expression.args:
+            params.extend(self._get_params_in_expression(arg))
+        # Deduplicate preserving order
+        seen = set()
+        result = []
+        for p in params:
+            if p.name not in seen:
+                seen.add(p.name)
+                result.append(p)
+        return result
+
     # ==================== COUNT EXPRESSION REPLACEMENT ====================
 
     def _check_argument(self, expression: FNode):
         """Validate that a count term does not contain unresolved parameters/variables."""
-        if expression.is_parameter_exp():
-            raise UPProblemDefinitionError(
-                f"The Count expression contains a Parameter and cannot be evaluated!"
-            )
-        elif expression.is_variable_exp():
+        if expression.is_variable_exp():
             raise UPProblemDefinitionError(
                 f"The Count expression contains a Variable and cannot be evaluated!\n"
                 f"You could run the Quantifiers Remover Compiler a priori."
@@ -238,7 +250,9 @@ class CountToIntRemover(engines.engine.Engine, CompilerMixin):
             return expression
 
         if expression.is_count():
-            for arg in expression.args:
+            print(f"[DEBUG count] arg count: {len(expression.args)}")
+            for i, arg in enumerate(expression.args):
+                print(f"[DEBUG count]   arg[{i}]: {arg}")
                 self._check_argument(arg)
             sum_args = []
             for arg in expression.args:
@@ -263,16 +277,19 @@ class CountToIntRemover(engines.engine.Engine, CompilerMixin):
                     # Create and initialize a new helper fluent for this term
                     fluent_name = f"count_{len(self._count_registry)}"
                     self._count_registry[fluent_name] = arg
-                    count_parameters = [
-                        Parameter(str(a), a.type)
-                        for a in arg.args
-                        if a.is_parameter_exp()
-                    ]
+                    count_parameters = self._get_params_in_expression(arg)
                     count_variables = [
                         Variable(str(a), a.type)
                         for a in arg.args
                         if a.is_variable_exp()
                     ]
+                    def _collect_vars(e):
+                        if e.is_variable_exp():
+                            count_variables.append(e.variable())
+                        for a in e.args:
+                            _collect_vars(a)
+                    _collect_vars(arg)
+
                     # Evaluate initial value
                     if not count_parameters and not count_variables:
                         # Ground case: direct initialization from initial-state evaluation
@@ -292,35 +309,43 @@ class CountToIntRemover(engines.engine.Engine, CompilerMixin):
                             fluent_name, IntType(0, 1), count_parameters
                         )
                         problem.add_fluent(new_fluent)
-                        instantiations = self._get_param_combinations(
-                            problem, count_parameters
-                        )
-                        for i in instantiations:
-                            this_params = []
-                            param_idx = 0
-                            for old_p in arg.args:
-                                if old_p.is_parameter_exp():
-                                    this_params.append(i[param_idx])
-                                    param_idx += 1
-                                else:
-                                    this_params.append(old_p)
-                            initial_eval = self._transform_expression(
-                                problem, arg.fluent()(*this_params)
-                            )
-                            initial_value = Int(1) if initial_eval.is_true() else Int(0)
+
+                        # Substitute parameters with concrete objects for each combination
+                        from unified_planning.model.walkers import Substituter
+                        subst = Substituter(problem.environment)
+                        em = problem.environment.expression_manager
+
+                        instantiations = self._get_param_combinations(problem, count_parameters)
+                        for values in instantiations:
+                            # Build substitution map: parameter to object
+                            subs_map = {
+                                em.ParameterExp(p): em.ObjectExp(v)
+                                for p, v in zip(count_parameters, values)
+                            }
+                            instantiated_arg = subst.substitute(arg, subs_map)
+                            initial_eval = self._transform_expression(problem, instantiated_arg)
+                            if initial_eval.is_bool_constant():
+                                initial_value = Int(1) if initial_eval.is_true() else Int(0)
+                            else:
+                                # Fallback: default to 0
+                                initial_value = Int(0)
                             problem.set_initial_value(
-                                problem.fluent(fluent_name)(*i), initial_value
+                                problem.fluent(fluent_name)(*[em.ObjectExp(v) for v in values]),
+                                initial_value
                             )
 
-                        sum_args.append(problem.fluent(fluent_name)(*count_parameters))
+                        sum_args.append(problem.fluent(fluent_name)(*[em.ParameterExp(p) for p in count_parameters]))
 
             # Return the arithmetic replacement for the original count expression
             if not sum_args:
-                return Int(0)
+                result = Int(0)
             elif len(sum_args) == 1:
-                return sum_args[0]
+                result = sum_args[0]
             else:
-                return em.Plus(*sum_args)
+                result = em.Plus(*sum_args)
+
+            print(f"[DEBUG count] result: {result}")
+            return result
 
         new_args = [
             self._replace_count_with_fluents(problem, arg) for arg in expression.args
