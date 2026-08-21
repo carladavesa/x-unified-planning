@@ -48,7 +48,7 @@ from unified_planning.shortcuts import (
     Iff,
     Equals,
     FALSE,
-    IntType,
+    IntType, ObjectExp,
 )
 
 
@@ -62,16 +62,19 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
     The compiler also rewrites set predicates/operations and introduces cardinality helper fluents when needed.
     """
 
-    def __init__(self):
+    def __init__(self, cardinality_encoding: str = 'integer'):
+        assert cardinality_encoding in ('integer', 'count'), \
+            f"cardinality_encoding must be 'integer' or 'count', got {cardinality_encoding}"
         engines.engine.Engine.__init__(self)
         CompilerMixin.__init__(self, CompilationKind.SET_FLUENTS_REMOVING)
         self._fluent_mapping = {}
         # Maps original set fluent names to their encoded Boolean fluents
         self._cardinality_registry: Dict[str, FNode] = {}
+        self.cardinality_encoding = cardinality_encoding
 
     @property
     def name(self):
-        return "srm"
+        return "sfrm"
 
     @staticmethod
     def supported_kind() -> ProblemKind:
@@ -329,6 +332,62 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 and_expr.append(Not(new_fluent(elem, *fluent.args)).simplify())
         return And(*and_expr)
 
+    def _transform_cardinality_as_count(self, new_problem: Problem, set_expr: FNode, elements: list) -> FNode:
+        """Transform |S| into Count([membership(o) for each element o]).
+
+        This encoding avoids introducing auxiliary integer fluents and conditional
+        effects to maintain their values. The resulting Count expression can be
+        handled by COUNT_TO_BOOL_REMOVING, COUNT_TO_INT_REMOVING, or the general
+        integer remover with native Count support.
+        """
+        em = new_problem.environment.expression_manager
+        membership_exprs = [
+            self._get_element_membership_expr(set_expr, ObjectExp(elem), new_problem)
+            for elem in elements
+        ]
+        return em.Count(*membership_exprs)
+
+    def _get_element_membership_expr(self, set_expr: FNode, elem_expr: FNode, new_problem: Problem) -> FNode:
+        """Build a Boolean expression asserting that elem is in set_expr.
+
+        Supports: set fluents, unions, intersections, differences.
+        """
+        em = new_problem.environment.expression_manager
+
+        if set_expr.is_fluent_exp():
+            # elem in S: use the encoded membership fluent
+            old_fluent = set_expr.fluent()
+            new_fluent = self._fluent_mapping[old_fluent.name]
+            return new_fluent(elem_expr, *set_expr.args)
+
+        if set_expr.is_set_union():
+            # elem in (A u B): elem in A OR elem in B
+            set1, set2 = set_expr.args
+            return em.Or(
+                self._get_element_membership_expr(set1, elem_expr, new_problem),
+                self._get_element_membership_expr(set2, elem_expr, new_problem)
+            )
+
+        if set_expr.is_set_intersect():
+            # elem in (A & B): elem in A AND elem in B
+            set1, set2 = set_expr.args
+            return em.And(
+                self._get_element_membership_expr(set1, elem_expr, new_problem),
+                self._get_element_membership_expr(set2, elem_expr, new_problem)
+            )
+
+        if set_expr.is_set_difference():
+            # elem in (A \ B): elem in A AND NOT elem in B
+            set1, set2 = set_expr.args
+            return em.And(
+                self._get_element_membership_expr(set1, elem_expr, new_problem),
+                em.Not(self._get_element_membership_expr(set2, elem_expr, new_problem))
+            )
+
+        raise NotImplementedError(
+            f"Cardinality with encoding 'count' does not support set expression: {set_expr}"
+        )
+
     def _transform_cardinality(
         self, old_problem: Problem, new_problem: Problem, node: FNode
     ) -> FNode:
@@ -342,7 +401,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             else set_expr.args[0].type.elements_type
         )
         elements = list(new_problem.objects(elements_type))
-
+        # Count encoding
+        if self.cardinality_encoding == 'count':
+            return self._transform_cardinality_as_count(new_problem, set_expr, elements)
+        # Integer encoding
         if set_expr.is_fluent_exp():
             # Create an integer helper fluent (same parameters as the source fluent)
             old_fluent = set_expr.fluent()
@@ -733,7 +795,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         self, old_problem: Problem, new_problem: Problem, effect: Effect
     ) -> Union[Effect, List[Effect], None]:
         """
-        Transform: result_set := set1 ∪ set2
+        Transform: result_set := set1 u set2
         Into: for each object o: result_set(o) := set1(o) || set2(o)
         """
         new_effects = []
