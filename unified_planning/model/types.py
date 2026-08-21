@@ -86,6 +86,12 @@ class _BoolType(Type):
         """Returns true iff is boolean type."""
         return True
 
+    def __reduce__(self):
+        # BOOL is a singleton compared by identity across the library, so
+        # unpickling (and deep-copying) must return the very same object
+        return (_get_bool_type, ())
+
+
 class _DerivedBoolType(Type):
     """Represents the derived bool type."""
 
@@ -105,6 +111,11 @@ class _TimeType(Type):
     def is_time_type(self) -> bool:
         """Returns true iff is boolean type."""
         return True
+
+    def __reduce__(self):
+        # TIME is a singleton compared by identity across the library, so
+        # unpickling (and deep-copying) must return the very same object
+        return (_get_time_type, ())
 
 
 class _UserType(Type):
@@ -171,12 +182,12 @@ class _IntType(Type):
         self, lower_bound: Optional[int] = None, upper_bound: Optional[int] = None
     ):
         Type.__init__(self)
-        assert lower_bound is None or isinstance(
-            lower_bound, int
-        ), "typing not respected"
-        assert upper_bound is None or isinstance(
-            upper_bound, int
-        ), "typing not respected"
+        assert lower_bound is None or isinstance(lower_bound, int), (
+            "typing not respected"
+        )
+        assert upper_bound is None or isinstance(upper_bound, int), (
+            "typing not respected"
+        )
         self._lower_bound = lower_bound
         self._upper_bound = upper_bound
 
@@ -213,12 +224,12 @@ class _RealType(Type):
         upper_bound: Optional[Fraction] = None,
     ):
         Type.__init__(self)
-        assert lower_bound is None or isinstance(
-            lower_bound, Fraction
-        ), "typing not respected"
-        assert upper_bound is None or isinstance(
-            upper_bound, Fraction
-        ), "typing not respected"
+        assert lower_bound is None or isinstance(lower_bound, Fraction), (
+            "typing not respected"
+        )
+        assert upper_bound is None or isinstance(upper_bound, Fraction), (
+            "typing not respected"
+        )
         self._lower_bound = lower_bound
         self._upper_bound = upper_bound
 
@@ -287,6 +298,14 @@ class _SetType(Type):
     def elements_type(self) -> Type:
         """Returns the type of elements in this set."""
         return self._elements_type
+
+def _get_bool_type() -> "_BoolType":
+    return BOOL
+
+
+def _get_time_type() -> "_TimeType":
+    return TIME
+
 
 BOOL = _BoolType()
 DERIVED_BOOL = _DerivedBoolType()

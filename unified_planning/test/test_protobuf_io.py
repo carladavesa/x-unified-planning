@@ -14,6 +14,8 @@
 # limitations under the License
 
 
+import dataclasses
+from typing import Callable, List, Union
 import unified_planning.grpc.generated.unified_planning_pb2 as proto
 from unified_planning.engines import LogMessage
 from unified_planning.engines.results import LogLevel
@@ -214,11 +216,11 @@ class TestProtobufIO(unittest_TestCase):
         log = LogMessage(LogLevel.ERROR, "test message")
         assert_log(log)
 
-    @skipIfEngineNotAvailable("tamer")
+    @skipIfEngineNotAvailable("tamerlite")
     def test_plan_generation(self):
         problem = self.problems["robot"].problem
 
-        with OneshotPlanner(name="tamer", params={"weight": 0.8}) as planner:
+        with OneshotPlanner(name="tamerlite") as planner:
             self.assertNotEqual(planner, None)
             final_report = planner.solve(problem)
 
@@ -254,20 +256,29 @@ class TestProtobufIO(unittest_TestCase):
                     original_action_instance_up.actual_parameters,
                 )
 
-    @skipIfEngineNotAvailable("tamer")
+    @skipIfEngineNotAvailable("tamerlite")
     def test_validation_result(self):
         problem = self.problems["robot"].problem
 
-        with OneshotPlanner(name="tamer", params={"weight": 0.8}) as planner:
+        with OneshotPlanner(name="tamerlite") as planner:
             self.assertNotEqual(planner, None)
             final_report = planner.solve(problem)
-            with PlanValidator(name="tamer") as validator:
+            with PlanValidator(name="sequential_plan_validator") as validator:
                 validation_result = validator.validate(problem, final_report.plan)
 
                 validation_result_pb = self.pb_writer.convert(validation_result)
                 validation_result_up = self.pb_reader.convert(validation_result_pb)
 
-                self.assertEqual(validation_result, validation_result_up)
+                # the state trace and the calculated interpreted functions are
+                # not part of the protobuf representation
+                self.assertEqual(
+                    dataclasses.replace(
+                        validation_result,
+                        trace=None,
+                        calculated_interpreted_functions=None,
+                    ),
+                    validation_result_up,
+                )
 
     def test_temporal_hierarchical_goal(self):
         problem = self.problems["htn-go-temporal"].problem
@@ -326,6 +337,7 @@ class TestProtobufIO(unittest_TestCase):
         global_end_symbol = "up:global_end"
         int_delay = 5
         frac_delay = Fraction(1, 5)
+        delays: List[Union[int, Fraction]] = [int_delay, frac_delay]
         act = InstantaneousAction("move")
 
         # [ ] Delay
@@ -342,12 +354,18 @@ class TestProtobufIO(unittest_TestCase):
         # [x] Delay
         # [ ] Container
         # StartTiming(5) --> (up:plus (up:start) 5)
-        for timing, symbol in zip(
-            [StartTiming, EndTiming, GlobalStartTiming, GlobalEndTiming],
+        timing_builders: List[Callable[..., Timing]] = [
+            StartTiming,
+            EndTiming,
+            GlobalStartTiming,
+            GlobalEndTiming,
+        ]
+        for timing_builder, symbol in zip(
+            timing_builders,
             [start_symbol, end_symbol, global_start_symbol, global_end_symbol],
         ):
-            for delay in [int_delay, frac_delay]:
-                t_pb = build(timing() + delay)
+            for delay in delays:
+                t_pb = build(timing_builder() + delay)
                 check(t_pb, fun_app_kind, tpe=time_type, length=3)
                 check(t_pb.list[0], fun_sym_kind, symbol=add_symbol)
                 check(t_pb.list[1], fun_app_kind, tpe=time_type, length=1)
@@ -372,12 +390,16 @@ class TestProtobufIO(unittest_TestCase):
         # [x] Delay
         # [x] Container
         # StartTiming(5, move) --> (up:plus (up:start move) 5)
-        for timing, symbol in zip(
-            [StartTiming, EndTiming],
+        contained_timing_builders: List[Callable[..., Timing]] = [
+            StartTiming,
+            EndTiming,
+        ]
+        for timing_builder, symbol in zip(
+            contained_timing_builders,
             [start_symbol, end_symbol],
         ):
-            for delay in [int_delay, frac_delay]:
-                t_pb = build(timing(container=act.name) + delay)
+            for delay in delays:
+                t_pb = build(timing_builder(container=act.name) + delay)
                 check(t_pb, fun_app_kind, tpe=time_type, length=3)
                 check(t_pb.list[0], fun_sym_kind, symbol=add_symbol)
                 check(t_pb.list[1], fun_app_kind, tpe=time_type, length=2)
@@ -451,7 +473,7 @@ class TestProtobufProblems(unittest_TestCase):
             self.assertEqual(plan, plan_up)
             self.assertEqual(hash(plan), hash(plan_up))
 
-    @skipIfEngineNotAvailable("tamer")
+    @skipIfEngineNotAvailable("tamerlite")
     def test_some_plan_generations(self):
         problems = [
             "basic",
@@ -467,7 +489,7 @@ class TestProtobufProblems(unittest_TestCase):
         for name in problems:
             problem = self.problems[name].problem
 
-            with OneshotPlanner(name="tamer") as planner:
+            with OneshotPlanner(name="tamerlite") as planner:
                 self.assertNotEqual(planner, None)
                 final_report = planner.solve(problem)
 

@@ -40,6 +40,7 @@ from unified_planning.engines.mixins.sequential_simulator import (
 )
 from unified_planning.engines.mixins.action_selector import ActionSelectorMixin
 from unified_planning.engines.engine import OperationMode
+from unified_planning.engines.compilers.compilers_pipeline import CompilersPipeline
 from typing import IO, Any, Dict, Tuple, Optional, List, Union, Type, Sequence, cast
 from pathlib import PurePath
 
@@ -55,6 +56,7 @@ DEFAULT_ENGINES = {
     "enhsp-opt": ("up_enhsp.enhsp_planner", "ENHSPOptEngine"),
     "enhsp-any": ("up_enhsp.enhsp_planner", "ENHSPAnytimeEngine"),
     "tamer": ("up_tamer.engine", "EngineImpl"),
+    "tamerlite": ("tamerlite.engine", "TamerLite"),
     "lpg": ("up_lpg.lpg_planner", "LPGEngine"),
     "lpg-anytime": ("up_lpg.lpg_planner", "LPGAnytimeEngine"),
     "lpg-repairer": ("up_lpg.lpg_planner", "LPGPlanRepairer"),
@@ -147,6 +149,10 @@ DEFAULT_ENGINES = {
         "FastDownwardReachabilityGrounder",
     ),
     "up_grounder": ("unified_planning.engines.compilers.grounder", "Grounder"),
+    "up_ks0_compiler": (
+        "unified_planning.engines.compilers.ks0_compiler",
+        "Ks0Compiler",
+    ),
     "up_ma_disjunctive_conditions_remover": (
         "unified_planning.engines.compilers.ma_disjunctive_conditions_remover",
         "MADisjunctiveConditionsRemover",
@@ -162,6 +168,10 @@ DEFAULT_ENGINES = {
     "up_undefined_initial_numeric_remover": (
         "unified_planning.engines.compilers.undefined_initial_numeric_remover",
         "UndefinedInitialNumericRemover",
+    ),
+    "up_timed_to_sequential": (
+        "unified_planning.engines.compilers.timed_to_sequential",
+        "TimedToSequential",
     ),
 }
 
@@ -190,6 +200,7 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "enhsp",
     "enhsp-opt",
     "enhsp-any",
+    "tamerlite",
     "tamer",
     "sequential_plan_validator",
     "sequential_simulator",
@@ -216,6 +227,7 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "fast-downward-reachability-grounder",
     "fast-downward-grounder",
     "up_grounder",
+    "up_ks0_compiler",
     "lpg",
     "lpg-anytime",
     "lpg-repairer",
@@ -224,6 +236,7 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "aries-val",
     "up_durative_actions_to_processes",
     "up_undefined_initial_numeric_remover",
+    "up_timed_to_sequential",
 ]
 
 DEFAULT_META_ENGINES_PREFERENCE_LIST = [
@@ -240,10 +253,10 @@ def format_table(header: List[str], rows: List[List[str]]) -> str:
         row_template += f" {{:<{str(l)}}} |"
     header_str = row_template.format(*header)
     row_len = len(header_str)
-    rows_str = [f'{"-"*row_len}', f"{header_str}", f'{"="*row_len}']
+    rows_str = [f"{'-' * row_len}", f"{header_str}", f"{'=' * row_len}"]
     for row in rows:
         rows_str.append(f"{row_template.format(*row)}")
-        rows_str.append(f'{"-"*row_len}')
+        rows_str.append(f"{'-' * row_len}")
     return "\n".join(rows_str)
 
 
@@ -398,7 +411,7 @@ class Factory:
 
 
         [global]
-        engine_preference_list: fast-downward fast-downward-opt enhsp enhsp-opt tamer
+        engine_preference_list: fast-downward fast-downward-opt enhsp enhsp-opt tamerlite tamer
 
         [engine <engine-name>]
         module_name: <module-name>
@@ -427,12 +440,12 @@ class Factory:
 
             module_name = config.get(s, "module_name")
             assert module_name is not None, (
-                "Missing 'module_name' value in definition" "of '%s' engine" % name
+                "Missing 'module_name' value in definition of '%s' engine" % name
             )
 
             class_name = config.get(s, "class_name")
             assert class_name is not None, (
-                "Missing 'class_name' value in definition" "of '%s' engine" % name
+                "Missing 'class_name' value in definition of '%s' engine" % name
             )
 
             self.add_engine(name, module_name, class_name)
@@ -737,7 +750,7 @@ class Factory:
                 compiler.default = compilation_kind
                 compilers.append(compiler)
             self._print_credits(all_credits)
-            return up.engines.compilers.compilers_pipeline.CompilersPipeline(compilers)
+            return CompilersPipeline(compilers)
         else:
             assert names is None
             error_failed_checks = name is None
@@ -857,7 +870,7 @@ class Factory:
         self,
         *,
         name: Optional[str] = None,
-        params: Optional[Dict[str, str]] = None,
+        params: Optional[Dict[str, Any]] = None,
         problem_kind: ProblemKind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION),
         anytime_guarantee: Optional[Union["AnytimeGuarantee", str]] = None,
     ) -> "up.engines.engine.Engine":
@@ -900,7 +913,7 @@ class Factory:
         *,
         name: Optional[str] = None,
         names: Optional[Sequence[str]] = None,
-        params: Optional[Union[Dict[str, str], Sequence[Dict[str, str]]]] = None,
+        params: Optional[Union[Dict[str, Any], Sequence[Dict[str, Any]]]] = None,
         problem_kind: ProblemKind = ProblemKind(),
         plan_kind: Optional[Union["PlanKind", str]] = None,
     ) -> "up.engines.engine.Engine":
@@ -986,7 +999,7 @@ class Factory:
         problem: "up.model.AbstractProblem",
         *,
         name: Optional[str] = None,
-        params: Optional[Dict[str, str]] = None,
+        params: Optional[Dict[str, Any]] = None,
     ) -> "up.engines.engine.Engine":
         """
         Returns a sequential simulator. There are two ways to call this method:
@@ -1010,7 +1023,7 @@ class Factory:
         problem: "up.model.AbstractProblem",
         *,
         name: Optional[str] = None,
-        params: Optional[Dict[str, str]] = None,
+        params: Optional[Dict[str, Any]] = None,
         optimality_guarantee: Optional[Union["OptimalityGuarantee", str]] = None,
     ) -> "up.engines.engine.Engine":
         """
@@ -1081,7 +1094,7 @@ class Factory:
         problem: "up.model.AbstractProblem",
         *,
         name: Optional[str] = None,
-        params: Optional[Dict[str, str]] = None,
+        params: Optional[Dict[str, Any]] = None,
     ) -> "up.engines.engine.Engine":
         """
         Returns an ActionSelector. There are two ways to call this method:

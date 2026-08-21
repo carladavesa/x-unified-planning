@@ -21,6 +21,7 @@ from unified_planning.test import TestCase
 
 def get_example_problems():
     problems = {}
+
     # the more generic interpreted functions are defined at the start and used in more test cases
     def simple_integers_to_bool(ina, inb):
         return (ina * inb) == 60
@@ -316,10 +317,12 @@ def get_example_problems():
         "are_connected",
         BoolType(),
         signature_are_connected,
-        lambda l_from, l_to: (l_from.name != l_to.name)
-        and (
-            (l_from.name, l_to.name)
-            not in [("location_1", "location_3"), ("location_3", "location_1")]
+        lambda l_from, l_to: (
+            (l_from.name != l_to.name)
+            and (
+                (l_from.name, l_to.name)
+                not in [("location_1", "location_3"), ("location_3", "location_1")]
+            )
         ),
     )
 
@@ -592,5 +595,165 @@ def get_example_problems():
         ],
     )
     problems["interpreted_functions_minimal_chain_of_assignments"] = ifproblem
+
+    # interpreted functions combined with an undefined initial numeric value
+
+    UndefObj = UserType("UndefObj")
+
+    undef_value = Fluent("undef_value", IntType(), o=UndefObj)
+    undef_total = Fluent("undef_total", IntType())
+
+    def is_big(x):
+        return x >= 3
+
+    signature_is_big = OrderedDict()
+    signature_is_big["x"] = IntType()
+    is_big_if = InterpretedFunction("is_big", BoolType(), signature_is_big, is_big)
+
+    def double(x):
+        return 2 * x
+
+    signature_double = OrderedDict()
+    signature_double["x"] = IntType()
+    double_if = InterpretedFunction("double", IntType(), signature_double, double)
+
+    undef_o1 = Object("undef_o1", UndefObj)
+    undef_o2 = Object("undef_o2", UndefObj)
+
+    def choose_o1():
+        return undef_o1
+
+    choose_if = InterpretedFunction("choose", UndefObj, OrderedDict(), choose_o1)
+
+    use_value = InstantaneousAction("use_value", o=UndefObj)
+    use_value.add_precondition(is_big_if(undef_value(use_value.o)))
+    use_value.add_effect(undef_total, double_if(undef_value(use_value.o)))
+
+    set_value = InstantaneousAction("set_value", o=UndefObj)
+    set_value.add_effect(undef_value(set_value.o), double_if(undef_value(undef_o1)))
+
+    use_chosen = InstantaneousAction("use_chosen")
+    use_chosen.add_precondition(is_big_if(undef_value(choose_if())))
+    use_chosen.add_increase_effect(undef_total, 1)
+
+    problem = Problem("interpreted_functions_undef_numeric")
+    problem.add_fluent(undef_value)
+    problem.add_fluent(undef_total, default_initial_value=0)
+    problem.add_object(undef_o1)
+    problem.add_object(undef_o2)
+    problem.add_action(use_value)
+    problem.add_action(set_value)
+    problem.add_action(use_chosen)
+    problem.set_initial_value(
+        undef_value(undef_o1), 4
+    )  # undef_value(undef_o2) is left undefined
+    problem.add_goal(GE(undef_total, 1))
+
+    ifproblem = TestCase(
+        problem=problem,
+        solvable=True,
+        valid_plans=[
+            up.plans.SequentialPlan([use_value(undef_o1)]),
+            up.plans.SequentialPlan([use_chosen()]),
+            up.plans.SequentialPlan([set_value(undef_o2), use_value(undef_o2)]),
+        ],
+        invalid_plans=[  # invalid plans contain actions that rely on the undefined value
+            up.plans.SequentialPlan([use_value(undef_o2)]),
+            up.plans.SequentialPlan([use_chosen(), use_value(undef_o2)]),
+            up.plans.SequentialPlan([]),
+        ],
+    )
+    problems["interpreted_functions_undef_numeric"] = ifproblem
+
+    # interpreted functions in a durative action's duration, combined with an
+    # undefined initial numeric value
+
+    undef_durative_value = Fluent("undef_durative_value", IntType(), o=UndefObj)
+    undef_done = Fluent("undef_done", BoolType())
+
+    undef_move = DurativeAction("undef_move", o=UndefObj)
+    undef_move.set_fixed_duration(double_if(undef_durative_value(undef_move.o)))
+    undef_move.add_condition(
+        StartTiming(), Not(is_big_if(undef_durative_value(undef_move.o)))
+    )
+    undef_move.add_effect(EndTiming(), undef_done, True)
+
+    problem = Problem("interpreted_functions_undef_numeric_durative")
+    problem.add_fluent(undef_durative_value)
+    problem.add_fluent(undef_done, default_initial_value=False)
+    problem.add_object(undef_o1)
+    problem.add_object(undef_o2)
+    problem.add_action(undef_move)
+    problem.set_initial_value(
+        undef_durative_value(undef_o1), 2
+    )  # undef_durative_value(undef_o2) is left undefined
+    problem.add_goal(undef_done)
+
+    ifproblem = TestCase(
+        problem=problem,
+        solvable=True,
+        valid_plans=[
+            up.plans.TimeTriggeredPlan(
+                [(Fraction(0), undef_move(undef_o1), Fraction(4))]
+            ),
+        ],
+        invalid_plans=[  # invalid plans contain actions that rely on the undefined value
+            up.plans.TimeTriggeredPlan(
+                [(Fraction(0), undef_move(undef_o2), Fraction(4))]
+            ),
+            up.plans.TimeTriggeredPlan([]),
+        ],
+    )
+    problems["interpreted_functions_undef_numeric_durative"] = ifproblem
+
+    # interpreted functions in a durative action's duration inequality and in a start
+    # effect whose value is substituted into an end-time condition and an end-time effect
+
+    def if_charge_time(level):
+        return 10 - level
+
+    signature_charge_time = OrderedDict()
+    signature_charge_time["level"] = IntType(0, 10)
+    charge_time_if = InterpretedFunction(
+        "charge_time", IntType(0, 10), signature_charge_time, if_charge_time
+    )
+
+    def if_boost(level):
+        return min(level + 3, 10)
+
+    signature_boost = OrderedDict()
+    signature_boost["level"] = IntType(0, 10)
+    boost_if = InterpretedFunction("boost", IntType(0, 10), signature_boost, if_boost)
+
+    battery = Fluent("battery", IntType(0, 10))
+    charged = Fluent("charged")
+
+    charge = DurativeAction("charge")
+    charge.set_closed_duration_interval(charge_time_if(battery), 20)
+    charge.add_condition(StartTiming(), LT(battery, 10))
+    charge.add_effect(StartTiming(), battery, boost_if(battery))
+    charge.add_condition(EndTiming(), GE(battery, 5))
+    charge.add_effect(EndTiming(), charged, GE(battery, 5))
+
+    problem = Problem("interpreted_functions_in_durative_start_effects")
+    problem.add_fluent(battery)
+    problem.add_fluent(charged)
+    problem.add_action(charge)
+    problem.set_initial_value(battery, 2)
+    problem.set_initial_value(charged, False)
+    problem.add_goal(charged)
+
+    ifproblem = TestCase(
+        problem=problem,
+        solvable=True,
+        valid_plans=[
+            up.plans.TimeTriggeredPlan([(Fraction(0), charge(), Fraction(8))]),
+        ],
+        invalid_plans=[  # duration shorter than charge_time_if(battery) == 8
+            up.plans.TimeTriggeredPlan([(Fraction(0), charge(), Fraction(4))]),
+            up.plans.TimeTriggeredPlan([]),
+        ],
+    )
+    problems["interpreted_functions_in_durative_start_effects"] = ifproblem
 
     return problems

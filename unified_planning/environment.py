@@ -19,7 +19,6 @@ singleton objects that are used throughout the system,
 such as the :func:`ExpressionManager <unified_planning.Environment.expression_manager>`, :func:`TypeChecker <unified_planning.Environment.type_checker>`, :func:`ExpressionManager <unified_planning.Environment.expression_manager>`, :func:`TypeManager <unified_planning.Environment.type_manager>`.
 """
 
-
 import sys
 from typing import IO, Optional
 import unified_planning
@@ -49,6 +48,9 @@ class Environment:
         self._simplifier = unified_planning.model.walkers.Simplifier(self)
         self._substituter = unified_planning.model.walkers.Substituter(self)
         self._free_vars_extractor = unified_planning.model.walkers.FreeVarsExtractor()
+        self._interpreted_functions_extractor = (
+            unified_planning.model.walkers.InterpretedFunctionsExtractor()
+        )
         self._names_extractor = unified_planning.model.walkers.NamesExtractor()
         self._credits_stream: Optional[IO[str]] = sys.stdout
         self._error_used_name: bool = True
@@ -126,6 +128,13 @@ class Environment:
     def free_vars_extractor(self) -> "unified_planning.model.walkers.FreeVarsExtractor":
         """Returns the environment's `FreeVarsExtractor`."""
         return self._free_vars_extractor
+
+    @property
+    def interpreted_functions_extractor(
+        self,
+    ) -> "unified_planning.model.walkers.InterpretedFunctionsExtractor":
+        """Returns the environment's `InterpretedFunctionsExtractor`."""
+        return self._interpreted_functions_extractor
 
     @property
     def names_extractor(self) -> "unified_planning.model.walkers.NamesExtractor":

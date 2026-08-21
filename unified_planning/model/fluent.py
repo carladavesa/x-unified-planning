@@ -28,7 +28,7 @@ from typing import List, OrderedDict, Optional, Union, Iterator, cast, Tuple
 class Fluent:
     """Represents a fluent."""
 
-    def     __init__(
+    def __init__(
         self,
         name: str,
         typename: Optional["up.model.types.Type"] = None,
@@ -47,9 +47,9 @@ class Fluent:
         if typename is None:
             self._typename = self._env.type_manager.BoolType()
         else:
-            assert self._env.type_manager.has_type(
-                typename
-            ), "type of parameter does not belong to the same environment of the fluent"
+            assert self._env.type_manager.has_type(typename), (
+                "type of parameter does not belong to the same environment of the fluent"
+            )
             self._typename = typename
         sizes = None
         if undefined_positions is not None:
@@ -71,9 +71,9 @@ class Fluent:
                         up.model.parameter.Parameter(param_name, param_type, self._env)
                     )
             elif isinstance(_signature, List):
-                assert all(
-                    p.environment == self._env for p in _signature
-                ), "one of the parameters does not belong to the same environment of the fluent"
+                assert all(p.environment == self._env for p in _signature), (
+                    "one of the parameters does not belong to the same environment of the fluent"
+                )
                 self._signature = _signature[:]
             else:
                 raise NotImplementedError
@@ -99,7 +99,7 @@ class Fluent:
         sign = ""
         if self.arity > 0:
             sign_items = [f"{p.name}={str(p.type)}" for p in self.signature]
-            sign = f'[{", ".join(sign_items)}]'
+            sign = f"[{', '.join(sign_items)}]"
         return f"{str(self.type)} {self.name}{sign} - excluding: {self.undefined_positions}" \
             if self.undefined_positions is not None \
             else f"{str(self.type)} {self.name}{sign}"

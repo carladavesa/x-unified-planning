@@ -15,5 +15,5 @@ unified_planning/__pycache__/
 *.pyc
 *~
 .venv/
-*_build*.idea/workspace.xml
+*_build*
 .DS_Store

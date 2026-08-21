@@ -16,10 +16,18 @@
 """This module defines different utility functions for the compilers."""
 import bidict
 from ortools.sat.python import cp_model
+
+import warnings
 from fractions import Fraction
 import unified_planning as up
 from unified_planning.exceptions import UPConflictingEffectsException, UPUsageError, UPProblemDefinitionError
+from unified_planning.exceptions import (
+    UPConflictingEffectsException,
+    UPProblemDefinitionError,
+    UPUsageError,
+)
 from unified_planning.environment import Environment
+from unified_planning.model.contingent import SensingAction
 from unified_planning.model import (
     FNode,
     TimeInterval,
@@ -29,6 +37,7 @@ from unified_planning.model import (
     Problem,
     Effect,
     Expression,
+    Fluent,
     BoolExpression,
     NumericConstant,
     SimulatedEffect,
@@ -52,10 +61,12 @@ from typing import (
     Optional,
     OrderedDict,
     Sequence,
+    Set,
     Tuple,
     Union,
     cast,
 )
+
 
 def check_and_simplify_conditions(
     problem: AbstractProblem, action: DurativeAction, simplifier
@@ -136,10 +147,16 @@ def create_effect_with_given_subs(
     simplifier,
     subs: Dict[Expression, Expression],
 ) -> Optional[Effect]:
+    em = problem.environment.expression_manager
     new_fluent = old_effect.fluent.substitute(subs)
+    if new_fluent.is_fluent_exp():
+        new_fluent = em.FluentExp(
+            new_fluent.fluent(),
+            tuple(simplifier.simplify(a) for a in new_fluent.args),
+        )
     new_value = simplifier.simplify(old_effect.value.substitute(subs))
     new_condition = simplifier.simplify(old_effect.condition.substitute(subs))
-    if new_condition == problem.environment.expression_manager.FALSE():
+    if new_condition == em.FALSE():
         return None
     else:
         return Effect(
@@ -153,7 +170,19 @@ def create_action_with_given_subs(
     simplifier,
     subs: Dict[Expression, Expression],
 ) -> Optional[Action]:
-    """This method is used to instantiate the actions parameters to a constant."""
+    """
+    This method is used to instantiate the actions parameters to a constant.
+
+    ``old_action`` is cloned first (preserving its exact subclass and any subclass-only
+    data, e.g. a :class:`~unified_planning.model.contingent.SensingAction`'s
+    ``observed_fluents``), then its preconditions/conditions, effects, and (for a `DurativeAction`)
+    duration and continuous effects are rebuilt on the clone through the given substitution.
+
+    When ``subs`` is empty (``old_action`` has no parameters), the action keeps its
+    original name instead of going through :func:`get_fresh_name`: since ``old_action``
+    is still registered in ``problem`` under that name, `get_fresh_name` would otherwise
+    treat it as colliding with itself and rename it needlessly.
+    """
     naming_list: List[str] = []
     for param, value in subs.items():
         assert isinstance(param, Parameter)
@@ -161,13 +190,26 @@ def create_action_with_given_subs(
         naming_list.append(str(value))
     c_subs = cast(Dict[Parameter, FNode], subs)
     if isinstance(old_action, InstantaneousAction):
-        new_action = InstantaneousAction(
-            get_fresh_name(problem, old_action.name, naming_list),
-            _env=old_action.environment,
+        new_action = cast(InstantaneousAction, old_action.clone())
+        new_action.name = (
+            old_action.name
+            if not subs
+            else get_fresh_name(problem, old_action.name, naming_list)
         )
-        for p in old_action.preconditions:
-            new_action.add_precondition(p.substitute(subs))
-        for e in old_action.effects:
+        new_action._parameters = OrderedDict()
+        if isinstance(new_action, SensingAction):
+            # observed_fluents is SensingAction-only, so create_effect_with_given_subs
+            # (which only knows about preconditions/effects) can't substitute it; do it here.
+            new_action._observed_fluents = [
+                f.substitute(subs) for f in new_action.observed_fluents
+            ]
+        old_preconditions = new_action.preconditions
+        new_action._set_preconditions([p.substitute(subs) for p in old_preconditions])
+
+        old_effects = list(new_action.effects)
+        old_simulated_effect = new_action.simulated_effect
+        new_action.clear_effects()
+        for e in old_effects:
             new_effect = create_effect_with_given_subs(problem, e, simplifier, subs)
             if new_effect is not None:
                 # We try to add the new effect, but a compiler might generate conflicting effects,
@@ -176,20 +218,24 @@ def create_action_with_given_subs(
                     new_action._add_effect_instance(new_effect)
                 except UPConflictingEffectsException:
                     return None
-        se = old_action.simulated_effect
-        if se is not None:
+        if old_simulated_effect is not None:
             new_fluents = []
-            for f in se.fluents:
+            for f in old_simulated_effect.fluents:
                 new_fluents.append(f.substitute(subs))
 
             def fun(_problem, _state, _):
-                assert se is not None
-                return se.function(_problem, _state, c_subs)
+                assert old_simulated_effect is not None
+                return old_simulated_effect.function(_problem, _state, c_subs)
 
+            # this rebuilds a simulated effect the user already defined (and got
+            # warned about), so the deprecation warning is silenced here
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                new_simulated_effect = SimulatedEffect(new_fluents, fun)
             # We try to add the new simulated effect, but a compiler might generate conflicting effects,
             # so the action is just considered invalid
             try:
-                new_action.set_simulated_effect(SimulatedEffect(new_fluents, fun))
+                new_action.set_simulated_effect(new_simulated_effect)
             except UPConflictingEffectsException:
                 return None
         is_feasible, new_preconditions = check_and_simplify_preconditions(
@@ -200,46 +246,79 @@ def create_action_with_given_subs(
         new_action._set_preconditions(new_preconditions)
         return new_action
     elif isinstance(old_action, DurativeAction):
-        new_durative_action = DurativeAction(
-            get_fresh_name(problem, old_action.name, naming_list),
-            _env=old_action.environment,
+        new_durative_action = cast(DurativeAction, old_action.clone())
+        new_durative_action.name = (
+            old_action.name
+            if not subs
+            else get_fresh_name(problem, old_action.name, naming_list)
         )
-        old_duration = old_action.duration
+        new_durative_action._parameters = OrderedDict()
+        old_duration = new_durative_action.duration
         new_duration = DurationInterval(
-            old_duration.lower.substitute(subs),
-            old_duration.upper.substitute(subs),
+            simplifier.simplify(old_duration.lower.substitute(subs)),
+            simplifier.simplify(old_duration.upper.substitute(subs)),
             old_duration.is_left_open(),
             old_duration.is_right_open(),
         )
-        new_durative_action.set_duration_constraint(new_duration)
-        for i, cl in old_action.conditions.items():
+        try:
+            new_durative_action.set_duration_constraint(new_duration)
+        except UPProblemDefinitionError:
+            # the simplified interval is empty, so this grounding can never be applied
+            return None
+
+        old_conditions = {
+            i: list(cl) for i, cl in new_durative_action.conditions.items()
+        }
+        new_durative_action.clear_conditions()
+        for i, cl in old_conditions.items():
             for c in cl:
                 new_durative_action.add_condition(i, c.substitute(subs))
-        for t, el in old_action.effects.items():
-            for e in el:
+
+        old_effects_by_timing = {
+            t: list(el) for t, el in new_durative_action.effects.items()
+        }
+        old_simulated_effects = dict(new_durative_action.simulated_effects)
+        old_continuous_effects = {
+            i: list(el) for i, el in new_durative_action.continuous_effects.items()
+        }
+        new_durative_action.clear_effects()
+        new_durative_action.clear_continuous_effects()
+        for t, effects_list in old_effects_by_timing.items():
+            for e in effects_list:
                 new_effect = create_effect_with_given_subs(problem, e, simplifier, subs)
                 if new_effect is not None:
-                    # We try to add the new simulated effect, but a compiler might generate conflicting effects,
+                    # We try to add the new effect, but a compiler might generate conflicting effects,
                     # so the action is just considered invalid
                     try:
                         new_durative_action._add_effect_instance(t, new_effect)
                     except UPConflictingEffectsException:
                         return None
-        for t, se in old_action.simulated_effects.items():
+        for i, ce_list in old_continuous_effects.items():
+            for ce in ce_list:
+                new_continuous_effect = create_effect_with_given_subs(
+                    problem, ce, simplifier, subs
+                )
+                if new_continuous_effect is not None:
+                    new_durative_action._add_continuous_effect_instance(
+                        i, new_continuous_effect
+                    )
+        for t, old_se in old_simulated_effects.items():
             new_fluents = []
-            for f in se.fluents:
+            for f in old_se.fluents:
                 new_fluents.append(f.substitute(subs))
 
             def fun(_problem, _state, _):
-                assert se is not None
-                return se.function(_problem, _state, c_subs)
+                return old_se.function(_problem, _state, c_subs)
 
+            # this rebuilds a simulated effect the user already defined (and got
+            # warned about), so the deprecation warning is silenced here
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                new_simulated_effect = SimulatedEffect(new_fluents, fun)
             # We try to add the new simulated effect, but a compiler might generate conflicting effects,
             # so the action is just considered invalid
             try:
-                new_durative_action.set_simulated_effect(
-                    t, SimulatedEffect(new_fluents, fun)
-                )
+                new_durative_action.set_simulated_effect(t, new_simulated_effect)
             except UPConflictingEffectsException:
                 return None
         is_feasible, new_conditions = check_and_simplify_conditions(
@@ -371,9 +450,9 @@ def add_invariant_condition_apply_function_to_problem_expressions(
     for original_action in original_problem.actions:
         params = OrderedDict(((p.name, p.type) for p in original_action.parameters))
         if isinstance(original_action, InstantaneousAction):
-            new_action: Union[
-                InstantaneousAction, DurativeAction
-            ] = InstantaneousAction(original_action.name, params, env)
+            new_action: Union[InstantaneousAction, DurativeAction] = (
+                InstantaneousAction(original_action.name, params, env)
+            )
             assert isinstance(new_action, InstantaneousAction)
             new_cond = em.And(
                 *map(function, original_action.preconditions), condition
@@ -545,6 +624,27 @@ def updated_minimize_action_costs(
         else:
             new_costs[new_act] = environment.expression_manager.Int(0)
     return MinimizeActionCosts(new_costs, environment=environment)
+
+
+def remove_fluents(problem: Problem, fluents: Set[Fluent]) -> None:
+    """
+    Removes the given `fluents` from the given `problem`, together with their
+    default values and all their `initial values`.
+
+    This is meant to be used by a compiler on a problem it owns (typically a
+    clone of the original one).
+
+    :param problem: The `Problem` to remove the `fluents` from; modified in place.
+    :param fluents: The `fluents` to remove; must all belong to the given `problem`.
+    """
+    for fluent in fluents:
+        problem._fluents.remove(fluent)
+        problem._fluents_defaults.pop(fluent, None)
+    problem._initial_value = {
+        fluent_exp: value
+        for fluent_exp, value in problem._initial_value.items()
+        if fluent_exp.fluent() not in fluents
+    }
 
 
 def split_all_ands(exp_list: List[FNode]) -> List[FNode]:

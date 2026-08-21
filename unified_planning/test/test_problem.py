@@ -135,7 +135,7 @@ class TestProblem(unittest_TestCase):
 
         battery_charge = problem.fluent("battery_charge")
         self.assertEqual(battery_charge.name, "battery_charge")
-        self.assertEqual(str(battery_charge), "real[0, 100] battery_charge")
+        self.assertEqual(str(battery_charge), "real battery_charge")
         self.assertEqual(battery_charge.arity, 0)
         self.assertTrue(battery_charge.type.is_real_type())
 
@@ -534,6 +534,7 @@ class TestProblem(unittest_TestCase):
             "sched:optional_activities_effects",
             "1d_Movement",
             "boiling_water",
+            "robot_with_variable_duration",
         ]
         for example in self.problems.values():
             problem = example.problem
@@ -593,7 +594,12 @@ class TestProblem(unittest_TestCase):
         problem.set_initial_value(distance(l2, l1), "20")
 
     def test_undefined_initial_state(self):
-        undefs_num = ["basic_undef_numeric", "undef_numeric_with_timed_effects"]
+        undefs_num = [
+            "basic_undef_numeric",
+            "undef_numeric_with_timed_effects",
+            "interpreted_functions_undef_numeric",
+            "interpreted_functions_undef_numeric_durative",
+        ]
         undefs_sym = ["basic_undef_bool"]
         for pb_name in self.problems:
             problem = self.problems[pb_name].problem

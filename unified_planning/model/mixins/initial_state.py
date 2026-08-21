@@ -61,8 +61,12 @@ class InitialStateMixin:
         if fluent.type.is_array_type() and isinstance(value, list):
             value = self._env.expression_manager.Array(value)
         fluent_exp, value_exp = self._env.expression_manager.auto_promote(fluent, value)
-        assert fluent_exp.is_fluent_exp() or fluent_exp.is_array_access(), \
-            "fluent field must be a fluent or an array access"
+        assert fluent_exp.is_fluent_exp() or fluent_exp.is_array_access(), "fluent field must be a fluent or an array access"
+        for a in fluent_exp.args:
+            if not a.is_constant():
+                raise UPExpressionDefinitionError(
+                    f"Impossible to set the initial value of a fluent expression with no constant arguments: {fluent_exp}."
+                )
         if fluent.type.is_derived_bool_type():
             raise UPTypeError("You cannot set the initial value of a derived fluent!")
         if not fluent_exp.type.is_compatible(value_exp.type):
@@ -118,7 +122,7 @@ class InitialStateMixin:
         IMPORTANT NOTE: this property does a lot of computation, so it should be called as
         seldom as possible.
         """
-        res = self._initial_value
+        res = self._initial_value.copy()
         for f in self._fluent_set.fluents:
             for f_exp in get_all_fluent_exp(self._object_set, f):
                 value = self.initial_value(f_exp)
@@ -175,9 +179,9 @@ class InitialStateMixin:
                 ds = domain_size(self._object_set, p.type)
                 ground_size *= ds
 
-            assert (
-                inits.get(fluent, 0) <= ground_size
-            ), "Invariant broken: more initial values than state variables"
+            assert inits.get(fluent, 0) <= ground_size, (
+                "Invariant broken: more initial values than state variables"
+            )
             if ground_size != inits.get(fluent, 0):
                 undef_fluents.append(
                     fluent

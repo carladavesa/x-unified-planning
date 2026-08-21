@@ -317,7 +317,19 @@ def convert_problem_to_tarski(
     assert kind.version == LATEST_PROBLEM_KIND_VERSION
     if kind.has_equalities():
         features.append("equality")
-    if kind.has_int_fluents() or kind.has_real_fluents():
+    # the problem kind only accounts for the fluents used in some expression,
+    # but the numeric sorts must be in the language for every fluent converted
+    # below, including the unused ones
+    if (
+        kind.has_int_fluents()
+        or kind.has_real_fluents()
+        or any(
+            f.type.is_int_type()
+            or f.type.is_real_type()
+            or any(p.type.is_int_type() or p.type.is_real_type() for p in f.signature)
+            for f in problem.fluents
+        )
+    ):
         features.append("arithmetic")
     object_freshname = "object_"
     while problem.has_type(object_freshname):
@@ -422,9 +434,9 @@ def convert_problem_to_tarski(
                     lang.get_predicate(fluent_exp.fluent().name), *parameters
                 )
         else:
-            value: Optional[
-                Union[Fraction, int, "tarski.syntax.formulas.Formula"]
-            ] = None
+            value: Optional[Union[Fraction, int, "tarski.syntax.formulas.Formula"]] = (
+                None
+            )
             if value_exp.is_int_constant():
                 value = value_exp.int_constant_value()
             elif value_exp.is_real_constant():

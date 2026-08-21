@@ -82,9 +82,9 @@ class GrounderHelper:
         if grounding_actions_map is not None:
             for action, params_list in grounding_actions_map.items():
                 for params in params_list:
-                    assert len(action.parameters) == len(
-                        params
-                    ), f"Action {action.name} has {len(action.parameters)} parameters but {len(params)} are given in the map.\n{action.parameters}\n{params}"
+                    assert len(action.parameters) == len(params), (
+                        f"Action {action.name} has {len(action.parameters)} parameters but {len(params)} are given in the map.\n{action.parameters}\n{params}"
+                    )
         # grounded_actions is a map from an Action of the original problem and it's parameters
         # to the grounded instance of the Action with the given parameters.
         # When the grounded instance of the Action is None, it means that the resulting grounding
@@ -93,6 +93,7 @@ class GrounderHelper:
         # - it has no effects
         # - his conditions create a contradiction
         # - the action has conflicting effects
+        # - for a DurativeAction, its duration interval simplifies to an empty interval
         self._grounded_actions: Dict[
             Tuple[str, Tuple[FNode, ...]], Optional[Action]
         ] = {}
@@ -124,9 +125,9 @@ class GrounderHelper:
             action does not have ``effects`` or the ``action conditions`` can be easily evaluated as a
             contradiction.
         """
-        assert len(action.parameters) == len(
-            parameters
-        ), "The number of given parameters for the grounding is different from the action's parameters"
+        assert len(action.parameters) == len(parameters), (
+            "The number of given parameters for the grounding is different from the action's parameters"
+        )
         key = (action.name, tuple(parameters))
         value = self._grounded_actions.get(key, 0)
         if value != 0:  # The action is already created
@@ -139,7 +140,9 @@ class GrounderHelper:
                     self._grounding_actions_map is None
                     or self._grounding_actions_map.get(action, None) is not None
                 ):
-                    new_action = action.clone()
+                    new_action = create_action_with_given_subs(
+                        self._problem, action, self._simplifier, {}
+                    )
                 else:
                     new_action = None
             else:
@@ -322,7 +325,13 @@ class Grounder(engines.engine.Engine, CompilerMixin):
     implementation.
     The Grounder class can also optionally take a flag prune_actions to enable/disable the pruning of actions exploiting the simplification of static fluents.
 
-    This `Compiler` supports only the the `GROUNDING` :class:`~unified_planning.engines.CompilationKind`.
+    Interpreted functions are treated as ordinary sub-expressions: calls appearing in conditions, effect
+    values and duration bounds have their arguments rewritten by the parameter substitution, exactly like
+    any other fluent-based expression. Once an interpreted function call's arguments are all constant, the
+    grounder's simplifier evaluates it and replaces the call with its value; while any argument is not
+    constant, the call is left unevaluated.
+
+    This `Compiler` supports only the `GROUNDING` :class:`~unified_planning.engines.CompilationKind`.
     """
 
     def __init__(
@@ -386,6 +395,7 @@ class Grounder(engines.engine.Engine, CompilerMixin):
         supported_kind.set_expression_duration("FLUENTS_IN_DURATIONS")
         supported_kind.set_expression_duration("INT_TYPE_DURATIONS")
         supported_kind.set_expression_duration("REAL_TYPE_DURATIONS")
+        supported_kind.set_expression_duration("INTERPRETED_FUNCTIONS_IN_DURATIONS")
         supported_kind.set_simulated_entities("SIMULATED_EFFECTS")
         supported_kind.set_constraints_kind("STATE_INVARIANTS")
         supported_kind.set_constraints_kind("TRAJECTORY_CONSTRAINTS")
@@ -433,9 +443,9 @@ class Grounder(engines.engine.Engine, CompilerMixin):
             only `GROUNDING` is supported by this compiler
         :return: The resulting `CompilerResult` data structure.
         """
-        assert isinstance(
-            problem, Problem
-        ), "The given problem is not a class supported by the Grounder"
+        assert isinstance(problem, Problem), (
+            "The given problem is not a class supported by the Grounder"
+        )
         grounder_helper = GrounderHelper(
             problem, self._grounding_actions_map, self._prune_actions
         )

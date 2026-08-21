@@ -18,7 +18,6 @@ A `Transition` has a `name`, a `list` of `Parameter`, a `list` of `preconditions
 and a `list` of `effects`.
 """
 
-
 import unified_planning as up
 from unified_planning.environment import get_environment, Environment
 from unified_planning.exceptions import (
@@ -51,17 +50,17 @@ class Transition(ABC):
         if _parameters is not None:
             assert len(kwargs) == 0
             for n, t in _parameters.items():
-                assert self._environment.type_manager.has_type(
-                    t
-                ), "type of parameter does not belong to the same environment of the transition"
+                assert self._environment.type_manager.has_type(t), (
+                    "type of parameter does not belong to the same environment of the transition"
+                )
                 self._parameters[n] = up.model.parameter.Parameter(
                     n, t, self._environment
                 )
         else:
             for n, t in kwargs.items():
-                assert self._environment.type_manager.has_type(
-                    t
-                ), "type of parameter does not belong to the same environment of the transition"
+                assert self._environment.type_manager.has_type(t), (
+                    "type of parameter does not belong to the same environment of the transition"
+                )
                 self._parameters[n] = up.model.parameter.Parameter(
                     n, t, self._environment
                 )
@@ -386,9 +385,9 @@ class UntimedEffectMixin:
         )
 
     def _add_effect_instance(self, effect: "up.model.effect.Effect"):
-        assert (
-            effect.environment == self._environment
-        ), "effect does not have the same environment of the action"
+        assert effect.environment == self._environment, (
+            "effect does not have the same environment of the action"
+        )
         up.model.effect.check_conflicting_effects(
             effect,
             None,
@@ -407,6 +406,9 @@ class UntimedEffectMixin:
     def set_simulated_effect(self, simulated_effect: "up.model.effect.SimulatedEffect"):
         """
         Sets the given `simulated effect` as the only `action's simulated effect`.
+
+        Note: simulated effects are deprecated and will be removed in a future
+        version; consider using interpreted functions instead.
 
         :param simulated_effect: The `SimulatedEffect` instance that must be set as this `action`'s only
             `simulated effect`.

@@ -180,9 +180,9 @@ class ProblemKindMeta(type):
         def _set(self, feature, possible_features):
             assert feature in possible_features, str(feature)
             added_feature_version, _ = FEATURES_VERSIONS.get(feature, (1, None))
-            assert (
-                self._version is None or added_feature_version <= self._version
-            ), f"ProblemKind's declared version: {self._version} but {feature} is added in version {added_feature_version}"
+            assert self._version is None or added_feature_version <= self._version, (
+                f"ProblemKind's declared version: {self._version} but {feature} is added in version {added_feature_version}"
+            )
             self._features.add(feature)
 
         def _unset(self, feature, possible_features):
@@ -224,18 +224,18 @@ class ProblemKind(up.AnyBaseClass, metaclass=ProblemKindMeta):
             assert f in all_features, f"Feature {f} not in defined features"
         self._version = version
         if self._version is not None:
-            assert self._version > 0 and isinstance(
-                self._version, int
-            ), "Error, the ProblemKind version must be a positive integer"
+            assert self._version > 0 and isinstance(self._version, int), (
+                "Error, the ProblemKind version must be a positive integer"
+            )
             for feature in self._features:
                 added_feature_version, _ = FEATURES_VERSIONS.get(feature, (1, None))
-                assert (
-                    added_feature_version <= self._version
-                ), f"ProblemKind's declared version: {self._version} but {feature} is added in version {added_feature_version}"
+                assert added_feature_version <= self._version, (
+                    f"ProblemKind's declared version: {self._version} but {feature} is added in version {added_feature_version}"
+                )
 
     def __repr__(self) -> str:
         features_gen = (f"'{feature}'" for feature in self._features)
-        return f'ProblemKind([{", ".join(features_gen)}], version={self._version})'
+        return f"ProblemKind([{', '.join(features_gen)}], version={self._version})"
 
     def __str__(self) -> str:
         features_mapped: Dict[str, List[str]] = {}
@@ -299,9 +299,9 @@ class ProblemKind(up.AnyBaseClass, metaclass=ProblemKindMeta):
         for f in self._features:
             added_feature_version, _ = FEATURES_VERSIONS.get(f, (1, None))
             max_version = max(max_version, added_feature_version)
-        assert (
-            max_version <= LATEST_PROBLEM_KIND_VERSION
-        ), "Calculated version is > that the LATEST declared version"
+        assert max_version <= LATEST_PROBLEM_KIND_VERSION, (
+            "Calculated version is > that the LATEST declared version"
+        )
         return max_version
 
     def get_version(self) -> Optional[int]:
@@ -364,8 +364,15 @@ full_classical_kind.set_conditions_kind("UNIVERSAL_CONDITIONS")
 full_classical_kind.set_effects_kind("CONDITIONAL_EFFECTS")
 full_classical_kind.set_fluents_type("DERIVED_FLUENTS")
 
+quantified_conditions_kind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION)
+quantified_conditions_kind.set_conditions_kind("EXISTENTIAL_CONDITIONS")
+quantified_conditions_kind.set_conditions_kind("UNIVERSAL_CONDITIONS")
+
 object_fluent_kind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION)
 object_fluent_kind.set_fluents_type("OBJECT_FLUENTS")
+
+simulated_effects_kind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION)
+simulated_effects_kind.set_simulated_entities("SIMULATED_EFFECTS")
 
 simple_numeric_kind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION)
 simple_numeric_kind.set_problem_class("ACTION_BASED")
@@ -409,6 +416,11 @@ temporal_kind.set_expression_duration("STATIC_FLUENTS_IN_DURATIONS")
 
 int_duration_kind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION)
 int_duration_kind.set_expression_duration("INT_TYPE_DURATIONS")
+
+static_fluents_duration_kind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION)
+static_fluents_duration_kind.set_expression_duration("STATIC_FLUENTS_IN_DURATIONS")
+static_fluents_duration_kind.set_expression_duration("REAL_TYPE_DURATIONS")
+static_fluents_duration_kind.set_expression_duration("INT_TYPE_DURATIONS")
 
 quality_metrics_kind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION)
 quality_metrics_kind.set_quality_metrics("PLAN_LENGTH")

@@ -18,7 +18,6 @@ A basic `Effect` has a `fluent` and an `expression`.
 A `condition` can be added to make it a `conditional effect`.
 """
 
-
 from itertools import product
 import unified_planning as up
 from unified_planning.exceptions import (
@@ -27,6 +26,7 @@ from unified_planning.exceptions import (
     UPUnboundedVariablesError,
 )
 from enum import Enum, auto
+from warnings import warn
 from typing import (
     List,
     Callable,
@@ -65,6 +65,7 @@ class Effect:
     This class represent an effect. It has a :class:`~unified_planning.model.Fluent`, modified by this effect, a value
     that determines how the `Fluent` is modified, a `condition` that determines if the `Effect`
     is actually applied or not and an `EffectKind` that determines the semantic of the `Effect`.
+    The modified `Fluent's` arguments can not contain other `Fluents` nor `InterpretedFunctions`.
     """
 
     def __init__(
@@ -88,6 +89,12 @@ class Effect:
             raise UPProblemDefinitionError(
                 f"The fluent: {fluent} contains other fluents in his arguments: {fluents_in_fluent}"
             )
+        ife = fluent.environment.interpreted_functions_extractor
+        interpreted_functions_in_fluent = set(ife.get(fluent))
+        if interpreted_functions_in_fluent:
+            raise UPProblemDefinitionError(
+                f"The fluent: {fluent} contains interpreted functions in his arguments: {interpreted_functions_in_fluent}"
+            )
         self._fluent = fluent
         self._value = value
         self._condition = condition
@@ -105,9 +112,9 @@ class Effect:
             for v in forall:
                 if v in free_vars and v not in seen:
                     seen.add(v)
-                    assert isinstance(
-                        v, up.model.variable.Variable
-                    ), "Typing not respected"
+                    assert isinstance(v, up.model.variable.Variable), (
+                        "Typing not respected"
+                    )
                     yield v
                 elif isinstance(v, up.model.int_variable.IntVariable):
                     yield v
@@ -288,6 +295,10 @@ class SimulatedEffect:
     The `fluent's parameters` must be constants or :class:`~unified_planning.model.Action` `parameters`.
     The callable function must return the result of the `simulated effects` applied
     in the given :class:`~unified_planning.model.State` for the specified `fluent` expressions.
+
+    .. deprecated::
+        Simulated effects are deprecated and will be removed in a future version;
+        consider using interpreted functions instead.
     """
 
     def __init__(
@@ -302,6 +313,12 @@ class SimulatedEffect:
             List["up.model.fnode.FNode"],
         ],
     ):
+        warn(
+            "SimulatedEffect is deprecated and will be removed in a future version; "
+            "consider using interpreted functions instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._fluents: List["up.model.fnode.FNode"] = []
         env = None
         for f in fluents:

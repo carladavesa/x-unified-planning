@@ -30,11 +30,11 @@ from unified_planning.model import (
     ExpressionManager,
     Fluent,
     FNode,
+    MinimizeActionCosts,
 )
 from unified_planning.model.timing import StartTiming, EndTiming, Interval
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
-from unified_planning.engines.compilers.utils import replace_action
-from typing import Dict, Optional, List, Tuple, OrderedDict, cast
+from typing import Dict, Optional, List, Set, Tuple, OrderedDict, cast
 from fractions import Fraction
 from functools import partial
 from unified_planning.exceptions import (
@@ -48,15 +48,19 @@ from unified_planning.plans import (
     SequentialPlan,
     TimeTriggeredPlan,
     ActionInstance,
-    Plan,
 )
 from unified_planning.model.problem_kind import FEATURES
-from unified_planning.engines import UPSequentialSimulator
+from unified_planning.engines.compilers.utils import remove_fluents
+from unified_planning.engines.sequential_simulator import UPSequentialSimulator
 
 
 def plan_back_conversion_callable(
-    sp: SequentialPlan, problem: Problem, new_problem: Problem, new_to_old: Dict
-):
+    sp: SequentialPlan,
+    problem: Problem,
+    new_problem: Problem,
+    new_to_old: Dict,
+    pruned_fluents: Set[Fluent],
+) -> TimeTriggeredPlan:
     if not isinstance(sp, SequentialPlan):
         raise UPUsageError("Plan to map back is not sequential")
     if problem.epsilon is not None:
@@ -66,6 +70,19 @@ def plan_back_conversion_callable(
     simulator = UPSequentialSimulator(new_problem)
     simplifier = Simplifier(problem.environment)
     fve = FreeVarsExtractor()
+    # NOTE the fluents pruned from the compiled problem are not part of its state
+    # anymore, so the ones still needed to compute a duration are resolved against
+    # the original problem. A pruned fluent is never written in the compiled problem
+    # and is never written in the original one either, so its initial value is its
+    # value at any point of the plan.
+    original_state = UPState(
+        {
+            fluent_exp: value
+            for fluent_exp, value in problem.explicit_initial_values.items()
+            if fluent_exp.fluent() in pruned_fluents
+        },
+        problem,
+    )
     state: Optional[State] = simulator.get_initial_state()
     assert isinstance(state, UPState)
     time_now = Fraction(0)
@@ -100,7 +117,10 @@ def plan_back_conversion_callable(
                     tlower_with_pars = tinterval.lower.substitute(par_sub_dict)
                     flu_subs_dict: Dict = {}
                     for flu_obj in fve.get(tlower_with_pars):
-                        flu_subs_dict[flu_obj] = state.get_value(flu_obj)
+                        if flu_obj.fluent() in pruned_fluents:
+                            flu_subs_dict[flu_obj] = original_state.get_value(flu_obj)
+                        else:
+                            flu_subs_dict[flu_obj] = state.get_value(flu_obj)
                     tlower_constant = simplifier.simplify(
                         tlower_with_pars.substitute(flu_subs_dict)
                     )
@@ -128,11 +148,34 @@ class TimedToSequential(engines.engine.Engine, CompilerMixin):
     transform a problem with durative actions into one only using instantaneous actions.
     Every durative action is compiled into an instantaneous action by condensing
     all all conditions at start time and all effects at end time.
+
+    Interpreted functions are treated as ordinary sub-expressions: calls appearing in
+    conditions, effect values and durations are carried over unchanged, and calls appearing
+    in end-time conditions/effects have their arguments rewritten by the start-time effect
+    substitution, exactly like any other fluent-based expression.
+
+    The `TimedToSequential` class can also optionally take a flag `remove_unused_fluents` to
+    enable/disable the pruning of the fluents that become unused in the compiled problem.
+
+    Note:
+        Since a durative action's start and end collapse into a single instant, an interpreted
+        function that the temporal semantics would evaluate once at start and once at end is
+        evaluated only once here; this is consistent with the library-wide assumption that
+        interpreted functions are deterministic.
+
+        An interpreted function used in a duration is not part of the compiled (instantaneous)
+        problem: it is re-evaluated by :func:`plan_back_conversion_callable` against the simulated
+        state, so its callable must be able to handle whatever values are reachable in that state.
+        Fluents that only ever appear inside a duration expression become unused once the
+        duration is dropped from the compiled problem; such fluents are pruned from the compiled
+        problem (see :func:`~unified_planning.engines.compilers.utils.remove_fluents`) and are
+        instead resolved from the original problem's initial value when the duration is reconstructed.
     """
 
-    def __init__(self):
+    def __init__(self, remove_unused_fluents: bool = True):
         engines.engine.Engine.__init__(self)
         CompilerMixin.__init__(self, CompilationKind.TIMED_TO_SEQUENTIAL)
+        self._remove_unused_fluents = remove_unused_fluents
 
     @property
     def name(self):
@@ -161,6 +204,7 @@ class TimedToSequential(engines.engine.Engine, CompilerMixin):
         supported_kind.set_conditions_kind("EQUALITIES")
         supported_kind.set_conditions_kind("EXISTENTIAL_CONDITIONS")
         supported_kind.set_conditions_kind("UNIVERSAL_CONDITIONS")
+        supported_kind.set_conditions_kind("INTERPRETED_FUNCTIONS_IN_CONDITIONS")
         supported_kind.set_effects_kind("INCREASE_EFFECTS")
         supported_kind.set_effects_kind("DECREASE_EFFECTS")
         supported_kind.set_effects_kind("STATIC_FLUENTS_IN_BOOLEAN_ASSIGNMENTS")
@@ -169,6 +213,9 @@ class TimedToSequential(engines.engine.Engine, CompilerMixin):
         supported_kind.set_effects_kind("FLUENTS_IN_BOOLEAN_ASSIGNMENTS")
         supported_kind.set_effects_kind("FLUENTS_IN_NUMERIC_ASSIGNMENTS")
         supported_kind.set_effects_kind("FLUENTS_IN_OBJECT_ASSIGNMENTS")
+        supported_kind.set_effects_kind("INTERPRETED_FUNCTIONS_IN_BOOLEAN_ASSIGNMENTS")
+        supported_kind.set_effects_kind("INTERPRETED_FUNCTIONS_IN_NUMERIC_ASSIGNMENTS")
+        supported_kind.set_effects_kind("INTERPRETED_FUNCTIONS_IN_OBJECT_ASSIGNMENTS")
         supported_kind.set_effects_kind("FORALL_EFFECTS")
         supported_kind.set_time("CONTINUOUS_TIME")
         supported_kind.set_time("DISCRETE_TIME")
@@ -177,6 +224,7 @@ class TimedToSequential(engines.engine.Engine, CompilerMixin):
         supported_kind.set_expression_duration("REAL_TYPE_DURATIONS")
         supported_kind.set_expression_duration("STATIC_FLUENTS_IN_DURATIONS")
         supported_kind.set_expression_duration("FLUENTS_IN_DURATIONS")
+        supported_kind.set_expression_duration("INTERPRETED_FUNCTIONS_IN_DURATIONS")
         supported_kind.set_quality_metrics("ACTIONS_COST")
         supported_kind.set_actions_cost_kind("STATIC_FLUENTS_IN_ACTIONS_COST")
         supported_kind.set_actions_cost_kind("FLUENTS_IN_ACTIONS_COST")
@@ -206,6 +254,19 @@ class TimedToSequential(engines.engine.Engine, CompilerMixin):
             new_kind.unset_time(timefeat)
         for durfeat in FEATURES["EXPRESSION_DURATION"]:
             new_kind.unset_expression_duration(durfeat)
+        # Start-time effect values are substituted into end-time conditions and into the
+        # values of end-time effects, so an interpreted function call appearing in any effect
+        # value can end up in a condition or in an effect of a different kind; declare all of
+        # them as a sound over-approximation.
+        if (
+            problem_kind.has_interpreted_functions_in_boolean_assignments()
+            or problem_kind.has_interpreted_functions_in_numeric_assignments()
+            or problem_kind.has_interpreted_functions_in_object_assignments()
+        ):
+            new_kind.set_conditions_kind("INTERPRETED_FUNCTIONS_IN_CONDITIONS")
+            new_kind.set_effects_kind("INTERPRETED_FUNCTIONS_IN_BOOLEAN_ASSIGNMENTS")
+            new_kind.set_effects_kind("INTERPRETED_FUNCTIONS_IN_NUMERIC_ASSIGNMENTS")
+            new_kind.set_effects_kind("INTERPRETED_FUNCTIONS_IN_OBJECT_ASSIGNMENTS")
         return new_kind
 
     def get_effects_data_structures(
@@ -407,13 +468,31 @@ class TimedToSequential(engines.engine.Engine, CompilerMixin):
                                 osef, ose.value, ose.condition
                             )
                         elif ose.is_decrease():
-                            new_action.add_increase_effect(
+                            new_action.add_decrease_effect(
                                 osef, ose.value, ose.condition
                             )
                         else:
                             raise UPUnreachableCodeError
             new_to_old[new_action] = action
             new_problem.add_action(new_action)
+
+        # Fluents used only inside a duration expression (e.g. a fluent feeding a durative
+        # action's fixed duration) become unreferenced once the duration is dropped by the
+        # compilation above. `remove_unused_fluents` controls whether they get pruned:
+        # a fluent used only in a `MinimizeActionCosts` cost is always exempted, since
+        # `get_unused_fluents` deliberately reports it as unused too.
+        pruned_fluents: Set[Fluent] = set()
+        if self._remove_unused_fluents:
+            metric_exprs: List[FNode] = []
+            for qm in new_problem.quality_metrics:
+                if qm.is_minimize_action_costs():
+                    assert isinstance(qm, MinimizeActionCosts)
+                    metric_exprs.extend(qm.costs.values())
+                    if qm.default is not None:
+                        metric_exprs.append(qm.default)
+            fluents_in_metrics = {f.fluent() for e in metric_exprs for f in fve.get(e)}
+            pruned_fluents = new_problem.get_unused_fluents() - fluents_in_metrics
+            remove_fluents(new_problem, pruned_fluents)
 
         return CompilerResult(
             problem=new_problem,
@@ -422,6 +501,7 @@ class TimedToSequential(engines.engine.Engine, CompilerMixin):
                 problem=problem,
                 new_problem=new_problem,
                 new_to_old=new_to_old,
+                pruned_fluents=pruned_fluents,
             ),
             engine_name=self.name,
             map_back_action_instance=None,

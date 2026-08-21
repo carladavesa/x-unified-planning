@@ -731,7 +731,7 @@ def OneshotPlanner(
 def AnytimePlanner(
     *,
     name: Optional[str] = None,
-    params: Optional[Dict[str, str]] = None,
+    params: Optional[Dict[str, Any]] = None,
     problem_kind: ProblemKind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION),
     anytime_guarantee: Optional[Union["up.engines.AnytimeGuarantee", str]] = None,
 ) -> Engine:
@@ -765,7 +765,7 @@ def PlanValidator(
     *,
     name: Optional[str] = None,
     names: Optional[Sequence[str]] = None,
-    params: Optional[Union[Dict[str, str], Sequence[Dict[str, str]]]] = None,
+    params: Optional[Union[Dict[str, Any], Sequence[Dict[str, Any]]]] = None,
     problem_kind: ProblemKind = ProblemKind(version=LATEST_PROBLEM_KIND_VERSION),
     plan_kind: Optional[Union["up.plans.PlanKind", str]] = None,
 ) -> Engine:
@@ -830,7 +830,7 @@ def SequentialSimulator(
     problem: "up.model.AbstractProblem",
     *,
     name: Optional[str] = None,
-    params: Optional[Dict[str, str]] = None,
+    params: Optional[Dict[str, Any]] = None,
 ) -> "up.engines.engine.Engine":
     """
     Returns a sequential simulator. There are two ways to call this method:
@@ -849,7 +849,7 @@ def Replanner(
     problem: "up.model.AbstractProblem",
     *,
     name: Optional[str] = None,
-    params: Optional[Dict[str, str]] = None,
+    params: Optional[Dict[str, Any]] = None,
     optimality_guarantee: Optional[Union["up.engines.OptimalityGuarantee", str]] = None,
 ) -> "up.engines.engine.Engine":
     """
@@ -897,7 +897,7 @@ def ActionSelector(
     problem: "up.model.AbstractProblem",
     *,
     name: Optional[str] = None,
-    params: Optional[Dict[str, str]] = None,
+    params: Optional[Dict[str, Any]] = None,
 ) -> "up.engines.engine.Engine":
     """
     Returns an ActionSelector. There are two ways to call this method:
