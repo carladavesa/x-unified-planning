@@ -41,58 +41,102 @@ from unified_planning.shortcuts import (
 # Each key maps a short alias to an ordered list of compilation steps.
 # Pipelines marked "numeric" keep integer fluents.
 COMPILATION_PIPELINES = {
+    # classical
     "cls": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
+    # numeric: native numeric planner
     "num": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.BOUNDED_TYPES_REMOVING,
     ],
+    # basic + object
     "uti_basic": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
+    # basic + binary
     "log_basic": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "binary"}),
     ],
+    # general + object
     "uti_general": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
+    # general + binary
     "log_general": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    # Count -> bool, (usertype removed)
+    "count_bool": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        CompilationKind.COUNT_TO_BOOL_REMOVING,
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    # Count -> int, general + object
+    "count_uti_general": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        CompilationKind.COUNT_TO_INT_REMOVING,
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    # Count -> int, general + binary
+    "count_log_general": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        CompilationKind.COUNT_TO_INT_REMOVING,
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    # Count -> int, native numeric planner
+    "count_num": [  # numeric
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        CompilationKind.COUNT_TO_INT_REMOVING,
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "set_count": [
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        CompilationKind.COUNT_TO_BOOL_REMOVING,
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "set_count_num": [
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        CompilationKind.COUNT_TO_INT_REMOVING,
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "set_count_num_uti": [
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "set_count_num_log": [
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "set_num": [
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     "none": [],
 }
-    #"c": [
-    #    CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-    #    (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
-    #    CompilationKind.COUNT_TO_BOOL_REMOVING,
-    #    CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    #],
-    #"ci": [
-    #    CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-    #    CompilationKind.ARRAY_FLUENTS_REMOVING,
-    #    CompilationKind.COUNT_TO_INT_REMOVING,
-    #    CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING,
-    #    CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    #],
-    #"cin": [  # numeric
-    #    CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-    #    CompilationKind.ARRAY_FLUENTS_REMOVING,
-    #    CompilationKind.COUNT_TO_INT_REMOVING,
-    #],
+
     #"sc": [
     #    CompilationKind.SET_FLUENTS_REMOVING,
     #    #CompilationKind.COUNT_TO_BOOL_REMOVING,
@@ -465,10 +509,9 @@ def main(argv: Optional[list[str]] = None) -> None:
     # Build the UP Problem: either from PDDL files on disk or from a registered Python domain
     if os.path.isfile(args.domain) and os.access(args.domain, os.R_OK) and \
             os.path.isfile(args.instance) and os.access(args.instance, os.R_OK):
-        #    reader = PDDLReader()
-        #    problem = reader.parse_problem(args.domain, args.instance)
-        solve_with_fd_direct(args.domain, args.instance, timeout=args.timeout)
-        return
+        reader = PDDLReader()
+        problem = reader.parse_problem(args.domain, args.instance)
+        #solve_with_fd_direct(args.domain, args.instance, timeout=args.timeout)
     else:
         dom = DOMAINS.get(args.domain)
         if dom is None:
