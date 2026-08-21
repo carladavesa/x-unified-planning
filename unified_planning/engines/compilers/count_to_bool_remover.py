@@ -214,49 +214,47 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         return combinations
 
     def _between_k_true_formula(
-        self, arguments: List[FNode], min_true: int, max_true: int
+            self, arguments: List[FNode], min_true: int, max_true: int
     ) -> FNode:
         """
         Generate formula: "between min_true and max_true arguments are true".
-        Returns: Or of all combinations where exactly k arguments are true, for k in [min_true, max_true],
-                 with optimizations for common cases.
+
+        Uses specialized encodings for a few clear-win cases (all-false, all-true,
+        at-least-1). Falls back to DNF expansion for the rest, which is competitive
+        for at-most-K with small K and works well with Fast Downward's heuristics.
         """
         n = len(arguments)
-        if min_true > n or max_true < 0:
-            return FALSE()
-        if min_true < 0:
-            min_true = 0
-        if max_true > n:
-            max_true = n
-        if min_true == 0 and max_true >= n:
-            return TRUE()
-        # Optimized special cases
-        if min_true == max_true:
-            # Exact count - enumerate combinations
-            clauses = self._exactly_k_combinations(arguments, min_true)
-        elif min_true == 0 and max_true == n - 1:
-            # At most n-1 = not all true
-            return Not(And(*arguments))
-        elif min_true == 1 and max_true == n:
-            # At least 1 = any true
-            return Or(*arguments)
-        elif min_true == 0 and max_true == 1:
-            # At most 1 = none or exactly one
-            clauses = []
-            clauses.append(And(*[Not(a) for a in arguments]))
-            clauses.extend(self._exactly_k_combinations(arguments, 1))
-        else:
-            # General range - enumerate all k values
-            clauses = []
-            for k in range(min_true, max_true + 1):
-                clauses.extend(self._exactly_k_combinations(arguments, k))
 
-        if len(clauses) == 0:
+        # Trivial cases
+        if min_true > max_true or min_true > n:
             return FALSE()
-        elif len(clauses) == 1:
-            return clauses[0]
-        else:
-            return Or(*clauses)
+        if min_true <= 0 and max_true >= n:
+            return TRUE()
+
+        # ========== Specialized encodings ==========
+
+        # All false: max_true == 0
+        if max_true == 0:
+            return And(*[Not(a) for a in arguments])
+
+        # All true: min_true == n
+        if min_true == n:
+            return And(*arguments) if n > 1 else arguments[0]
+
+        # At-least-1: min_true >= 1 and max_true == n
+        # (DNF would enumerate all 2^n - 1 combinations with at least one true)
+        if min_true == 1 and max_true == n:
+            return Or(*arguments) if n > 1 else arguments[0]
+
+        # ========== Fallback: DNF expansion ==========
+        combinations = []
+        for k in range(min_true, max_true + 1):
+            combinations.extend(self._exactly_k_combinations(arguments, k))
+        if not combinations:
+            return FALSE()
+        if len(combinations) == 1:
+            return combinations[0]
+        return Or(*combinations)
 
     def _expand_count_vs_constant(
         self, count_node: FNode, value: int, op: OperatorKind
