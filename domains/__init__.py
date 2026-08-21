@@ -43,6 +43,7 @@ from .rush_hour import DOMAIN as rush_hour
 from .sailing import DOMAIN as sailing
 from .settlers import DOMAIN as settlers
 from .sokoban import DOMAIN as sokoban
+from .storytellers import DOMAIN as storytellers
 from .sugar import DOMAIN as sugar
 from .watering import DOMAIN as watering
 
@@ -68,6 +69,7 @@ DOMAINS: dict[str, Domain] = {
     "sailing": sailing,
     "settlers": settlers,
     "sokoban": sokoban,
+    "storytellers": storytellers,
     "sugar": sugar,
     "watering": watering,
 }
