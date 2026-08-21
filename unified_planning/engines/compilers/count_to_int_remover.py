@@ -250,9 +250,7 @@ class CountToIntRemover(engines.engine.Engine, CompilerMixin):
             return expression
 
         if expression.is_count():
-            print(f"[DEBUG count] arg count: {len(expression.args)}")
             for i, arg in enumerate(expression.args):
-                print(f"[DEBUG count]   arg[{i}]: {arg}")
                 self._check_argument(arg)
             sum_args = []
             for arg in expression.args:
@@ -344,7 +342,6 @@ class CountToIntRemover(engines.engine.Engine, CompilerMixin):
             else:
                 result = em.Plus(*sum_args)
 
-            print(f"[DEBUG count] result: {result}")
             return result
 
         new_args = [
