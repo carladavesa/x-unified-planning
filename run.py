@@ -41,118 +41,116 @@ from unified_planning.shortcuts import (
 # Each key maps a short alias to an ordered list of compilation steps.
 # Pipelines marked "numeric" keep integer fluents.
 COMPILATION_PIPELINES = {
-    # classical
+    # -------- Classical baseline --------
+    # For problems already in classical form (booleans + user types)
     "cls": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # numeric: native numeric planner
+
+    # -------- Numeric baseline --------
+    # For problems with integer fluents, targeting a numeric planner
     "num": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.BOUNDED_TYPES_REMOVING,
     ],
-    # basic + object
-    "uti_basic": [
+
+    # -------- Integer fluents (basic) --------
+    # For problems with simple integer patterns (equality, ordered comparisons, plus/minus arithmetic).
+    "uti_basic": [ # object encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # basic + binary
-    "log_basic": [
+    "log_basic": [ # binary encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "binary"}),
     ],
-    # general + object
-    "uti_general": [
+
+    # -------- Integer fluents (general) --------
+    # For problems with arbitrary integer arithmetic. Uses CP-SAT internally to compile to classical planning.
+    "uti_general": [ # object encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     # general + binary
-    "log_general": [
+    "log_general": [ # binary encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # Count -> bool, (usertype removed)
-    "count_bool": [
+
+    # -------- Count expressions --------
+    # For problems with Count expressions in preconditions or goals
+    "count_bool": [ # Count -> DNF, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.COUNT_TO_BOOL_REMOVING,
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # Count -> int, general + object
-    "count_uti_general": [
+    "count_num": [ # Count -> integer sum, numeric planner
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        CompilationKind.COUNT_TO_INT_REMOVING,
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "count_uti_general": [ # Count -> integer sum -> object encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.COUNT_TO_INT_REMOVING,
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # Count -> int, general + binary
-    "count_log_general": [
+    "count_log_general": [ # Count -> integer sum -> binary encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.COUNT_TO_INT_REMOVING,
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # Count -> int, native numeric planner
-    "count_num": [  # numeric
-        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
-        CompilationKind.COUNT_TO_INT_REMOVING,
-        CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "set_count": [
-        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
-        CompilationKind.COUNT_TO_BOOL_REMOVING,
-        CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "set_count_num": [
-        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
-        CompilationKind.COUNT_TO_INT_REMOVING,
-        CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "set_count_num_uti": [
-        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
-        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
-        CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "set_count_num_log": [
-        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
-        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
-        CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "set_num": [
+
+    # -------- Set fluents --------
+    # For problems with set fluents. The cardinality of a set can be handled in two ways:
+    # as an auxiliary integer fluent (cardinality_encoding='integer'),
+    # or as a Count expression over membership predicates (cardinality_encoding='count').
+    "set_num": [ # Sets -> integer cardinality, numeric planner
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
+    "set_count_bool": [ # Sets -> Count cardinality -> DNF, classical output
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        CompilationKind.COUNT_TO_BOOL_REMOVING,
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "set_count_num": [ # Sets -> Count -> integer sum, numeric planner
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        CompilationKind.QUANTIFIERS_REMOVING,
+        CompilationKind.COUNT_TO_INT_REMOVING,
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "set_count_uti_general": [ # Sets -> Count -> int -> object, classical output
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        CompilationKind.QUANTIFIERS_REMOVING,
+        CompilationKind.COUNT_TO_INT_REMOVING,
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "set_count_log_general": [ # Sets -> Count -> int -> binary, classical output
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        CompilationKind.QUANTIFIERS_REMOVING,
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+
     "none": [],
 }
-
-    #"sc": [
-    #    CompilationKind.SET_FLUENTS_REMOVING,
-    #    #CompilationKind.COUNT_TO_BOOL_REMOVING,
-    #    CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    #],
-    #"sci": [
-    #    CompilationKind.SET_FLUENTS_REMOVING,
-    #    #CompilationKind.COUNT_TO_INT_REMOVING,
-    #    #CompilationKind.INTEGER_FLUENTS_REMOVING,
-    #    # CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    #],
-    #"scin": [  # numeric
-    #    CompilationKind.SET_FLUENTS_REMOVING,
-    #    CompilationKind.COUNT_TO_INT_REMOVING,
-    #    # CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    #],
 
 # Maps a base solver name to its mode-specific variant.
 SOLVER_MODES = {
@@ -311,19 +309,26 @@ def solve_problem(
                 _check_support(planner, problem)
                 solution_count = 0
                 anytime_kwargs = {"timeout": timeout} if timeout > 0 else {}
+
+                # Collect solutions but time each individually
+                all_results = []
                 for res in planner.get_solutions(problem, **anytime_kwargs):
                     solution_count += 1
-                    print(f"\n--- Solution {solution_count} ---")
+                    all_results.append(res)
 
+                # Stop the solving timer BEFORE validation/postprocessing
+                signal.alarm(0)
+                solving_time = time.time() - start_time
+                # Now process/validate solutions (not counted in solving time)
+                for idx, res in enumerate(all_results, start=1):
+                    print(f"\n--- Solution {idx} ---")
                     plan = res.plan
-                    # Validate plan
                     from unified_planning.shortcuts import PlanValidator
                     try:
                         with PlanValidator(problem_kind=problem.kind) as validator:
                             is_valid = validator.validate(problem, plan)
                         if not is_valid:
                             print("Plan is not valid!")
-
                     except UPNoSuitableEngineAvailableException:
                         print("Plan cannot be validated!")
                     for comp_result in reversed(compilation_results):
@@ -333,15 +338,17 @@ def solve_problem(
                     print(plan)
                     print(f"\nActions: {len(plan.actions)}")
 
-            signal.alarm(0)
-            solving_time = time.time() - start_time
-            print(f"\nFound {solution_count} solution(s)")
-            return solving_time
+                print(f"\nFound {solution_count} solution(s)")
+                return solving_time
 
         else:
             with OneshotPlanner(name=resolved_name, params=params) as planner:
                 #_check_support(planner, problem)
                 result = planner.solve(problem, output_stream=sys.stdout)
+
+                signal.alarm(0)
+                solving_time = time.time() - start_time
+
                 if result.plan is not None:
                     print("Solution found!\n")
                     plan = result.plan
@@ -366,8 +373,6 @@ def solve_problem(
                     print("No solution found")
                     print(f"Status: {result.status}")
 
-                signal.alarm(0)
-                solving_time = time.time() - start_time
                 return solving_time
 
     except TimeoutException:
@@ -396,6 +401,7 @@ def compile_and_solve(
     solve_time = 0
 
     try:
+        print(problem)
         compiled_problem, comp_results, comp_time = compile_problem(problem, compilation, timeout)
         print(compiled_problem)
         remaining_timeout = 0 if timeout == 0 else max(1, timeout - int(comp_time))
