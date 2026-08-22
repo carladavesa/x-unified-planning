@@ -90,14 +90,9 @@ class DumpTrucksDomain(Domain):
         connects = Fluent('connects', SetType(Location), l=Location)  # locations connected from a location
 
         em = problem.environment.expression_manager
-        # Com gestiona auto_promote cada cas?
-        print("set buit:", em.auto_promote(set()))
-        print("set ple:", em.auto_promote({l2}))
-        print("EMPTY_SET:", em.auto_promote(em.EMPTY_SET()))
 
         problem.add_fluent(loc_of_truck, default_initial_value=l1)
         problem.add_fluent(pat, default_initial_value=set())
-        print(problem.fluents_defaults.get(pat))
         problem.add_fluent(pin, default_initial_value=set())
         problem.add_fluent(connects, default_initial_value=set())
 
