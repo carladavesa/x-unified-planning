@@ -21,7 +21,7 @@ from ortools.sat.python import cp_model
 from unified_planning.engines.compilers.utils import (
     add_cp_constraints, add_effect_bounds_constraints, solve_with_cp_sat,
     get_fluent_exps_in_expression, evaluate_with_solution,
-    remove_write_only_fluents, requires_csp, is_complex_goal
+    remove_write_only_fluents, requires_csp, is_complex_goal, wrap_as_derived_fluent_axiom
 )
 from typing import Any, List, Iterable, Tuple
 from unified_planning.model.expression import ListExpression
@@ -1058,26 +1058,20 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             objects.update(self._extract_objects(arg))
         return objects
 
-    def _add_goal_as_axiom(self, problem: Problem, new_problem: Problem, goal_expr: FNode, i, arithmetic):
-        fluent_name = f"goal_{i}"
-        goal_fluent = Fluent(fluent_name, DerivedBoolType())
-        new_problem.add_fluent(goal_fluent, default_initial_value=FALSE())
-        new_problem.add_goal(goal_fluent)
-
+    def _add_goal_as_axiom(self, problem, new_problem, goal_expr, i, arithmetic):
         self._object_to_index = {}
-        axiom = up.model.Axiom(f"{goal_fluent}")
-        axiom.set_head(goal_fluent())
 
         if arithmetic:
-            axiom_condition = self._expand_condition_with_cp(problem, new_problem, goal_expr, {})
+            body = self._expand_condition_with_cp(problem, new_problem, goal_expr, {})
         else:
             if self.representation == 'object':
-                axiom_condition = self._transform_node_object(problem, new_problem, goal_expr)
-            else:  # binary
-                axiom_condition = self._get_new_expression(new_problem, goal_expr)
+                body = self._transform_node_object(problem, new_problem, goal_expr)
+            else:
+                body = self._get_new_expression(new_problem, goal_expr)
 
-        axiom.add_body_condition(axiom_condition)
-        new_problem.add_axiom(axiom)
+        fluent_name = f"goal_{i}"
+        goal_fluent_exp = wrap_as_derived_fluent_axiom(new_problem, body, fluent_name)
+        new_problem.add_goal(goal_fluent_exp)
 
     def _transform_goals(self, problem: Problem, new_problem: Problem) -> None:
         """Transform goals: separate arithmetic and non-arithmetic."""
