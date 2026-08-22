@@ -1147,16 +1147,42 @@ def get_fluent_exps_in_expression(node: FNode) -> set:
 
 def remove_write_only_fluents(problem: Problem) -> Problem:
     """
-    Remove fluents that never appear in preconditions or goals.
+    Remove fluents that never appear in preconditions, goals, effect conditions,
+    effect values, or axioms.
     """
     read_fluent_names = set()
+
     for action in problem.actions:
+        # Preconditions
         for prec in action.preconditions:
             for f in get_fluent_exps_in_expression(prec):
                 read_fluent_names.add(f.fluent().name)
+        # Effect conditions and values
+        for effect in action.effects:
+            if effect.condition is not None:
+                for f in get_fluent_exps_in_expression(effect.condition):
+                    read_fluent_names.add(f.fluent().name)
+            if effect.value is not None:
+                for f in get_fluent_exps_in_expression(effect.value):
+                    read_fluent_names.add(f.fluent().name)
+
+    # Goals
     for goal in problem.goals:
         for f in get_fluent_exps_in_expression(goal):
             read_fluent_names.add(f.fluent().name)
+
+    # Axioms
+    for axiom in problem.axioms:
+        for prec in axiom.preconditions:
+            for f in get_fluent_exps_in_expression(prec):
+                read_fluent_names.add(f.fluent().name)
+        for effect in axiom.effects:
+            if effect.condition is not None:
+                for f in get_fluent_exps_in_expression(effect.condition):
+                    read_fluent_names.add(f.fluent().name)
+            if effect.value is not None:
+                for f in get_fluent_exps_in_expression(effect.value):
+                    read_fluent_names.add(f.fluent().name)
 
     write_only_names = {
         fluent.name for fluent in problem.fluents
@@ -1169,7 +1195,7 @@ def remove_write_only_fluents(problem: Problem) -> Problem:
     new_problem = problem.clone()
     new_problem.clear_fluents()
     new_problem.clear_actions()
-    new_problem.initial_values.clear()
+    new_problem.explicit_initial_values.clear()
 
     for fluent in problem.fluents:
         if fluent.name not in write_only_names:
