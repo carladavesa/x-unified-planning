@@ -1,14 +1,16 @@
-"""dump_trucks planning domain.
+"""storytellers planning domain.
 
-Trucks deliver packages between locations. Packages are loaded one by one,
-and each unload operation dumps the full truck content. Exercises set fluents
-(membership, cardinality, union, add/remove).
+# A set of storytellers tell their stories to different audiences.
+# The storytellers know different (possibly intersecting) sets of stories.
+# The audiences begin having heard none of the stories.
+# Entertaining an audience leaves it having heard all the stories a storyteller knows.
+# A storyteller might tell stories an audience has already heard, adding nothing to the stories the audience knows.
 
 This module implements the dump_trucks benchmark as a `Domain`.
 It is intended to be executed via `run.py`.
 
 Example:
-  python run.py --domain dump_trucks --instance dt10 --compilation sc --solving fast-downward
+  python run.py --domain storytellers --instance st5 --compilation set_count_bool --solving fast-downward
 """
 import math
 from typing import Dict, Optional
@@ -47,15 +49,15 @@ INSTANCES: Dict[str, int] = {
 }
 
 
-class DumpTrucksDomain(Domain):
+class StorytellersDomain(Domain):
     def __init__(self) -> None:
         self._instances = INSTANCES
 
     def list_instances(self) -> dict[str, dict]:
-        return {k: {"n_packages": v} for k, v in self._instances.items()}
+        return {k: {"n_stories": v} for k, v in self._instances.items()}
 
     def get_instance(self, instance: Optional[str] = None) -> int:
-        """Return the number of packages for a named instance.
+        """Return the number of stories for a named instance.
 
         Prefer a pre-defined instance from the table. If the requested instance
         is not present, raise an error.
@@ -148,4 +150,4 @@ class DumpTrucksDomain(Domain):
         return storytellers_problem
 
 
-DOMAIN = DumpTrucksDomain()
+DOMAIN = StorytellersDomain()
