@@ -1442,7 +1442,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         new_problem.clear_actions()
         new_problem.clear_goals()
         new_problem.clear_axioms()
-        new_problem.initial_values.clear()
+        new_problem.explicit_initial_values.clear()
         new_problem.clear_quality_metrics()
 
         # Step 3: setup representation-specific structures
