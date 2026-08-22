@@ -13,7 +13,7 @@ Example:
 import math
 from typing import Dict, Optional
 
-from unified_planning.model import Action, Expression
+from unified_planning.model import Action, Expression, Variable
 from unified_planning.shortcuts import (
     And,
     Equals,
@@ -31,7 +31,7 @@ from unified_planning.shortcuts import (
     SetMember,
     SetRemove,
     SetUnion,
-    UserType,
+    UserType, Forall, GE, Or,
 )
 
 from domains.base import Domain
@@ -66,91 +66,86 @@ class DumpTrucksDomain(Domain):
             raise ValueError(f"Instance '{instance}' not found!")
 
     def build_problem(self, instance: str | None = None) -> "Problem":
-        n_packages = self.get_instance(instance)
+        n_stories = self.get_instance(instance)
 
         # --- Problem ---
-        problem = Problem('dump_trucks_problem')
+        storytellers_problem = Problem('storytellers_problem')
 
-        Location = UserType('Location')
-        l1 = Object('l1', Location)
-        l2 = Object('l2', Location)
+        Storyteller = UserType('Storyteller')
+        st1 = Object('st1', Storyteller)
+        st2 = Object('st2', Storyteller)
+        st3 = Object('st3', Storyteller)
+        st4 = Object('st4', Storyteller)
+        st5 = Object('st5', Storyteller)
 
-        Truck = UserType('Truck')
-        t1 = Object('t1', Truck)
-        t2 = Object('t2', Truck)
+        Audience = UserType('Audiences')
+        a1 = Object('a1', Audience)
+        a2 = Object('a2', Audience)
 
-        Package = UserType('Package')
-        packages = [Object(f'p{i + 1}', Package) for i in range(n_packages)]
+        storytellers_problem.add_objects([a1, a2, st1, st2, st3, st4, st5])
 
-        problem.add_objects([l1, l2, t1, t2])
-        problem.add_objects(packages)
+        objects = []
+        Stories = UserType('Stories')
+        for i in range(n_stories):
+            objects.append(Object(f's{i + 1}', Stories))
+        storytellers_problem.add_objects(objects)
 
-        loc_of_truck = Fluent('loc_of_truck', Location, t=Truck)      # where a truck is
-        pat = Fluent('pat', SetType(Package), l=Location)             # packages at a location
-        pin = Fluent('pin', SetType(Package), T=Truck)                # packages in a truck
-        connects = Fluent('connects', SetType(Location), l=Location)  # locations connected from a location
+        known = Fluent('known', SetType(Stories), st=Storyteller)
+        heard = Fluent('heard', SetType(Stories), a=Audience)
+        story_set = Fluent('story_set', SetType(Stories))
 
-        em = problem.environment.expression_manager
-        # Com gestiona auto_promote cada cas?
-        print("set buit:", em.auto_promote(set()))
-        print("set ple:", em.auto_promote({l2}))
-        print("EMPTY_SET:", em.auto_promote(em.EMPTY_SET()))
+        storytellers_problem.add_fluent(known, default_initial_value=set())
+        storytellers_problem.add_fluent(heard, default_initial_value=set())
+        storytellers_problem.add_fluent(story_set, default_initial_value=set())
 
-        problem.add_fluent(loc_of_truck, default_initial_value=l1)
-        problem.add_fluent(pat, default_initial_value=set())
-        print(problem.fluents_defaults.get(pat))
-        problem.add_fluent(pin, default_initial_value=set())
-        problem.add_fluent(connects, default_initial_value=set())
+        # initial state
+        storytellers_problem.set_initial_value(story_set, {*objects})
 
-        problem.set_initial_value(loc_of_truck(t1), l1)
-        problem.set_initial_value(loc_of_truck(t2), l2)
-        problem.set_initial_value(pat(l1), {*packages})
-        problem.set_initial_value(connects(l1), {l2})
-        problem.set_initial_value(connects(l2), {l1})
+        n_per_st = int(n_stories / 5)
+        split = 0
+        for st_n in range(5):
+            st_objects = []
+            st = storytellers_problem.object(f"st{st_n + 1}")
+            for n in range(n_per_st):
+                st_objects.append(storytellers_problem.object(f's{split + (n + 1)}'))
+            split += n_per_st
+
+            storytellers_problem.set_initial_value(known(st), {*st_objects})
 
         # --- Actions ---
-        move_truck = InstantaneousAction('move_truck', t=Truck, lfrom=Location, lto=Location)
-        t = move_truck.parameter('t')
-        lfrom = move_truck.parameter('lfrom')
-        lto = move_truck.parameter('lto')
-        move_truck.add_precondition(SetMember(lto, connects(lfrom)))
-        move_truck.add_precondition(Equals(loc_of_truck(t), lfrom))
-        move_truck.add_effect(loc_of_truck(t), lto)
-
-        load_truck = InstantaneousAction('load_truck', p=Package, t=Truck, l=Location)
-        p = load_truck.parameter('p')
-        t = load_truck.parameter('t')
-        l = load_truck.parameter('l')
-        load_truck.add_precondition(Equals(l, loc_of_truck(t)))
-        load_truck.add_precondition(SetMember(p, pat(l)))
-        load_truck.add_precondition(LT(SetCardinality(pin(t)), 2))
-        load_truck.add_effect(pat(l), SetRemove(p, pat(l)))
-        load_truck.add_effect(pin(t), SetAdd(p, pin(t)))
-
-        unload_truck = InstantaneousAction('unload_truck', t=Truck, l=Location)
-        t = unload_truck.parameter('t')
-        l = unload_truck.parameter('l')
-        unload_truck.add_precondition(Equals(l, loc_of_truck(t)))
-        unload_truck.add_effect(pat(l), SetUnion(pat(l), pin(t)))
-        unload_truck.add_effect(pin(t), set())
-
-        problem.add_actions([move_truck, load_truck, unload_truck])
+        entertain = InstantaneousAction('entertain', st=Storyteller, a=Audience)
+        st = entertain.parameter('st')
+        a = entertain.parameter('a')
+        entertain.add_effect(heard(a), SetUnion(heard(a), known(st)))
+        storytellers_problem.add_action(entertain)
 
         # --- Goals ---
-        problem.add_goal(
-            And(
-                GT(SetCardinality(SetUnion(pin(t1), pin(t2))), 5),
-                LT(SetCardinality(pin(t1)), SetCardinality(pin(t2)))
-            )
-        )
+        # audiences hear at least half of the storie
+        a_var = Variable('a_var', Audience)
+        storytellers_problem.add_goal(Forall(
+            GE(
+                SetCardinality(heard(a_var)), math.ceil(n_stories / 2)
+            ),
+            a_var
+        ))
 
-        # --- Costs ---
-        costs: Dict[Action, Expression] = {
-            move_truck: Int(1), load_truck: Int(1), unload_truck: Int(1)
-        }
-        problem.add_quality_metric(MinimizeActionCosts(costs))
+        # saturation: all stories have been heard by at least one of the audiences
+        a_stories = Variable('a_stories', Stories)
+        storytellers_problem.add_goal(Forall(
+            Or(SetMember(a_stories, heard(a1)), SetMember(a_stories, heard(a2))),
+            a_stories
+        ))
 
-        return problem
+        # equality: all audiences hear the same stories
+        #a_var2 = Variable('a_var2', Audience)
+        #storytellers_problem.add_goal(
+        #    Forall(
+        #        Equals(heard(a_var), heard(a_var2)),
+        #        a_var, a_var2
+        #    )
+        #)
+
+        return storytellers_problem
 
 
 DOMAIN = DumpTrucksDomain()
