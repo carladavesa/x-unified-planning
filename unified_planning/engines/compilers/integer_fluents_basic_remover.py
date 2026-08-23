@@ -16,7 +16,8 @@
 import math
 import unified_planning as up
 import unified_planning.engines as engines
-from unified_planning.engines.compilers.utils import remove_write_only_fluents, is_complex_goal
+from unified_planning.engines.compilers.utils import remove_write_only_fluents, is_complex_goal, \
+    wrap_as_derived_fluent_axiom
 from typing import List, Tuple
 from unified_planning.model.expression import ListExpression
 from unified_planning.model.operators import OperatorKind
@@ -1267,28 +1268,20 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
 
     def _add_goal_as_axiom(self, problem: Problem, new_problem: Problem, goal_expr: FNode, index: int) -> None:
         """Create a derived Boolean fluent and axiom for a complex goal."""
+        from unified_planning.engines.compilers.utils import wrap_as_derived_fluent_axiom
 
-        # Create a new derived Boolean fluent
-        goal_name = get_fresh_name(new_problem, f"goal_derived_{index}")
-        goal_derived_fluent = Fluent(goal_name, DerivedBoolType())
-        new_problem.add_fluent(goal_derived_fluent, default_initial_value=FALSE())
-
-        # Create the axiom
-        axiom = Axiom(goal_name, {}, new_problem.environment)
-        axiom.set_head(goal_derived_fluent)
-
-        # Transform the goal expression using transformation
         axiom_condition = self._transform_expression(goal_expr, new_problem)
 
         if axiom_condition == TRUE():
-            axiom.add_body_condition(TRUE())
-        elif axiom_condition == FALSE():
+            return
+        if axiom_condition == FALSE():
             raise UPProblemDefinitionError("Goal is unsatisfiable")
-        else:
-            axiom.add_body_condition(axiom_condition)
 
-        new_problem.add_axiom(axiom)
-        new_problem.add_goal(goal_derived_fluent())
+        fluent_name = f"goal_{index}"
+        derived_fluent_exp = wrap_as_derived_fluent_axiom(
+            new_problem, axiom_condition, fluent_name
+        )
+        new_problem.add_goal(derived_fluent_exp)
 
     def _transform_goals(self, problem: Problem, new_problem: Problem) -> None:
         """Transform goals: separate direct (simple) and complex (via axiom)."""
@@ -1305,13 +1298,22 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                 direct_goals.append(goal)
 
         # 1. Direct goals: translate and add directly
-        for goal in direct_goals:
+        for i, goal in enumerate(direct_goals):
             translated_goal = self._transform_expression(goal, new_problem)
             if translated_goal == TRUE():
                 continue
             if translated_goal == FALSE():
                 raise UPProblemDefinitionError("Goal is unsatisfiable")
-            new_problem.add_goal(translated_goal)
+            # If translation produced a disjunction (e.g., from ordered comparison
+            # in the object encoding), wrap it in an axiom to keep the goal simple
+            if translated_goal.is_or():
+                fluent_name = f"goal_{i}"
+                derived_fluent_exp = wrap_as_derived_fluent_axiom(
+                    new_problem, translated_goal, fluent_name
+                )
+                new_problem.add_goal(derived_fluent_exp)
+            else:
+                new_problem.add_goal(translated_goal)
 
         # 2. Complex goals: wrap in axiom
         for i, goal in enumerate(axiom_goals):
