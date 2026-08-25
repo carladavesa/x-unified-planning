@@ -239,7 +239,6 @@ def compile_problem(
                 results.append(result)
                 problem = result.problem
 
-        print_up_problem_size(problem)
         signal.alarm(0)
         compilation_time = time.time() - start_time
         return problem, results, compilation_time
@@ -404,6 +403,7 @@ def compile_and_solve(
         print(problem)
         compiled_problem, comp_results, comp_time = compile_problem(problem, compilation, timeout)
         print(compiled_problem)
+        print_up_problem_size(compiled_problem)
         remaining_timeout = 0 if timeout == 0 else max(1, timeout - int(comp_time))
         solve_time = solve_problem(
             compiled_problem,
