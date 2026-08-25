@@ -31,7 +31,7 @@ from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_V
 from unified_planning.engines.compilers.utils import (
     replace_action,
     get_fresh_name,
-    updated_minimize_action_costs, wrap_as_derived_fluent_axiom,
+    updated_minimize_action_costs, wrap_as_derived_fluent_axiom, check_count_argument,
 )
 from typing import Dict, Optional, Tuple, List
 from functools import partial
@@ -157,6 +157,14 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         op = node.node_type
         left_is_count = left.is_count()
         right_is_count = right.is_count()
+
+        # Validate Count arguments: reject quantifier variables
+        if left_is_count:
+            for arg in left.args:
+                check_count_argument(arg, "COUNT_TO_BOOL_REMOVING")
+        if right_is_count:
+            for arg in right.args:
+                check_count_argument(arg, "COUNT_TO_BOOL_REMOVING")
 
         if left_is_count and right.is_int_constant():
             return self._expand_count_vs_constant(left, right.constant_value(), op)

@@ -32,7 +32,7 @@ from unified_planning.model import (
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.engines.compilers.utils import (
     replace_action,
-    updated_minimize_action_costs,
+    updated_minimize_action_costs, check_count_argument,
 )
 from typing import Dict, List, Optional
 from functools import partial
@@ -219,17 +219,6 @@ class CountToIntRemover(engines.engine.Engine, CompilerMixin):
 
     # ==================== COUNT EXPRESSION REPLACEMENT ====================
 
-    def _check_argument(self, expression: FNode):
-        """Validate that a count term does not contain unresolved parameters/variables."""
-        if expression.is_variable_exp():
-            raise UPProblemDefinitionError(
-                f"The Count expression contains a Variable and cannot be evaluated!\n"
-                f"You could run the Quantifiers Remover Compiler a priori."
-            )
-        for a in expression.args:
-            self._check_argument(a)
-        return
-
     def _get_param_combinations(self, problem: Problem, signature):
         """Return all object instantiations for a parameter signature."""
         param_values = [problem.objects(param.type) for param in signature]
@@ -251,7 +240,7 @@ class CountToIntRemover(engines.engine.Engine, CompilerMixin):
 
         if expression.is_count():
             for i, arg in enumerate(expression.args):
-                self._check_argument(arg)
+                check_count_argument(arg, "COUNT_TO_INT_REMOVING")
             sum_args = []
             for arg in expression.args:
                 # Skip trivial cases

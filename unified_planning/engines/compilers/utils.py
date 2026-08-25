@@ -1246,3 +1246,19 @@ def wrap_as_derived_fluent_axiom(
     new_problem.add_axiom(axiom)
 
     return derived_fluent()
+
+
+def check_count_argument(expression: FNode, compiler_name: str) -> None:
+    """Validate that a Count argument does not contain quantifier variables.
+
+    Variables come from unresolved quantifiers (Exists/Forall). Compilers that
+    expand Count expressions statically cannot handle them; QUANTIFIERS_REMOVING
+    must be applied first. Parameters are allowed and instantiated separately.
+    """
+    if expression.is_variable_exp():
+        raise UPProblemDefinitionError(
+            f"The Count expression contains a Variable and cannot be evaluated.\n"
+            f"Apply QUANTIFIERS_REMOVING before {compiler_name}."
+        )
+    for a in expression.args:
+        check_count_argument(a, compiler_name)
