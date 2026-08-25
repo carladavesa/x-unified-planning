@@ -819,6 +819,7 @@ def check_ai_pddl_requirements(requirements: List[str]) -> bool:
         ":existential-preconditions",
         ":universal-preconditions",
         ":quantified-preconditions",
+        ":derived-predicates",
         ":conditional-effects",
         ":numeric-fluents",
         ":non-deterministic",
@@ -826,7 +827,7 @@ def check_ai_pddl_requirements(requirements: List[str]) -> bool:
         ":action-costs",
     }
     ai_pddl_planning_supported_requirements_not_up_supported = {
-        ":derived-predicates",
+        ""
     }
     non_up_supported_requirements = (
         ai_pddl_planning_supported_requirements_not_up_supported.intersection(

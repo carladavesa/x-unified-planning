@@ -21,6 +21,7 @@ from typing import Dict, Union, Callable, List, cast, Tuple
 import typing
 import unified_planning as up
 import unified_planning.model.htn as htn
+from unified_planning.model import Axiom
 from unified_planning.model.contingent import ContingentProblem
 from unified_planning.environment import Environment, get_environment
 from unified_planning.exceptions import (
@@ -114,7 +115,7 @@ class PDDLGrammar:
             + ":requirements"
             + OneOrMore(
                 one_of(
-                    ":strips :typing :negative-preconditions :disjunctive-preconditions :equality :existential-preconditions :universal-preconditions :quantified-preconditions :conditional-effects :fluents :numeric-fluents :object-fluents :adl :durative-actions :duration-inequalities :timed-initial-literals :timed-initial-effects :action-costs :hierarchy :method-preconditions :constraints :contingent :preferences :time :continuous-effects"
+                    ":strips :typing :negative-preconditions :disjunctive-preconditions :equality :existential-preconditions :universal-preconditions :quantified-preconditions :conditional-effects :fluents :numeric-fluents :object-fluents :adl :durative-actions :duration-inequalities :timed-initial-literals :timed-initial-effects :action-costs :hierarchy :method-preconditions :constraints :contingent :preferences :time :continuous-effects :derived-predicates"
                 )
             )
             + Suppress(")")
@@ -169,6 +170,14 @@ class PDDLGrammar:
             - Group(
                 OneOrMore(Group(predicate + Optional(Suppress("-") + name)))
             ).set_results_name("functions")
+            + Suppress(")")
+        )
+
+        axiom_def = Group(
+            Suppress("(")
+            + ":derived"
+            - predicate.set_results_name("head")
+            - nested_expr().set_results_name("body")
             + Suppress(")")
         )
 
@@ -275,6 +284,7 @@ class PDDLGrammar:
             + Optional(constants_def)
             + Optional(predicates_def)
             + Optional(functions_def)
+            + Group(ZeroOrMore(axiom_def)).set_results_name("axioms")
             + Group(ZeroOrMore(task_def)).set_results_name("tasks")
             + Group(ZeroOrMore(method_def)).set_results_name("methods")
             + Group(ZeroOrMore(action_def | dur_action_def)).set_results_name("actions")
@@ -406,7 +416,7 @@ class UPPDDLReader:
     def _parse_exp(
         self,
         problem: up.model.Problem,
-        act: typing.Optional[Union[up.model.Transition, htn.Method, htn.TaskNetwork]],
+        act: typing.Optional[Union[up.model.Transition, up.model.Axiom, htn.Method, htn.TaskNetwork]],
         types_map: TypesMap,
         var: Dict[str, up.model.Variable],
         exp: CustomParseResults,
@@ -1450,8 +1460,7 @@ class UPPDDLReader:
 
         has_actions_cost = False
 
-        for p in domain_res.get("predicates", []):
-            n = p[0]
+        def get_fluent_params(p: ParseResults) -> OrderedDict():
             params = OrderedDict()
             for g in p[1]:
                 try:
@@ -1471,6 +1480,11 @@ class UPPDDLReader:
                     )
                 for param_name in g.value[0]:
                     params[param_name] = param_type
+            return params
+
+        for p in domain_res.get("predicates", []):
+            n = p[0]
+            params = get_fluent_params(p)
             f = up.model.Fluent(n, self._tm.BoolType(), params, self._env)
             problem.add_fluent(f)
 
@@ -1573,6 +1587,57 @@ class UPPDDLReader:
                     task_params[p] = t
             task = htn.Task(name, task_params)
             problem.add_task(task)
+        for axiom_entry in domain_res.get("axioms", []):
+            # Each axiom should have only one predicate in the head
+            assert (
+                    len(axiom_entry["head"]) == 1
+            ), "Only one predicate in head of axiom allowed"
+
+            # Extract the fluent name from the axiom's head
+            fluent_name = axiom_entry["head"][0][0]
+
+            # Set the fluent's type to DerivedBoolType
+            problem.fluent(fluent_name)._typename = self._tm.DerivedBoolType()
+
+            # Extract and organize the axiom's parameters
+            axiom_params = OrderedDict()
+            for param_entry in axiom_entry["head"][0][1]:
+                param_name, param_type = param_entry[1][0][0], param_entry[1][1]
+                axiom_params[param_name] = types_map[
+                    param_type if len(param_entry[1]) > 1 else Object
+                ]
+
+            # Create an Axiom object with the parameters
+            axiom = Axiom("", axiom_params)
+
+            # Retrieve the current fluent
+            this_fluent = problem.fluent(fluent_name)
+
+            # Create an effect using the axiom's parameters and set it as the axiom's head
+            effect = this_fluent(*axiom.parameters)
+            axiom.set_head(effect)
+
+            # Ensure there's only one condition in the body of the axiom
+            assert (
+                    len(axiom_entry["body"]) == 1
+            ), "Only one condition in body of axiom allowed"
+
+            # Parse the condition and add it to the axiom's body
+            body_condition = self._parse_exp(
+                problem,
+                axiom,
+                types_map,
+                {},
+                CustomParseResults(axiom_entry["body"][0]),
+                domain_str,
+            )
+
+            # Add the parsed body condition to the axiom
+            axiom.add_body_condition(body_condition)
+
+            # Add the axiom to the problem
+            problem.add_axiom(axiom)
+
         for a in domain_res.get("processes", []):
             n = a["name"]
             a_params = self._get_params(a, types_map, domain_str)
