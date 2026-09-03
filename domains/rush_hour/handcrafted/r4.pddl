@@ -148,7 +148,7 @@
         (ADJACENT loc7_7 loc7_6 loc7_5)
         
         ;Define the cars 
-        (SMALL red)
+        (CAR red)
         (QUAD vehicle1)
         (CAR vehicle2)
         (QUAD vehicle3)

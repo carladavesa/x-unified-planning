@@ -148,7 +148,7 @@
         (ADJACENT loc7_7 loc7_6 loc7_5)
         
         ;Define the cars 
-        (SMALL red)
+        (CAR red)
         (CAR vehicle1)
         (CAR vehicle2)
         (CAR vehicle3)
@@ -232,8 +232,8 @@
     )
     ; Setting the goal,such that the red car will be placed in the rightmost edge
     (:goal (and
-        (containsVehicle loc_4_6 red)
-        (containsVehicle loc_4_7 red)
+        (containsVehicle loc4_6 red)
+        (containsVehicle loc4_7 red)
     ))
     (:metric minimize (total-cost))
 )
