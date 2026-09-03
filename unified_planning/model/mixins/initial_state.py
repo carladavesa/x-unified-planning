@@ -62,7 +62,15 @@ class InitialStateMixin:
             value = self._env.expression_manager.Array(value)
         fluent_exp, value_exp = self._env.expression_manager.auto_promote(fluent, value)
         assert fluent_exp.is_fluent_exp() or fluent_exp.is_array_access(), "fluent field must be a fluent or an array access"
-        for a in fluent_exp.args:
+        # Check that all the arguments of the fluent expression are constants
+        node = fluent_exp
+        while node.is_array_access():
+            if not node.arg(1).is_constant():
+                raise UPExpressionDefinitionError(
+                    f"Impossible to set the initial value of a fluent expression with no constant arguments: {fluent_exp}."
+                )
+            node = node.arg(0)
+        for a in node.args:
             if not a.is_constant():
                 raise UPExpressionDefinitionError(
                     f"Impossible to set the initial value of a fluent expression with no constant arguments: {fluent_exp}."
