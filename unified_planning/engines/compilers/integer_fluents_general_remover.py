@@ -20,7 +20,7 @@ from bidict import bidict
 from ortools.sat.python import cp_model
 from unified_planning.engines.compilers.utils import (
     add_cp_constraints, add_effect_bounds_constraints, solve_with_cp_sat,
-    get_fluent_exps_in_expression, evaluate_with_solution,
+    get_fluent_exps_in_expression, get_params_in_expression, evaluate_with_solution,
     remove_write_only_fluents, requires_csp, is_complex_goal, wrap_as_derived_fluent_axiom
 )
 from typing import Any, List, Iterable, Tuple
@@ -473,7 +473,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         return None
 
     def _create_multiple_actions(self, old_action, problem, new_problem, params, solutions, variables,
-                                 dependent_effects=None, independent_effects=None, direct_precs=None):
+                                 dependent_effects=None, independent_effects=None):
         """Create one grounded action per CP-SAT solution.
 
         Each solution fixes some variables; those become preconditions of the
@@ -482,7 +482,6 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         """
         dependent_effects = dependent_effects if dependent_effects is not None else old_action.effects
         independent_effects = independent_effects or []
-        direct_precs = direct_precs or []
 
         # Precompute fluent strings used in preconditions
         prec_fluent_strs = set()
@@ -504,10 +503,6 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             new_action = InstantaneousAction(
                 action_name, _parameters=params, _env=problem.environment
             )
-
-            # Direct preconditions (already transformed)
-            for prec in direct_precs:
-                new_action.add_precondition(prec)
 
             # Preconditions fixed by CP-SAT solution
             object_solution_conds = []
@@ -836,12 +831,15 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
             # ========== Non-integer assignment ==========
             else:
+                # Evaluate value with the CP-SAT solution to propagate constants
+                evaluated_val = evaluate_with_solution(new_problem, old_effect.value, solution)
+
                 if self.representation == 'object':
                     new_fluent = self._transform_node_object(problem, new_problem, old_effect.fluent)
-                    new_value = self._transform_node_object(problem, new_problem, old_effect.value)
+                    new_value = self._transform_node_object(problem, new_problem, evaluated_val)
                 else:  # binary
                     new_fluent = self._get_new_expression(new_problem, old_effect.fluent)
-                    new_value = self._get_new_expression(new_problem, old_effect.value)
+                    new_value = self._get_new_expression(new_problem, evaluated_val)
 
                 if not new_fluent or not new_value:
                     continue
@@ -873,60 +871,14 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             else:  # binary
                 return self._get_new_expression(new_problem, expr)
 
-        # Detect if action has any arithmetic content
-        has_arithmetic_preconditions = any(requires_csp(p) for p in old_action.preconditions)
-        has_arithmetic_effects = any(
-            effect.value.node_type in self.ARITHMETIC_OPS
-            or effect.is_increase() or effect.is_decrease()
-            or requires_csp(effect.condition)
-            for effect in old_action.effects
-        )
-
-        # ========== Case 1: no arithmetic — direct transformation ==========
-        if not has_arithmetic_preconditions and not has_arithmetic_effects:
-            new_action = InstantaneousAction(
-                old_action.name, _parameters=params, _env=problem.environment
-            )
-
-            # Preconditions
-            for old_precondition in old_action.preconditions:
-                new_precondition = transform_expr(old_precondition)
-                if new_precondition and new_precondition != TRUE():
-                    new_action.add_precondition(new_precondition)
-
-            # Effects (representation-specific handling)
-            for old_effect in old_action.effects:
-                new_cond = transform_expr(old_effect.condition)
-                if new_cond is None:
-                    new_cond = TRUE()
-
-                if self.representation == 'object':
-                    new_fluent = transform_expr(old_effect.fluent)
-                    new_value = transform_expr(old_effect.value)
-                    if new_fluent and new_value:
-                        new_action.add_effect(
-                            new_fluent, new_value, new_cond, old_effect.forall
-                        )
-                else:  # binary
-                    if old_effect.fluent.type.is_int_type():
-                        self._add_binary_int_effect(
-                            new_action, old_effect.fluent, old_effect.value,
-                            old_effect.forall, new_cond, new_problem
-                        )
-                    else:
-                        new_action.add_effect(
-                            old_effect.fluent, old_effect.value, new_cond, old_effect.forall
-                        )
-
-            return [new_action]
-
-        # ========== Case 2: arithmetic — CP-SAT expansion ==========
-
         # Classify effects: dependent (interact with preconditions) vs independent
         prec_vars = set()
         for prec in old_action.preconditions:
             for f in get_fluent_exps_in_expression(prec):
                 prec_vars.add(str(f))
+            # Add also the parameters that appear in preconditions
+            for p in get_params_in_expression(prec):
+                prec_vars.add(str(p))
 
         dependent_effects = []
         independent_effects = []
@@ -935,7 +887,9 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             if effect.is_increase() or effect.is_decrease():
                 effect_vars = get_fluent_exps_in_expression(effect.fluent)
                 value_vars = get_fluent_exps_in_expression(effect.value)
-                if any(str(v) in prec_vars for v in effect_vars | value_vars):
+                value_params = get_params_in_expression(effect.value)
+                if (any(str(v) in prec_vars for v in effect_vars | value_vars) or
+                        (any(str(p) in prec_vars for p in value_params))):
                     dependent_effects.append(effect)
                 else:
                     independent_effects.append(effect)
@@ -945,25 +899,18 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                   and effect.value.fluent().type.is_int_type()):
                 # Binary-specific: fluent copy always independent (handled via bit-level conditional effects)
                 independent_effects.append(effect)
-            elif requires_csp(effect.value):
+            else:
+                # Check if the effect value reads any fluent constrained by preconditions
                 value_vars = get_fluent_exps_in_expression(effect.value)
-                if any(str(v) in prec_vars for v in value_vars):
+                value_params = get_params_in_expression(effect.value)
+                if (any(str(v) in prec_vars for v in value_vars) or any(str(p) in prec_vars for p in value_params)):
                     dependent_effects.append(effect)
                 else:
                     independent_effects.append(effect)
-            else:
-                independent_effects.append(effect)
 
-        # Separate preconditions: those needing CP-SAT vs directly transformable
-        cp_precs = []
-        direct_precs = []
-        for prec in old_action.preconditions:
-            if requires_csp(prec):
-                cp_precs.append(prec)
-            else:
-                new_prec = transform_expr(prec)
-                if new_prec and new_prec != TRUE():
-                    direct_precs.append(new_prec)
+        # All preconditions go through CP-SAT: this enables constant propagation
+        # and consistent handling of boolean, integer, and Count expressions.
+        cp_precs = list(old_action.preconditions)
 
         # Setup CP-SAT
         self._object_to_index = {}
@@ -1006,8 +953,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         return self._create_multiple_actions(
             old_action, problem, new_problem, params, solutions, variables,
             dependent_effects=dependent_effects,
-            independent_effects=independent_effects,
-            direct_precs=direct_precs
+            independent_effects=independent_effects
         )
 
     def _transform_actions(self, problem: Problem, new_problem: Problem) -> Dict[Action, Action]:

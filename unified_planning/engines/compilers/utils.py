@@ -1145,6 +1145,15 @@ def get_fluent_exps_in_expression(node: FNode) -> set:
         result.update(get_fluent_exps_in_expression(arg))
     return result
 
+def get_params_in_expression(node):
+    params = set()
+    if node.is_parameter_exp():
+        params.add(node.parameter())
+        return params
+    for a in node.args:
+        params.update(get_params_in_expression(a))
+    return params
+
 def remove_write_only_fluents(problem: Problem) -> Problem:
     """
     Remove fluents that never appear in preconditions, goals, effect conditions,
