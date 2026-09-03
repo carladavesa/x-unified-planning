@@ -1,4 +1,4 @@
-(define (domain rush-hour-d1)
+(define (domain rush-hour-dd)
     (:requirements :typing :strips)
     (:types position vehicle - object)
 
