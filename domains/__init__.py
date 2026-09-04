@@ -42,6 +42,7 @@ from .rovers import DOMAIN as rovers
 from .rush_hour import DOMAIN as rush_hour
 from .sailing import DOMAIN as sailing
 from .settlers import DOMAIN as settlers
+from .slitherlink import DOMAIN as slitherlink
 from .sokoban import DOMAIN as sokoban
 from .storytellers import DOMAIN as storytellers
 from .sugar import DOMAIN as sugar
@@ -68,6 +69,7 @@ DOMAINS: dict[str, Domain] = {
     "rush_hour": rush_hour,
     "sailing": sailing,
     "settlers": settlers,
+    "slitherlink": slitherlink,
     "sokoban": sokoban,
     "storytellers": storytellers,
     "sugar": sugar,
