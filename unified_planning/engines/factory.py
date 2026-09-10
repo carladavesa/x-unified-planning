@@ -139,6 +139,10 @@ DEFAULT_ENGINES = {
         "unified_planning.engines.compilers.usertype_fluents_remover",
         "UsertypeFluentsRemover",
     ),
+    "up_goals_as_axioms_compiler": (
+        "unified_planning.engines.compilers.goals_as_axioms_compiler",
+        "GoalsAsAxiomsCompiler",
+    ),
     "tarski_grounder": (
         "unified_planning.engines.compilers.tarski_grounder",
         "TarskiGrounder",
@@ -223,6 +227,7 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "up_int_arrays_bits_remover",
     "up_state_invariants_remover",
     "up_usertype_fluents_remover",
+    "up_goals_as_axioms_compiler",
     "tarski_grounder",
     "fast-downward-reachability-grounder",
     "fast-downward-grounder",

@@ -21,7 +21,7 @@ from ortools.sat.python import cp_model
 from unified_planning.engines.compilers.utils import (
     add_cp_constraints, add_effect_bounds_constraints, solve_with_cp_sat,
     get_fluent_exps_in_expression, get_params_in_expression, evaluate_with_solution,
-    remove_write_only_fluents, requires_csp, is_complex_goal, wrap_as_derived_fluent_axiom
+    remove_write_only_fluents, requires_csp,
 )
 from typing import Any, List, Iterable, Tuple
 from unified_planning.model.expression import ListExpression
@@ -1032,55 +1032,31 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             objects.update(self._extract_objects(arg))
         return objects
 
-    def _add_goal_as_axiom(self, problem, new_problem, goal_expr, i, arithmetic):
+    def _add_csp_goal(self, problem, new_problem, goal_expr):
+        """Expand a CSP goal via CP-SAT and add the resulting DNF directly as a goal.
+
+        Structural simplification (wrapping in an axiom) is delegated to
+        GoalsAsAxiomsCompiler as an optional final pipeline step.
+        """
         self._object_to_index = {}
-
-        if arithmetic:
-            body = self._expand_condition_with_cp(problem, new_problem, goal_expr, {})
-        else:
-            if self.representation == 'object':
-                body = self._transform_node_object(problem, new_problem, goal_expr)
-            else:
-                body = self._get_new_expression(new_problem, goal_expr)
-
-        fluent_name = f"goal_{i}"
-        goal_fluent_exp = wrap_as_derived_fluent_axiom(new_problem, body, fluent_name)
-        new_problem.add_goal(goal_fluent_exp)
+        body = self._expand_condition_with_cp(problem, new_problem, goal_expr, {})
+        new_problem.add_goal(body)
 
     def _transform_goals(self, problem: Problem, new_problem: Problem) -> None:
-        """Transform goals: separate arithmetic and non-arithmetic."""
-        csp_goals = []
-        axiom_only_goals = []
-        direct_goals = []
+        """Translate all goals directly."""
         goals = problem.goals
         if len(goals) == 1 and goals[0].is_and():
             goals = problem.goals[0].args
 
         for goal in goals:
             if requires_csp(goal):
-                csp_goals.append(goal)
-            elif is_complex_goal(goal):
-                axiom_only_goals.append(goal)
+                self._add_csp_goal(problem, new_problem, goal)
             else:
-                direct_goals.append(goal)
-
-        # 1. Direct goals: translate and add directly
-        for goal in direct_goals:
-            if self.representation == 'object':
-                translated_goal = self._transform_node_object(problem, new_problem, goal)
-            else:  # binary
-                translated_goal = self._get_new_expression(new_problem, goal)
-            new_problem.add_goal(translated_goal)
-
-        # 2. Axiom-only goals: wrap in axiom for structural simplification
-        for i, goal in enumerate(axiom_only_goals):
-            j = len(direct_goals) + i
-            self._add_goal_as_axiom(problem, new_problem, goal, j, False)
-
-        # 3. CSP goals: each becomes an axiom whose body is solved by CP-SAT
-        for i, goal in enumerate(csp_goals):
-            j = len(direct_goals) + len(axiom_only_goals) + i
-            self._add_goal_as_axiom(problem, new_problem, goal, j, True)
+                if self.representation == 'object':
+                    translated_goal = self._transform_node_object(problem, new_problem, goal)
+                else:
+                    translated_goal = self._get_new_expression(new_problem, goal)
+                new_problem.add_goal(translated_goal)
 
     def _get_object_from_index(self, user_type, index):
         """

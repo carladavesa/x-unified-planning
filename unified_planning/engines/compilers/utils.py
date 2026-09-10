@@ -766,25 +766,6 @@ def requires_csp(node: FNode) -> bool:
     # The rest (arithmetic, <, <=, >, >=)
     return True
 
-def is_complex_goal(node):
-    """
-    True if the goal benefits from being wrapped in an axiom, either because:
-    - It would generate Exists quantifiers when translated (e.g., fluent-fluent equality).
-    - It is structurally complex (large or/and combinations).
-    """
-    # Fluent-fluent equality
-    if node.is_equals():
-        left, right = node.arg(0), node.arg(1)
-        if left.is_fluent_exp() and right.is_fluent_exp():
-            return True
-
-    # Structural complexity
-    if node.is_or() and len(node.args) >= 2:
-        return True
-    if node.is_and() and len(node.args) >= 2:
-        return True
-    return any(is_complex_goal(arg) for arg in node.args)
-
 def solve_with_cp_sat(variables, cp_model_obj):
     """
     Use CP-SAT solver to enumerate all valid value assignments.
@@ -1284,32 +1265,6 @@ def remove_write_only_fluents(problem: Problem) -> Problem:
         new_problem.add_action(new_action)
 
     return new_problem
-
-
-def wrap_as_derived_fluent_axiom(
-        new_problem: Problem,
-        body_expr: FNode,
-        fluent_name: str,
-) -> FNode:
-    """Wrap a boolean expression in a derived fluent + axiom.
-
-    Creates a new DerivedBoolType fluent with the given name, and an axiom whose
-    head is the fluent and whose body is body_expr. Returns the fluent expression
-    that can be used in place of body_expr at the call site.
-
-    Useful for keeping goals simple: instead of a disjunctive goal that degrades
-    heuristic search, the disjunction is hidden inside an axiom.
-    """
-
-    derived_fluent = Fluent(fluent_name, new_problem.environment.type_manager.DerivedBoolType())
-    new_problem.add_fluent(derived_fluent, default_initial_value=new_problem.environment.expression_manager.FALSE())
-
-    axiom = up.model.Axiom(f"{derived_fluent}")
-    axiom.set_head(derived_fluent())
-    axiom.add_body_condition(body_expr)
-    new_problem.add_axiom(axiom)
-
-    return derived_fluent()
 
 
 def check_count_argument(expression: FNode, compiler_name: str) -> None:

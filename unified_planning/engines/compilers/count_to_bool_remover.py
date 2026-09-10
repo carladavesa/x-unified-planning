@@ -29,9 +29,7 @@ from unified_planning.model import (
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.engines.compilers.utils import (
-    replace_action,
-    get_fresh_name,
-    updated_minimize_action_costs, wrap_as_derived_fluent_axiom, check_count_argument,
+    replace_action, get_fresh_name, updated_minimize_action_costs, check_count_argument,
 )
 from typing import Dict, Optional, Tuple, List
 from functools import partial
@@ -175,38 +173,24 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         else:
             raise UPValueError(f"Unexpected Count comparison structure: {node}")
 
-    def _transform_expression(self, new_problem: Problem, node: FNode, in_goal: bool = False) -> FNode:
+    def _transform_expression(self, new_problem: Problem, node: FNode) -> FNode:
         """
         Transform expressions recursively, replacing count expressions with boolean formulas.
-        When in_goal=True, Count comparisons are wrapped in derived boolean fluents + axioms
-        to keep the goal simple and avoid degrading planner heuristics with disjunctive goals.
+        Complex goals (including large disjunctions produced here) are wrapped later
+        by GoalsAsAxiomsCompiler if desired.
         """
-        if (
-            node.is_fluent_exp()
-            or node.is_parameter_exp()
-            or node.is_variable_exp()
-            or node.is_constant()
-        ):
+        if (node.is_fluent_exp() or node.is_parameter_exp()
+                or node.is_variable_exp() or node.is_constant()):
             return node
 
-        # UP normalizes all comparisons to LT, LE and EQUALS (GT/GE are rewritten)
         comparison_ops = {OperatorKind.LT, OperatorKind.LE, OperatorKind.EQUALS}
-        if node.node_type in comparison_ops and any(
-            arg.is_count() for arg in node.args
-        ):
-            dnf_expr = self._transform_count_comparison(node)
-            if in_goal:
-                fluent_name = f"count_goal_{self._axiom_counter}"
-                self._axiom_counter += 1
-                return wrap_as_derived_fluent_axiom(new_problem, dnf_expr, fluent_name)
-            return dnf_expr
+        if node.node_type in comparison_ops and any(arg.is_count() for arg in node.args):
+            return self._transform_count_comparison(node)
 
         em = new_problem.environment.expression_manager
-        new_args = [self._transform_expression(new_problem, arg, in_goal) for arg in node.args]
+        new_args = [self._transform_expression(new_problem, arg) for arg in node.args]
         if node.is_exists() or node.is_forall():
-            return em.create_node(
-                node.node_type, tuple(new_args), tuple(node.variables())
-            )
+            return em.create_node(node.node_type, tuple(new_args), tuple(node.variables()))
         return em.create_node(node.node_type, tuple(new_args)).simplify()
 
     # ==================== COUNT VS CONSTANT ====================
@@ -444,8 +428,6 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
         new_problem.clear_goals()
         new_problem.clear_quality_metrics()
 
-        self._axiom_counter = 0
-
         # Transform actions
         new_to_old: Dict[Action, Action] = {}
         for action in problem.actions:
@@ -455,7 +437,7 @@ class CountToBoolRemover(engines.engine.Engine, CompilerMixin):
 
         # Transform goals
         for goal in problem.goals:
-            new_goal = self._transform_expression(new_problem, goal, in_goal=True)
+            new_goal = self._transform_expression(new_problem, goal)
             new_problem.add_goal(new_goal)
 
         # Transform quality metrics
