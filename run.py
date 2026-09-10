@@ -148,6 +148,14 @@ COMPILATION_PIPELINES = {
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
+    "count_log_general_gaa": [  # Count -> integer sum -> binary encoding, classical output
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.COUNT_REMOVING, {"target": "int"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        CompilationKind.GOALS_AS_AXIOMS,
+    ],
 
     # -------- Set fluents --------
     # For problems with set fluents. The cardinality of a set can be handled in two ways:
