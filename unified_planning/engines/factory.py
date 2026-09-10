@@ -103,13 +103,9 @@ DEFAULT_ENGINES = {
         "unified_planning.engines.compilers.quantifiers_remover",
         "QuantifiersRemover",
     ),
-    "up_count_to_bool_remover": (
-        "unified_planning.engines.compilers.count_to_bool_remover",
-        "CountToBoolRemover",
-    ),
-    "up_count_to_int_remover": (
-        "unified_planning.engines.compilers.count_to_int_remover",
-        "CountToIntRemover",
+    "up_count_remover": (
+        "unified_planning.engines.compilers.count_remover",
+        "CountRemover",
     ),
     "up_array_fluents_remover": (
         "unified_planning.engines.compilers.array_fluents_remover",
@@ -217,8 +213,7 @@ DEFAULT_ENGINES_PREFERENCE_LIST = [
     "up_ma_conditional_effects_remover",
     "up_negative_conditions_remover",
     "up_quantifiers_remover",
-    "up_count_to_bool_remover",
-    "up_count_to_int_remover",
+    "up_count_remover",
     "up_array_fluents_remover",
     "up_set_fluents_remover",
     "up_int_parameters_and_variables_remover",
