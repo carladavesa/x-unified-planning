@@ -492,16 +492,18 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         dependent_effects = dependent_effects if dependent_effects is not None else old_action.effects
         independent_effects = independent_effects or []
 
-        # Precompute fluent strings used in preconditions
-        prec_fluent_strs = set()
+        # Precompute fluent+parameter strings used in preconditions
+        prec_var_strs = set()
         for prec in old_action.preconditions:
             for f in get_fluent_exps_in_expression(prec):
-                prec_fluent_strs.add(str(f))
+                prec_var_strs.add(str(f))
+            for p in get_params_in_expression(prec):
+                prec_var_strs.add(p.name)
 
         # Fluent strings modified by dependent effects (that shouldn't appear as preconditions)
         modified_fluent_strs = {
             str(effect.fluent) for effect in dependent_effects
-            if str(effect.fluent) not in prec_fluent_strs
+            if str(effect.fluent) not in prec_var_strs
                and not effect.is_increase() and not effect.is_decrease()
                and effect.condition.is_true()
         }
@@ -524,7 +526,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     continue
 
                 # Binary: only add preconditions for fluents that actually appear in the action's original preconditions
-                if self.representation == 'binary' and var_str not in prec_fluent_strs:
+                if self.representation == 'binary' and var_str not in prec_var_strs:
                     continue
 
                 value = solution[var_str]
@@ -535,12 +537,8 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 else:  # binary
                     self._add_binary_solution_preconditions(new_action, fnode, value, new_problem)
 
-            # Object: group into single And precondition (preserves original behavior)
-            if object_solution_conds:
-                new_action.add_precondition(
-                    And(object_solution_conds) if len(object_solution_conds) > 1
-                    else object_solution_conds[0]
-                )
+            for new_precond in object_solution_conds:
+                new_action.add_precondition(new_precond)
 
             # Dependent effects (use solution values)
             self._add_effects_for_solution(
@@ -562,6 +560,15 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
         Handles: integer fluents (bit-level), user-type fluents (Equals), and boolean fluents.
         """
+        # Parameter: emit Equals(param, object) directly
+        if fnode.is_parameter_exp():
+            param = fnode.parameter()
+            if param.type.is_user_type():
+                obj = self._get_object_from_index(param.type, value)
+                if obj is not None:
+                    new_action.add_precondition(Equals(fnode, ObjectExp(obj)))
+            return
+
         if not fnode.is_fluent_exp():
             return
         fluent = fnode.fluent()
