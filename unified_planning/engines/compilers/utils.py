@@ -782,6 +782,76 @@ def solve_with_cp_sat(variables, cp_model_obj):
     solutions = collector.solutions
     return solutions
 
+
+def compress_solutions(variables, solutions, problem):
+    """
+    Optionally compress CP-SAT solutions by grouping those differing only in
+    one variable, when that variable's grouped values cover a compressible range.
+
+    Returns a new list where each entry is either:
+    - a plain solution dict {var_name: int} (unchanged), or
+    - a solution dict where one variable's value is a set: {var_name: {v1, v2, ...}}.
+
+    Callers must decide how to consume set-valued entries.
+    """
+    if not solutions:
+        return []
+    all_vars = list(solutions[0].keys())
+    compressed = []
+    used = set()
+
+    def variable_diversity(v):
+        return len({sol[v] for sol in solutions})
+
+    ordered_vars = sorted(all_vars, key=variable_diversity, reverse=True)
+
+    for var_name in ordered_vars:
+
+        fnode = next((n for n in variables if str(n) == var_name), None)
+        if fnode is None:
+            continue
+
+        # Get domain
+        if fnode.is_fluent_exp():
+            t = fnode.fluent().type
+        elif fnode.is_parameter_exp():
+            t = fnode.parameter().type
+        else:
+            continue
+
+        if t.is_int_type():
+            domain = set(range(t.lower_bound, t.upper_bound + 1))
+        elif t.is_bool_type():
+            domain = {0, 1}
+        elif t.is_user_type():
+            domain = set(range(len(list(problem.objects(t)))))
+        else:
+            continue
+
+        groups = {}
+        for i, sol in enumerate(solutions):
+            if i in used:
+                continue
+            key = tuple((k, v) for k, v in sorted(sol.items()) if k != var_name)
+            groups.setdefault(key, []).append((i, sol[var_name]))
+
+        for key, indices_vals in groups.items():
+            if len(indices_vals) <= 1:
+                continue
+            for idx, _ in indices_vals:
+                used.add(idx)
+
+            values_set = frozenset(v for _, v in indices_vals)
+            compact = dict(key)
+            if values_set != domain:
+                compact[var_name] = values_set
+            compressed.append(compact)
+
+    for i, sol in enumerate(solutions):
+        if i not in used:
+            compressed.append(sol)
+    return compressed
+
 def add_cp_constraints(
     problem: Problem,
     node: FNode,

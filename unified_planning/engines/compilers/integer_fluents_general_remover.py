@@ -21,7 +21,7 @@ from ortools.sat.python import cp_model
 from unified_planning.engines.compilers.utils import (
     add_cp_constraints, add_effect_bounds_constraints, solve_with_cp_sat,
     get_fluent_exps_in_expression, get_params_in_expression, evaluate_with_solution,
-    remove_write_only_fluents, requires_csp,
+    remove_write_only_fluents, requires_csp, compress_solutions,
 )
 from typing import Any, List, Iterable, Tuple
 from unified_planning.model.expression import ListExpression
@@ -530,6 +530,34 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     continue
 
                 value = solution[var_str]
+                # Compressed value: expand into a disjunction
+                if isinstance(value, (frozenset, set)):
+                    values = sorted(value)
+                    if self.representation == 'object':
+                        subconds = []
+                        for v in values:
+                            c = self._create_precondition_from_variable(fnode, v, new_problem)
+                            if c:
+                                subconds.append(c)
+                        if subconds:
+                            cond = Or(*subconds) if len(subconds) > 1 else subconds[0]
+                            object_solution_conds.append(cond)
+                    else:  # binary
+                        # Build one temp action per value, collect the resulting atoms, combine with Or
+                        # Simpler: reuse builder by wrapping the added preconditions
+                        subconds = []
+                        for v in values:
+                            tmp_action = InstantaneousAction(
+                                "_tmp", _parameters=params, _env=problem.environment
+                            )
+                            self._add_binary_solution_preconditions(tmp_action, fnode, v, new_problem)
+                            subconds.extend(tmp_action.preconditions)
+                        if subconds:
+                            new_action.add_precondition(
+                                Or(*subconds) if len(subconds) > 1 else subconds[0]
+                            )
+                    continue
+
                 if self.representation == 'object':
                     cond = self._create_precondition_from_variable(fnode, value, new_problem)
                     if cond:
@@ -979,6 +1007,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             solutions = solve_with_cp_sat(variables, cp_model_obj)
             if not solutions:
                 return []
+            solutions = compress_solutions(variables, solutions, problem)
 
         self._index_to_object = {
             (t, idx): obj for (t, obj), idx in self._object_to_index.items()
