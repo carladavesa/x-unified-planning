@@ -148,12 +148,13 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
     def supports_compilation(compilation_kind: CompilationKind) -> bool:
         return compilation_kind == CompilationKind.SET_FLUENTS_REMOVING
 
-    @staticmethod
     def resulting_problem_kind(
-        problem_kind: ProblemKind, compilation_kind: Optional[CompilationKind] = None
+        self, problem_kind: ProblemKind, compilation_kind: Optional[CompilationKind] = None
     ) -> ProblemKind:
         new_kind = problem_kind.clone()
         new_kind.unset_fluents_type("SET_FLUENTS")
+        if self.cardinality_encoding == 'count':
+            new_kind.set_conditions_kind("COUNTING")
         return new_kind
 
     # ==================== FLUENT TRANSFORMATION ====================
