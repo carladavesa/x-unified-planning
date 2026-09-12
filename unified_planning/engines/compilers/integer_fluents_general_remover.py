@@ -21,7 +21,7 @@ from ortools.sat.python import cp_model
 from unified_planning.engines.compilers.utils import (
     add_cp_constraints, add_effect_bounds_constraints, solve_with_cp_sat,
     get_fluent_exps_in_expression, get_params_in_expression, evaluate_with_solution,
-    remove_write_only_fluents, requires_csp, compress_solutions,
+    remove_write_only_fluents, requires_csp, compress_solutions, get_scalar_solution_value,
 )
 from typing import Any, List, Iterable, Tuple
 from unified_planning.model.expression import ListExpression
@@ -740,8 +740,9 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
         # Fix variables to the given partial solution
         for fnode, var in list(variables.items()):
-            if str(fnode) in solution:
-                cp_model_obj.Add(var == solution[str(fnode)])
+            val = get_scalar_solution_value(solution, str(fnode))
+            if val is not None:
+                cp_model_obj.Add(var == val)
 
         cp_model_obj.Add(result_var == 1)
         true_solutions = solve_with_cp_sat(variables, cp_model_obj) or []
@@ -838,7 +839,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                         new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
                     continue
 
-                cur_val = solution.get(str(old_effect.fluent))
+                cur_val = get_scalar_solution_value(solution, str(old_effect.fluent))
                 if cur_val is None:
                     for new_eff in self._transform_increase_decrease_effect(old_effect, problem, new_problem):
                         new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)

@@ -1156,6 +1156,9 @@ def evaluate_with_solution(
         var_name = str(expr)
         if var_name in solution:
             value = solution[var_name]
+            # Compressed value: cannot fully evaluate; return expression as-is
+            if isinstance(value, (frozenset, set)):
+                return expr
             fluent = expr.fluent()
             if fluent.type.is_int_type():
                 return em.Int(value)
@@ -1336,18 +1339,9 @@ def remove_write_only_fluents(problem: Problem) -> Problem:
 
     return new_problem
 
-
-def check_count_argument(expression: FNode, compiler_name: str) -> None:
-    """Validate that a Count argument does not contain quantifier variables.
-
-    Variables come from unresolved quantifiers (Exists/Forall). Compilers that
-    expand Count expressions statically cannot handle them; QUANTIFIERS_REMOVING
-    must be applied first. Parameters are allowed and instantiated separately.
-    """
-    if expression.is_variable_exp():
-        raise UPProblemDefinitionError(
-            f"The Count expression contains a Variable and cannot be evaluated.\n"
-            f"Apply QUANTIFIERS_REMOVING before {compiler_name}."
-        )
-    for a in expression.args:
-        check_count_argument(a, compiler_name)
+def get_scalar_solution_value(solution, key):
+    """Get value from solution; return None if key absent or value is compressed."""
+    val = solution.get(key)
+    if val is None or isinstance(val, (frozenset, set)):
+        return None
+    return val
