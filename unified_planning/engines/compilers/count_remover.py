@@ -15,15 +15,15 @@
 """This module defines the count remover class."""
 import itertools
 import unified_planning.engines as engines
-from unified_planning.exceptions import UPValueError
+from unified_planning.exceptions import UPValueError, UPProblemDefinitionError
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
 from unified_planning.model import (
-    InstantaneousAction, Fluent, Variable, Parameter, Problem, Action, ProblemKind, OperatorKind, FNode, Effect
+    InstantaneousAction, Fluent, Parameter, Problem, Action, ProblemKind, OperatorKind, FNode, Effect
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.engines.compilers.utils import (
-    replace_action, get_fresh_name, updated_minimize_action_costs, check_count_argument,
+    replace_action, get_fresh_name, updated_minimize_action_costs,
 )
 from typing import Dict, Optional, Tuple, List
 from functools import partial
@@ -135,6 +135,21 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
             new_kind.set_fluents_type("INT_FLUENTS")
         return new_kind
 
+    def _check_count_argument(self, expression: FNode) -> None:
+        """Validate that a Count argument does not contain quantifier variables.
+
+        Variables come from unresolved quantifiers (Exists/Forall). Compilers that
+        expand Count expressions statically cannot handle them; QUANTIFIERS_REMOVING
+        must be applied first. Parameters are allowed and instantiated separately.
+        """
+        if expression.is_variable_exp():
+            raise UPProblemDefinitionError(
+                f"The Count expression contains a Variable and cannot be evaluated.\n"
+                f"Apply QUANTIFIERS_REMOVING before COUNT_REMOVING."
+            )
+        for a in expression.args:
+            self._check_count_argument(a)
+
     # ============================================================
     # BOOL helpers
     # ============================================================
@@ -160,8 +175,6 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
     def _bool_transform_expression(self, new_problem: Problem, node: FNode) -> FNode:
         """
         Transform expressions recursively, replacing count expressions with boolean formulas.
-        Complex goals (including large disjunctions produced here) are wrapped later
-        by GoalsAsAxiomsCompiler if desired.
         """
         if (node.is_fluent_exp() or node.is_parameter_exp()
                 or node.is_variable_exp() or node.is_constant()):
@@ -195,7 +208,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         for side in (left, right):
             if side.is_count():
                 for arg in side.args:
-                    check_count_argument(arg, "COUNT_TO_BOOL_REMOVING")
+                    self._check_count_argument(arg)
 
         if left_is_count and right.is_int_constant():
             return self._bool_expand_count_vs_constant(left, right.constant_value(), op)
@@ -431,7 +444,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         """Expand a single Count expression as a sum of helper fluents."""
         em = problem.environment.expression_manager
         for arg in count_expr.args:
-            check_count_argument(arg, "COUNT_REMOVING")
+            self._check_count_argument(arg)
         sum_args = []
         for arg in count_expr.args:
             if arg.is_false():
