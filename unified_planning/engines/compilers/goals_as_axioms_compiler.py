@@ -152,11 +152,7 @@ class GoalsAsAxiomsCompiler(engines.engine.Engine, CompilerMixin):
         new_problem = problem.clone()
         new_problem.clear_goals()
 
-        goals = problem.goals
-        if len(goals) == 1 and goals[0].is_and():
-            goals = list(goals[0].args)
-
-        for i, goal in enumerate(goals):
+        for i, goal in enumerate(problem.goals):
             if self.is_complex_goal(goal):
                 fluent_name = f"goal_{i}"
                 new_goal = self.wrap_as_derived_fluent_axiom(new_problem, goal, fluent_name)
