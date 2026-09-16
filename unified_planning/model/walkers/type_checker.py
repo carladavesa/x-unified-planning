@@ -537,13 +537,26 @@ class TypeChecker(walkers.dag.DagWalker):
     ) -> Optional["unified_planning.model.types.Type"]:
         assert expression is not None
         assert expression.is_set_member()
+
         element_type = args[0]
         set_type = args[1]
         if element_type is None:
             return None
-        if element_type != set_type.elements_type:
-            return None
-        return BOOL
+
+        elements_type = set_type.elements_type
+        # Exact match (user-types, bool, etc.)
+        if element_type == elements_type:
+            return BOOL
+        # Int subtype: element's range fits within the set's element range
+        if element_type.is_int_type() and elements_type.is_int_type():
+            el_lb, el_ub = element_type.lower_bound, element_type.upper_bound
+            set_lb, set_ub = elements_type.lower_bound, elements_type.upper_bound
+            # None bounds mean unbounded — treat conservatively
+            if (el_lb is not None and set_lb is not None
+                    and el_ub is not None and set_ub is not None
+                    and el_lb >= set_lb and el_ub <= set_ub):
+                return BOOL
+        return None
 
     @walkers.handles(OperatorKind.SET_SUBSETEQ)
     def walk_subseteq(
@@ -582,12 +595,44 @@ class TypeChecker(walkers.dag.DagWalker):
     @walkers.handles(
         OperatorKind.SET_ADD,
         OperatorKind.SET_REMOVE,
+    )
+    def walk_set_element_op(
+            self, expression: FNode, args: List["unified_planning.model.types.Type"]
+    ) -> Optional["unified_planning.model.types.Type"]:
+        """SetAdd/SetRemove: arg(0) is the set, arg(1) is the element. Return the set's type."""
+        assert expression is not None
+        set_type = args[0]
+        element_type = args[1]
+        # Validate compatibility (like walk_member does)
+        if element_type is None or not hasattr(set_type, 'elements_type'):
+            return None
+        elements_type = set_type.elements_type
+        if element_type == elements_type:
+            return set_type
+        # Int subtype
+        if element_type.is_int_type() and elements_type.is_int_type():
+            el_lb, el_ub = element_type.lower_bound, element_type.upper_bound
+            set_lb, set_ub = elements_type.lower_bound, elements_type.upper_bound
+            if (el_lb is not None and set_lb is not None
+                    and el_ub is not None and set_ub is not None
+                    and el_lb >= set_lb and el_ub <= set_ub):
+                return set_type
+        return None
+
+    @walkers.handles(
         OperatorKind.SET_UNION,
         OperatorKind.SET_INTERSECT,
-        OperatorKind.SET_DIFFERENCE
+        OperatorKind.SET_DIFFERENCE,
     )
-    def walk_set_to_set(
-        self, expression: FNode, args: List["unified_planning.model.types.Type"]
+    def walk_set_set_op(
+            self, expression: FNode, args: List["unified_planning.model.types.Type"]
     ) -> Optional["unified_planning.model.types.Type"]:
+        """SetUnion/Intersect/Difference: both args are sets with compatible element types."""
         assert expression is not None
-        return self.environment.type_manager.SetType(args[1].elements_type)
+        set1 = args[0]
+        set2 = args[1]
+        if not hasattr(set1, 'elements_type') or not hasattr(set2, 'elements_type'):
+            return None
+        if set1.elements_type != set2.elements_type:
+            return None
+        return self.environment.type_manager.SetType(set1.elements_type)
