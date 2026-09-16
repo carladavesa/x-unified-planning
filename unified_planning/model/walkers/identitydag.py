@@ -115,6 +115,61 @@ class IdentityDagWalker(walkers.dag.DagWalker):
     ) -> FNode:
         return self.manager.Array(expression.array_constant_value())
 
+    def walk_array_access(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.ArrayAccess(args[0], args[1])
+
+    def walk_set_constant(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.Set(set(expression.constant_value()))
+
+    def walk_set_member(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.SetMember(args[0], args[1])
+
+    def walk_set_subseteq(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.SetSubseteq(args[0], args[1])
+
+    def walk_set_disjoint(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.SetDisjoint(args[0], args[1])
+
+    def walk_set_cardinality(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.SetCardinality(args[0])
+
+    def walk_set_add(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.SetAdd(args[0], args[1])
+
+    def walk_set_remove(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.SetRemove(args[0], args[1])
+
+    def walk_set_union(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.SetUnion(args[0], args[1])
+
+    def walk_set_intersect(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.SetIntersection(args[0], args[1])
+
+    def walk_set_difference(
+            self, expression: FNode, args: List[FNode], **kwargs
+    ) -> FNode:
+        return self.manager.SetDifference(args[0], args[1])
+
     def walk_param_exp(self, expression: FNode, args: List[FNode], **kwargs) -> FNode:
         return self.manager.ParameterExp(expression.parameter())
 
