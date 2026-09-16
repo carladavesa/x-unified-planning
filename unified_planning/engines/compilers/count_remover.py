@@ -417,14 +417,37 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
     # INT helpers
     # ============================================================
 
-    def _int_transform_action_preconditions(self, new_problem, action):
-        """Rewrite preconditions; populates _count_registry."""
+    def _int_transform_action(self, new_problem, action):
+        """Rewrite preconditions AND effect conditions/values; populates _count_registry."""
         new_action = action.clone()
         new_action.clear_preconditions()
+        new_action.clear_effects()
+
+        # Transform preconditions
         for precondition in action.preconditions:
             new_action.add_precondition(
                 self._int_replace_count_with_fluents(new_problem, precondition)
             )
+
+        # Transform effects (conditions and values)
+        for effect in action.effects:
+            new_fluent = self._int_replace_count_with_fluents(new_problem, effect.fluent)
+            new_value = self._int_replace_count_with_fluents(new_problem, effect.value)
+            new_condition = self._int_replace_count_with_fluents(new_problem, effect.condition)
+
+            if effect.is_increase():
+                new_action.add_increase_effect(
+                    new_fluent, new_value, new_condition, effect.forall
+                )
+            elif effect.is_decrease():
+                new_action.add_decrease_effect(
+                    new_fluent, new_value, new_condition, effect.forall
+                )
+            else:
+                new_action.add_effect(
+                    new_fluent, new_value, new_condition, effect.forall
+                )
+
         return new_action
 
     def _int_replace_count_with_fluents(self, problem: Problem, expression: FNode) -> FNode:
@@ -730,7 +753,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
             transform_goal = self._bool_transform_expression
             post_process = None
         else:  # int
-            transform_action = self._int_transform_action_preconditions
+            transform_action = self._int_transform_action
             transform_goal = self._int_replace_count_with_fluents
             post_process = self._int_generate_count_effects
 
