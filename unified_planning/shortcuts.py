@@ -553,7 +553,7 @@ def SetCardinality(set_expr: SetExpression) -> FNode:
     """
     return get_environment().expression_manager.SetCardinality(set_expr)
 
-def SetAdd(element: Expression, set_expr: SetExpression) -> FNode:
+def SetAdd(set_expr: SetExpression, element: Expression) -> FNode:
     """
     Creates an expression of the form:
         ``set_expr.add(element)``.
@@ -561,9 +561,9 @@ def SetAdd(element: Expression, set_expr: SetExpression) -> FNode:
     :param set_expr: The set expression (can be a fluent returning a set or a set constant).
     :return: The created ``SetAdd`` expression.
     """
-    return get_environment().expression_manager.SetAdd(element, set_expr)
+    return get_environment().expression_manager.SetAdd(set_expr, element)
 
-def SetRemove(element: Expression, set_expr: SetExpression) -> FNode:
+def SetRemove(set_expr: SetExpression, element: Expression) -> FNode:
     """
     Creates an expression of the form:
         ``set_expr.remove(element)``.
@@ -571,7 +571,7 @@ def SetRemove(element: Expression, set_expr: SetExpression) -> FNode:
     :param set_expr: The set expression (can be a fluent returning a set or a set constant).
     :return: The created ``SetRemove`` expression.
     """
-    return get_environment().expression_manager.SetRemove(element, set_expr)
+    return get_environment().expression_manager.SetRemove(set_expr, element)
 
 def SetUnion(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode:
     """

@@ -53,10 +53,14 @@ TimeExpression = Union[
 ListExpression = Union[
     list,
     List["Expression"],
+    "up.model.fnode.FNode",
+    "up.model.fluent.Fluent",
 ]
 SetExpression = Union[
     set,
     Set["Expression"],
+    "up.model.fnode.FNode",
+    "up.model.fluent.Fluent",
 ]
 Expression = Union[
     TimeExpression,
@@ -293,7 +297,7 @@ class ExpressionManager(object):
         """
         | Creates an expression of the form:
 
-            * ``SetMember(element,set_expr)``
+            * ``element ∈ set_expr``
 
         | Restriction: ``set_expr`` must be of ``set type`` and ``element`` must be of the same type as the elements
         of the set.
@@ -311,7 +315,7 @@ class ExpressionManager(object):
         """
         | Creates an expression of the form:
 
-            * ``SetSubseteq(set_expr1,set_expr2)``
+            * ``set_expr1 ⊆ set_expr2``
 
         | Restriction: ``set_expr1`` and ``set_expr1`` must be of ``set type`` and the elements have to be of the same type.
 
@@ -328,7 +332,7 @@ class ExpressionManager(object):
         """
         | Creates an expression of the form:
 
-            * ``disjoint(set_expr1,set_expr2)``
+            * ``set_expr1 ∩ set_expr2 == ∅``
 
         | Restriction: ``set_expr1`` and ``set_expr1`` must be of ``set type`` and the elements have to be of the same type.
 
@@ -343,7 +347,7 @@ class ExpressionManager(object):
         """
         | Creates an expression of the form:
 
-            * ``Cardinality(set_expr)``
+            * ``|set_expr|``
 
         | Returns the number of elements in the set.
 
@@ -357,12 +361,12 @@ class ExpressionManager(object):
         return self.create_node(node_type=OperatorKind.SET_CARDINALITY, args=(set_expr,))
 
     def SetAdd(
-            self, element: Expression, set_expr: SetExpression
+            self, set_expr: SetExpression, element: Expression
     ) -> "up.model.fnode.FNode":
         """
         | Creates an expression that adds an element to a set:
 
-            * ``SetAdd(set_expr, element)`` equivalent to ``set_expr u {element}``
+            * ``set_expr u {element}``
 
         | Restriction: ``set_expr`` must be of ``set type`` and ``element`` must be
           of the same type as the elements of the set.
@@ -374,15 +378,15 @@ class ExpressionManager(object):
         set_expr, element = self.auto_promote(set_expr, element)
         if set_expr == self.EMPTY_SET():
             return self.Set({element})
-        return self.create_node(node_type=OperatorKind.SET_ADD, args=(element, set_expr))
+        return self.create_node(node_type=OperatorKind.SET_ADD, args=(set_expr, element))
 
     def SetRemove(
-            self, element: Expression, set_expr: SetExpression
+            self, set_expr: SetExpression, element: Expression
     ) -> "up.model.fnode.FNode":
         """
         | Creates an expression that removes an element from a set:
 
-            * ``SetRemove(set_expr, element)`` equivalent to ``set_expr\{element}``
+            * ``set_expr \\ {element}``
 
         | Restriction: ``set_expr`` must be of ``set type`` and ``element`` must be
           of the same type as the elements of the set.
@@ -394,7 +398,7 @@ class ExpressionManager(object):
         set_expr, element = self.auto_promote(set_expr, element)
         if set_expr == self.EMPTY_SET():
             return self.EMPTY_SET()
-        return self.create_node(node_type=OperatorKind.SET_REMOVE, args=(element, set_expr))
+        return self.create_node(node_type=OperatorKind.SET_REMOVE, args=(set_expr, element))
 
     def SetUnion(
             self, set_expr1: SetExpression, set_expr2: SetExpression
@@ -402,7 +406,7 @@ class ExpressionManager(object):
         """
         | Creates a union of sets:
 
-            * ``SetUnion(set1, set2)`` equivalent to ``set1 ∪ set2`` FOR THE MOMENT ONLY 2
+            * ``set1 ∪ set2``
 
         | This function has polymorphic n-arguments.
         | Restriction: All arguments must be of ``set type`` with the same element type.
@@ -420,7 +424,7 @@ class ExpressionManager(object):
         """
         | Creates an intersection of sets:
 
-            * ``SetIntersection(set_expr1, set_expr2)`` equivalent to ``set_expr1 ∩ set_expr2``
+            * ``set_expr1 ∩ set_expr2``
 
         | This function has polymorphic n-arguments.
         | Restriction: All arguments must be of ``set type`` with the same element type.
@@ -438,7 +442,7 @@ class ExpressionManager(object):
         """
         | Creates a set difference:
 
-            * ``SetDifference(set_expr1, set_expr2)`` equivalent to ``set_expr1\set_expr2``
+            * ``set_expr1 \\ set_expr2``
 
         | Restriction: Both arguments must be of ``set type`` with the same element type.
 
@@ -582,14 +586,14 @@ class ExpressionManager(object):
         return self.create_node(node_type=OperatorKind.IFF, args=(left, right))
 
     def Exists(
-        self, expression: BoolExpression, *vars: "up.model.variable.Variable"
+        self, expression: BoolExpression, *vars: Union["unified_planning.model.Variable", "unified_planning.model.IntVariable"]
     ) -> "up.model.fnode.FNode":
         """
         Creates an expression of the form:
             ``Exists (var[0]... var[n]) | expression``
 
         Restriction: expression must be of ``boolean type`` and
-        vars must be of ``Variable`` type
+        vars must be of ``Variable`` or ``IntVariable`` type
 
         :param expression: The main expression of the ``existential``. The expression should contain
             the given ``variables``.
@@ -615,7 +619,7 @@ class ExpressionManager(object):
             ``Forall (var[0]... var[n]) | expression``
 
         Restriction: expression must be of ``boolean type`` and
-        vars must be of ``Variable`` type
+        vars must be of ``Variable`` or ``IntVariable`` type
 
         :param expression: The main expression of the ``universal`` quantifier. The expression should contain
             the given ``variables``.

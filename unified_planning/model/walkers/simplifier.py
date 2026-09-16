@@ -393,88 +393,116 @@ class Simplifier(walkers.dag.DagWalker):
 
     def walk_set_member(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
-        if args[0] == self.manager.EMPTY_SET():
+        element, set_expr = args[0], args[1]
+        if set_expr == self.manager.EMPTY_SET():
             return self.manager.FALSE()
-        if args[0].is_constant() and args[1].is_constant():
-            if args[0].constant_value() in args[1].constant_value():
+        if element.is_constant() and set_expr.is_constant():
+            if element in set_expr.constant_value():
                 return self.manager.TRUE()
-        return self.manager.SetMember(args[0], args[1])
+            return self.manager.FALSE()
+        return self.manager.SetMember(element, set_expr)
 
     def walk_set_subseteq(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
-        if args[0] == self.manager.EMPTY_SET():
-            return self.manager.FALSE()
-        if args[0].is_constant() and args[1].is_constant():
-            if args[0].constant_value() in args[1].constant_value():
-                return self.manager.TRUE()
-        return self.manager.SetSubseteq(args[0], args[1])
+        set1, set2 = args[0], args[1]
+        # Empty set is subset of anything
+        if set1 == self.manager.EMPTY_SET():
+            return self.manager.TRUE()
+        # Both constant
+        if set1.is_constant() and set2.is_constant():
+            s1 = set(set1.constant_value())
+            s2 = set(set2.constant_value())
+            return self.manager.TRUE() if s1.issubset(s2) else self.manager.FALSE()
+        return self.manager.SetSubseteq(set1, set2)
 
     def walk_set_disjoint(self, expression: FNode, args: List[FNode]) -> FNode:
-        # la interseccio es buida?
         assert len(args) == 2
-        if args[0] == self.manager.EMPTY_SET() or args[1] == self.manager.EMPTY_SET():
+        set1, set2 = args[0], args[1]
+        if set1 == self.manager.EMPTY_SET() or set2 == self.manager.EMPTY_SET():
             return self.manager.TRUE()
-        return self.manager.SetDisjoint(args[0], args[1])
+        # Both constant
+        if set1.is_constant() and set2.is_constant():
+            s1 = set(set1.constant_value())
+            s2 = set(set2.constant_value())
+            return self.manager.TRUE() if s1.isdisjoint(s2) else self.manager.FALSE()
+        return self.manager.SetDisjoint(set1, set2)
 
     def walk_set_cardinality(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 1
-        # mirar els elements del set... si a;gun es constant,
-        if args[0] == self.manager.EMPTY_SET():
+        set_expr = args[0]
+        if set_expr == self.manager.EMPTY_SET():
             return self.manager.Int(0)
-        if args[0].is_constant():
-            return self.manager.Int(len(args[0].constant_value()))
-        return self.manager.SetCardinality(args[0])
+        if set_expr.is_constant():
+            return self.manager.Int(len(set_expr.constant_value()))
+        return self.manager.SetCardinality(set_expr)
 
     def walk_set_add(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
-        if args[1] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[0])
-        # if the set is constant, add the element if it is not already in
-        if args[1].is_constant():
-            new_args = args[1].constant_value().add(args[0])
-            return self.manager.Set(new_args)
-        return self.manager.SetAdd(*args)
+        set_expr, element = args[0], args[1]
+        # Adding to empty set
+        if set_expr == self.manager.EMPTY_SET():
+            return self.manager.Set({element})
+        # Both constant
+        if set_expr.is_constant() and element.is_constant():
+            new_elements = set(set_expr.constant_value())
+            new_elements.add(element)
+            return self.manager.Set(new_elements)
+        return self.manager.SetAdd(set_expr, element)
 
     def walk_set_remove(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
-        if args[1] == self.manager.EMPTY_SET():
+        set_expr, element = args[0], args[1]
+        if set_expr == self.manager.EMPTY_SET():
             return self.manager.EMPTY_SET()
-       # if the set is constant, remove the
-        if args[1].is_constant():
-            new_args = []
-            for a in args[1].constant_value():
-                if a != args[0].constant_value():
-                    new_args.append(a)
-
-        return self.manager.SetRemove(*args)
+        # Both constant
+        if set_expr.is_constant() and element.is_constant():
+            new_elements = set(set_expr.constant_value())
+            new_elements.discard(element)
+            return self.manager.Set(new_elements)
+        return self.manager.SetRemove(set_expr, element)
 
     def walk_set_union(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
-        if args[1] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[0])
-        elif args[0] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[1])
-
-        # implementar simplificador!
-        return self.manager.SetUnion(*args)
+        set1, set2 = args[0], args[1]
+        if set1 == self.manager.EMPTY_SET():
+            return set2
+        if set2 == self.manager.EMPTY_SET():
+            return set1
+        # Both constant
+        if set1.is_constant() and set2.is_constant():
+            return self.manager.Set(set(set1.constant_value()) | set(set2.constant_value()))
+        # Same operand
+        if set1 == set2:
+            return set1
+        return self.manager.SetUnion(set1, set2)
 
     def walk_set_intersect(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
-        if args[0] == self.manager.EMPTY_SET() or args[1] == self.manager.EMPTY_SET():
+        set1, set2 = args[0], args[1]
+        if set1 == self.manager.EMPTY_SET() or set2 == self.manager.EMPTY_SET():
             return self.manager.EMPTY_SET()
-
-        # implementar simplificador!
-        return self.manager.SetIntersection(*args)
+        # Both constant
+        if set1.is_constant() and set2.is_constant():
+            return self.manager.Set(set(set1.constant_value()) & set(set2.constant_value()))
+        # Same operand
+        if set1 == set2:
+            return set1
+        return self.manager.SetIntersection(set1, set2)
 
     def walk_set_difference(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
-        if args[1] == self.manager.EMPTY_SET():
-            return self.manager.Set(args[0])
-        elif args[0] == self.manager.EMPTY_SET():
+        set1, set2 = args[0], args[1]
+        if set2 == self.manager.EMPTY_SET():
+            return set1
+        if set1 == self.manager.EMPTY_SET():
             return self.manager.EMPTY_SET()
-
-        # implementar simplificador!
-        return self.manager.SetIntersection(*args)
+        # Both constant
+        if set1.is_constant() and set2.is_constant():
+            return self.manager.Set(set(set1.constant_value()) - set(set2.constant_value()))
+        # Same operand
+        if set1 == set2:
+            return self.manager.EMPTY_SET()
+        return self.manager.SetDifference(set1, set2)
 
     def walk_plus(self, expression: FNode, args: List[FNode]) -> FNode:
         new_args_plus: List[FNode] = list()
