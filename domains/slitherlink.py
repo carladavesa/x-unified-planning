@@ -178,14 +178,8 @@ class SlitherlinkDomain(Domain):
 
         problem = Problem("slitherlink_problem")
 
-        node_degree = Fluent(
-            "node_degree",
-            ArrayType(rows + 1, ArrayType(cols + 1, IntType(0, 2))),
-        )
-        cell_capacity = Fluent(
-            "cell_capacity",
-            ArrayType(rows, ArrayType(cols, IntType(0, 4))),
-        )
+        node_degree = Fluent("node_degree", ArrayType(rows + 1, ArrayType(cols + 1, IntType(0, 2))))
+        cell_capacity = Fluent("cell_capacity", ArrayType(rows, ArrayType(cols, IntType(0, 4))))
         h_edge = Fluent(
             "h_edge",
             ArrayType(rows + 1, ArrayType(cols, BoolType())),
@@ -226,10 +220,10 @@ class SlitherlinkDomain(Domain):
             )
         )
         link_h_inner.add_effect(h_edge[r][c], True)
-        link_h_inner.add_effect(node_degree[r][c], Plus(node_degree[r][c], 1))
-        link_h_inner.add_effect(node_degree[r][c + 1], Plus(node_degree[r][c + 1], 1))
-        link_h_inner.add_effect(cell_capacity[r - 1][c], Minus(cell_capacity[r - 1][c], 1))
-        link_h_inner.add_effect(cell_capacity[r][c], Minus(cell_capacity[r][c], 1))
+        link_h_inner.add_increase_effect(node_degree[r][c], 1)
+        link_h_inner.add_increase_effect(node_degree[r][c + 1], 1)
+        link_h_inner.add_decrease_effect(cell_capacity[r - 1][c], 1)
+        link_h_inner.add_decrease_effect(cell_capacity[r][c], 1)
         link_h_inner.add_effect(
             disable_link_0_0,
             True,
@@ -249,9 +243,9 @@ class SlitherlinkDomain(Domain):
             )
         )
         link_h_top.add_effect(h_edge[0][c], True)
-        link_h_top.add_effect(node_degree[0][c], Plus(node_degree[0][c], 1))
-        link_h_top.add_effect(node_degree[0][c + 1], Plus(node_degree[0][c + 1], 1))
-        link_h_top.add_effect(cell_capacity[0][c], Minus(cell_capacity[0][c], 1))
+        link_h_top.add_increase_effect(node_degree[0][c], 1)
+        link_h_top.add_increase_effect(node_degree[0][c + 1], 1)
+        link_h_top.add_decrease_effect(cell_capacity[0][c], 1)
         link_h_top.add_effect(
             disable_link_0_0,
             True,
@@ -271,9 +265,9 @@ class SlitherlinkDomain(Domain):
             )
         )
         link_h_bottom.add_effect(h_edge[rows][c], True)
-        link_h_bottom.add_effect(node_degree[rows][c], Plus(node_degree[rows][c], 1))
-        link_h_bottom.add_effect(node_degree[rows][c + 1], Plus(node_degree[rows][c + 1], 1))
-        link_h_bottom.add_effect(cell_capacity[rows - 1][c], Minus(cell_capacity[rows - 1][c], 1))
+        link_h_bottom.add_increase_effect(node_degree[rows][c], 1)
+        link_h_bottom.add_increase_effect(node_degree[rows][c + 1], 1)
+        link_h_bottom.add_decrease_effect(cell_capacity[rows - 1][c], 1)
         link_h_bottom.add_effect(
             disable_link_0_0,
             True,
@@ -299,10 +293,10 @@ class SlitherlinkDomain(Domain):
             )
         )
         link_v_inner.add_effect(v_edge[r][c], True)
-        link_v_inner.add_effect(node_degree[r][c], Plus(node_degree[r][c], 1))
-        link_v_inner.add_effect(node_degree[r + 1][c], Plus(node_degree[r + 1][c], 1))
-        link_v_inner.add_effect(cell_capacity[r][c - 1], Minus(cell_capacity[r][c - 1], 1))
-        link_v_inner.add_effect(cell_capacity[r][c], Minus(cell_capacity[r][c], 1))
+        link_v_inner.add_increase_effect(node_degree[r][c], 1)
+        link_v_inner.add_increase_effect(node_degree[r + 1][c], 1)
+        link_v_inner.add_decrease_effect(cell_capacity[r][c - 1], 1)
+        link_v_inner.add_decrease_effect(cell_capacity[r][c], 1)
         link_v_inner.add_effect(
             disable_link_0_0,
             True,
@@ -322,9 +316,9 @@ class SlitherlinkDomain(Domain):
             )
         )
         link_v_left.add_effect(v_edge[r][0], True)
-        link_v_left.add_effect(node_degree[r][0], Plus(node_degree[r][0], 1))
-        link_v_left.add_effect(node_degree[r + 1][0], Plus(node_degree[r + 1][0], 1))
-        link_v_left.add_effect(cell_capacity[r][0], Minus(cell_capacity[r][0], 1))
+        link_v_left.add_increase_effect(node_degree[r][0], 1)
+        link_v_left.add_increase_effect(node_degree[r + 1][0], 1)
+        link_v_left.add_decrease_effect(cell_capacity[r][0], 1)
         link_v_left.add_effect(
             disable_link_0_0,
             True,
@@ -344,25 +338,16 @@ class SlitherlinkDomain(Domain):
             )
         )
         link_v_right.add_effect(v_edge[r][cols], True)
-        link_v_right.add_effect(node_degree[r][cols], Plus(node_degree[r][cols], 1))
-        link_v_right.add_effect(node_degree[r + 1][cols], Plus(node_degree[r + 1][cols], 1))
-        link_v_right.add_effect(cell_capacity[r][cols - 1], Minus(cell_capacity[r][cols - 1], 1))
+        link_v_right.add_increase_effect(node_degree[r][cols], 1)
+        link_v_right.add_increase_effect(node_degree[r + 1][cols], 1)
+        link_v_right.add_decrease_effect(cell_capacity[r][cols - 1], 1)
         link_v_right.add_effect(
             disable_link_0_0,
             True,
             And(Equals(node_degree[r][cols], 0), Equals(node_degree[r + 1][cols], 0)),
         )
 
-        problem.add_actions(
-            [
-                link_h_inner,
-                link_h_top,
-                link_h_bottom,
-                link_v_inner,
-                link_v_left,
-                link_v_right,
-            ]
-        )
+        problem.add_actions([link_h_inner, link_h_top, link_h_bottom, link_v_inner, link_v_left, link_v_right])
 
         for r, c in data["goal_node_not_degree1"]:
             problem.add_goal(Not(Equals(node_degree[r][c], 1)))
