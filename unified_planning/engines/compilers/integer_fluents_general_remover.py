@@ -941,6 +941,19 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 and self._needs_csp_materialization(new_condition)
             )
 
+            def guard_out_of_bounds_direct_condition():
+                """Keep a direct condition false when its effect is out of range."""
+                if new_condition.is_true() or needs_cp_expansion:
+                    return False
+                if self.representation == 'object':
+                    condition = self._transform_node_object(
+                        problem, new_problem, new_condition
+                    )
+                else:
+                    condition = self._get_new_expression(new_problem, new_condition)
+                new_action.add_precondition(Not(condition).simplify())
+                return True
+
             # ========== Increase/Decrease ==========
             if old_effect.is_increase() or old_effect.is_decrease():
                 fluent = old_effect.fluent.fluent()
@@ -961,6 +974,13 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
                 next_val = (cur_val + delta) if old_effect.is_increase() else (cur_val - delta)
 
+                if not (fluent.type.lower_bound <= next_val <= fluent.type.upper_bound):
+                    if guard_out_of_bounds_direct_condition():
+                        continue
+                    raise UPProblemDefinitionError(
+                        f"Out-of-range value {next_val} for effect {old_effect}"
+                    )
+
                 if self.representation == 'object':
                     new_fluent = new_problem.fluent(fluent.name)(*old_effect.fluent.args)
                     new_obj = self._get_number_object(new_problem, next_val)
@@ -979,6 +999,16 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             # ========== Integer assignment ==========
             elif old_effect.fluent.type.is_int_type():
                 evaluated_val = evaluate_with_solution(new_problem, old_effect.value, solution)
+                target_type = old_effect.fluent.type
+                if (evaluated_val.is_int_constant()
+                        and not (target_type.lower_bound
+                                 <= evaluated_val.int_constant_value()
+                                 <= target_type.upper_bound)):
+                    if guard_out_of_bounds_direct_condition():
+                        continue
+                    raise UPProblemDefinitionError(
+                        f"Out-of-range value {evaluated_val} for effect {old_effect}"
+                    )
                 cond = self._maybe_expand_cond(new_condition, needs_cp_expansion, problem, new_problem, solution)
                 if self.representation == 'object':
                     new_fluent = self._transform_node_object(problem, new_problem, old_effect.fluent)
@@ -1223,9 +1253,14 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             # its range constraint, not to build the compiled effect.  By
             # contrast, an increase/decrease must expose it to compute the
             # next value.
-            expressions = (effect.value, effect.condition)
+            expressions = [effect.value]
             if effect.is_increase() or effect.is_decrease():
-                expressions = (effect.fluent, *expressions)
+                expressions.insert(0, effect.fluent)
+            # A direct effect condition can remain on the compiled effect.
+            # It is still part of the CP-SAT model for conditional bounds,
+            # but it must not create action variants unless it has arithmetic.
+            if self._needs_csp_materialization(effect.condition):
+                expressions.append(effect.condition)
             for expression in expressions:
                 projection_nodes.update(projection_expression_nodes(expression))
 
