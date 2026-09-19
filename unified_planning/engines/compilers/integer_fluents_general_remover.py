@@ -58,6 +58,8 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
         # Object representation state
         self._number_objects: Dict[int, Object] = {}
+        # Saves CP-SAT expansions of conditional-effect within one compilation
+        self._expanded_condition_cache = {}
 
         # Binary representation state
         if representation == 'binary':
@@ -210,7 +212,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         if save:
             lb = inner_fluent.lower_bound
             ub = inner_fluent.upper_bound
-            self.offsets[fluent.name] = lb  # <-- afegir
+            self.offsets[fluent.name] = lb
             n_values = ub - lb + 1
             if n_values <= 1:
                 self.n_bits[fluent.name] = 1
@@ -266,6 +268,14 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         if node.is_exists() or node.is_forall():
             return em.create_node(node.node_type, tuple(new_args), tuple(node.variables())).simplify()
         return em.create_node(node.node_type, tuple(new_args)).simplify()
+
+    def _needs_csp_materialization(self, expr: FNode) -> bool:
+        """Whether ``expr`` must be evaluated to a finite-domain value."""
+        if expr.node_type in self.ARITHMETIC_OPS:
+            return True
+        if expr.is_le() or expr.is_lt() or expr.is_count():
+            return True
+        return any(self._needs_csp_materialization(arg) for arg in expr.args)
 
     def _get_new_fluent(
             self,
@@ -387,7 +397,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         elif effect.is_increase():
             # current + delta must be in [lb, ub]  =>  current in [lb, ub - delta]
             valid_range = range(lb, ub - delta + 1)
-        else:  # decrease
+        else: # decrease
             # current - delta must be in [lb, ub]  =>  current in [lb + delta, ub]
             valid_range = range(lb + delta, ub + 1)
 
@@ -398,7 +408,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 self._transform_node_object(problem, new_problem, effect.condition)
                 if not effect.condition.is_true() else TRUE()
             )
-        else:  # binary
+        else: # binary
             name_fluent = fluent.name.split('[')[0]
             n_bits = self.n_bits[name_fluent]
             offset = self.offsets.get(name_fluent, 0)
@@ -422,7 +432,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     new_fluent, new_obj, full_condition,
                     EffectKind.ASSIGN, effect.forall
                 ))
-            else:  # binary
+            else: # binary
                 current_bits = self._convert_value(i, n_bits, offset)
                 next_bits = self._convert_value(next_val, n_bits, offset)
 
@@ -482,7 +492,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         return None
 
     def _create_multiple_actions(self, old_action, problem, new_problem, params, solutions, variables,
-                                 dependent_effects=None, independent_effects=None):
+                                 dependent_effects=None, independent_effects=None, direct_preconditions=None):
         """Create one grounded action per CP-SAT solution.
 
         Each solution fixes some variables; those become preconditions of the
@@ -491,6 +501,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         """
         dependent_effects = dependent_effects if dependent_effects is not None else old_action.effects
         independent_effects = independent_effects or []
+        direct_preconditions = direct_preconditions or []
 
         # Precompute fluent+parameter strings used in preconditions
         prec_var_strs = set()
@@ -507,6 +518,46 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                and not effect.is_increase() and not effect.is_decrease()
                and effect.condition.is_true()
         }
+
+        def solution_substitutions(solution):
+            """Map projected values to their encoded expressions."""
+            em = new_problem.environment.expression_manager
+            substitutions = {}
+            for fnode in variables:
+                value = get_scalar_solution_value(solution, str(fnode))
+                if value is None:
+                    continue
+                if fnode.is_fluent_exp():
+                    fluent = fnode.fluent()
+                    if self.representation == 'object':
+                        target = self._transform_node_object(problem, new_problem, fnode)
+                        if fluent.type.is_int_type():
+                            substitutions[target] = self._get_number_object(new_problem, value)
+                        elif fluent.type.is_user_type():
+                            obj = self._get_object_from_index(fluent.type, value)
+                            if obj is not None:
+                                substitutions[target] = ObjectExp(obj)
+                        elif fluent.type.is_bool_type() or fluent.type.is_derived_bool_type():
+                            substitutions[target] = em.TRUE() if value else em.FALSE()
+                    elif fluent.type.is_int_type():
+                        n_bits = self.n_bits[fluent.name]
+                        bit_values = self._convert_value(
+                            value, n_bits, self.offsets.get(fluent.name, 0)
+                        )
+                        for bit, bit_value in zip(
+                                self._get_new_fluent(new_problem, fnode), bit_values):
+                            substitutions[bit] = em.TRUE() if bit_value else em.FALSE()
+                    elif fluent.type.is_user_type():
+                        obj = self._get_object_from_index(fluent.type, value)
+                        if obj is not None:
+                            substitutions[fnode] = ObjectExp(obj)
+                    elif fluent.type.is_bool_type() or fluent.type.is_derived_bool_type():
+                        substitutions[fnode] = em.TRUE() if value else em.FALSE()
+                elif fnode.is_parameter_exp() and fnode.parameter().type.is_user_type():
+                    obj = self._get_object_from_index(fnode.parameter().type, value)
+                    if obj is not None:
+                        substitutions[fnode] = ObjectExp(obj)
+            return substitutions
 
         new_actions = []
         for idx, solution in enumerate(solutions):
@@ -567,6 +618,23 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
             for new_precond in object_solution_conds:
                 new_action.add_precondition(new_precond)
+
+            # Preconditions without CSP expressions are already expressible
+            # after integer encoding.  Keep them symbolic instead of turning
+            # every satisfying value of their variables into an action variant.
+            substitutions = solution_substitutions(solution)
+            inconsistent = False
+            for direct_precondition in direct_preconditions:
+                simplified = new_problem.environment.simplifier.simplify(
+                    direct_precondition.substitute(substitutions)
+                )
+                if simplified == FALSE():
+                    inconsistent = True
+                    break
+                if simplified != TRUE():
+                    new_action.add_precondition(simplified)
+            if inconsistent:
+                continue
 
             # Dependent effects (use solution values)
             self._add_effects_for_solution(
@@ -641,6 +709,34 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             g_name = effect_value.fluent().name
             n_bits = self.n_bits[f_name]
 
+            # A bit-for-bit copy is valid only when both encodings have the
+            # same offset and width.  Otherwise equal bit positions can
+            # represent different integer values.
+            same_encoding = (
+                n_bits == self.n_bits[g_name]
+                and self.offsets.get(f_name, 0) == self.offsets.get(g_name, 0)
+            )
+            if not same_encoding:
+                target_type = effect_fluent.fluent().type
+                source_type = effect_value.fluent().type
+                lower = max(target_type.lower_bound, source_type.lower_bound)
+                upper = min(target_type.upper_bound, source_type.upper_bound)
+                target_bits = self._get_bit_fluents(new_problem, effect_fluent)
+                for value in range(lower, upper + 1):
+                    value_condition = self._condition_for_value(
+                        effect_value, value, new_problem
+                    )
+                    condition = And(base_cond, value_condition).simplify()
+                    next_bits = self._convert_value(
+                        value, n_bits, self.offsets.get(f_name, 0)
+                    )
+                    for f_bit, bit_value in zip(target_bits, next_bits):
+                        new_action.add_effect(
+                            f_bit, TRUE() if bit_value else FALSE(),
+                            condition, effect_forall,
+                        )
+                return
+
             f_bits = [new_problem.fluent(f"{f_name}_{i}")(*effect_fluent.args)
                       for i in range(n_bits)]
             g_bits = [new_problem.fluent(f"{g_name}_{i}")(*effect_value.args)
@@ -684,7 +780,8 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             if effect.forall:
                 # Forall variables don't go to CP translator
                 base_cond = self._transform_node_object(problem, new_problem, effect.condition) or TRUE()
-            elif effect.condition != TRUE() and requires_csp(effect.condition):
+            elif (effect.condition != TRUE()
+                  and self._needs_csp_materialization(effect.condition)):
                 base_cond = self._expand_condition_with_cp(problem, new_problem, effect.condition, solution)
             else:
                 base_cond = self._transform_node_object(problem, new_problem, effect.condition) or TRUE()
@@ -713,7 +810,8 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             ) or TRUE()
             new_action.add_effect(new_fluent, new_value, new_cond, effect.forall)
 
-        elif effect.condition != TRUE() and requires_csp(effect.condition):
+        elif (effect.condition != TRUE()
+              and self._needs_csp_materialization(effect.condition)):
             expansions = self._expand_condition_with_cp(
                 problem, new_problem, effect.condition, solution
             )
@@ -744,6 +842,16 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             if val is not None:
                 cp_model_obj.Add(var == val)
 
+        fixed_values = tuple(sorted(
+            (str(fnode), get_scalar_solution_value(solution, str(fnode)))
+            for fnode in variables
+            if get_scalar_solution_value(solution, str(fnode)) is not None
+        ))
+        cache_key = (condition, fixed_values, self.representation)
+        cached = self._expanded_condition_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         cp_model_obj.Add(result_var == 1)
         true_solutions = solve_with_cp_sat(variables, cp_model_obj) or []
 
@@ -767,9 +875,12 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 )
 
         if not clauses:
-            return FALSE()
+            result = FALSE()
+        else:
+            result = Or(clauses).simplify() if len(clauses) > 1 else clauses[0]
 
-        return Or(clauses).simplify() if len(clauses) > 1 else clauses[0]
+        self._expanded_condition_cache[cache_key] = result
+        return result
 
     def _condition_for_value(self, fnode, value, new_problem):
         """Build the condition asserting that fnode has the given value.
@@ -825,7 +936,10 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 if new_condition == FALSE():
                     continue
 
-            needs_cp_expansion = not new_condition.is_true() and requires_csp(new_condition)
+            needs_cp_expansion = (
+                not new_condition.is_true()
+                and self._needs_csp_materialization(new_condition)
+            )
 
             # ========== Increase/Decrease ==========
             if old_effect.is_increase() or old_effect.is_decrease():
@@ -866,7 +980,6 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             elif old_effect.fluent.type.is_int_type():
                 evaluated_val = evaluate_with_solution(new_problem, old_effect.value, solution)
                 cond = self._maybe_expand_cond(new_condition, needs_cp_expansion, problem, new_problem, solution)
-
                 if self.representation == 'object':
                     new_fluent = self._transform_node_object(problem, new_problem, old_effect.fluent)
                     new_value = self._transform_node_object(problem, new_problem, evaluated_val)
@@ -926,6 +1039,24 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             else:  # binary
                 return self._get_new_expression(new_problem, expr)
 
+        def direct_assignment_needs_bound_guard(effect):
+            """Whether a direct integer assignment may exceed its target range."""
+            if (not effect.is_assignment()
+                    or not effect.fluent.type.is_int_type()
+                    or not effect.value.type.is_int_type()):
+                return False
+            target_type = effect.fluent.type
+            if effect.value.is_int_constant():
+                return not (
+                    target_type.lower_bound <= effect.value.int_constant_value()
+                    <= target_type.upper_bound
+                )
+            value_type = effect.value.type
+            return not (
+                target_type.lower_bound <= value_type.lower_bound
+                and value_type.upper_bound <= target_type.upper_bound
+            )
+
         # Classify effects: dependent (interact with preconditions) vs independent
         prec_vars = set()
         for prec in old_action.preconditions:
@@ -951,26 +1082,152 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             elif (self.representation == 'binary'
                   and effect.fluent.type.is_int_type()
                   and effect.value.is_fluent_exp()
-                  and effect.value.fluent().type.is_int_type()):
+                  and effect.value.fluent().type.is_int_type()
+                  and not self._needs_csp_materialization(effect.condition)):
                 # Binary-specific: fluent copy always independent (handled via bit-level conditional effects)
                 independent_effects.append(effect)
             else:
                 # An effect containing arithmetic must go through CP-SAT
-                if requires_csp(effect.value):
+                if (requires_csp(effect.value)
+                        or self._needs_csp_materialization(effect.condition)):
                     dependent_effects.append(effect)
                     continue
-                # Otherwise, dependent iff shares fluent/parameter with preconditions
-                value_vars = get_fluent_exps_in_expression(effect.value)
-                value_params = get_params_in_expression(effect.value)
-                if (any(str(v) in prec_vars for v in value_vars) or
-                        any(str(p) in prec_vars for p in value_params)):
+                if (direct_assignment_needs_bound_guard(effect)
+                        and not effect.value.is_fluent_exp()
+                        and not effect.value.is_int_constant()):
+                    # This is normally an integer parameter, which should
+                    # have been removed by an earlier compiler.  Keep the
+                    # safe CP-SAT path if it reaches IFGR directly.
                     dependent_effects.append(effect)
-                else:
-                    independent_effects.append(effect)
+                    continue
+                # A fluent, parameter, object, or Boolean value can be kept
+                # directly in the encoded action.  Sharing it with a
+                # precondition does not require grounding it through CP-SAT.
+                independent_effects.append(effect)
 
-        # All preconditions go through CP-SAT: this enables constant propagation
-        # and consistent handling of boolean, integer, and Count expressions.
-        cp_precs = list(old_action.preconditions)
+        # Direct preconditions are always preserved symbolically in the
+        # generated action.  CP-SAT only receives the component connected to
+        # arithmetic or an effect that needs concrete evaluation: this keeps
+        # useful propagation without grounding unrelated user-type fluents.
+        all_preconditions = list(old_action.preconditions)
+
+        def direct_parameter_nodes(expression):
+            """Parameters that occur as expressions, not fluent indices."""
+            if expression.is_parameter_exp():
+                return {expression}
+            # ``f(p)`` is one state variable.  The index ``p`` must not
+            # connect it to an unrelated state variable ``g(p)``.
+            if expression.is_fluent_exp():
+                return set()
+            nodes = set()
+            for arg in expression.args:
+                nodes.update(direct_parameter_nodes(arg))
+            return nodes
+
+        def expression_nodes(expression):
+            nodes = set(get_fluent_exps_in_expression(expression))
+            nodes.update(direct_parameter_nodes(expression))
+            return nodes
+
+        def projection_expression_nodes(expression):
+            """All values that an arithmetic expression may need to expose."""
+            nodes = expression_nodes(expression)
+            nodes.update(
+                problem.environment.expression_manager.ParameterExp(parameter)
+                for parameter in get_params_in_expression(expression)
+            )
+            return nodes
+
+        precondition_nodes = {
+            precondition: expression_nodes(precondition)
+            for precondition in all_preconditions
+        }
+        selected_cp_preconditions = {
+            precondition for precondition in all_preconditions
+            if self._needs_csp_materialization(precondition)
+        }
+        relevant_nodes = set()
+        for precondition in selected_cp_preconditions:
+            relevant_nodes.update(precondition_nodes[precondition])
+        for effect in dependent_effects:
+            for expression in (effect.fluent, effect.value, effect.condition):
+                relevant_nodes.update(expression_nodes(expression))
+
+        # Fixed-point closure is essential: a symbolic precondition can link
+        # the arithmetic component to another symbolic precondition that was
+        # encountered earlier in the action.
+        changed = True
+        while changed:
+            changed = False
+            for precondition in all_preconditions:
+                if precondition in selected_cp_preconditions:
+                    continue
+                nodes = precondition_nodes[precondition]
+                if nodes and nodes.intersection(relevant_nodes):
+                    selected_cp_preconditions.add(precondition)
+                    relevant_nodes.update(nodes)
+                    changed = True
+
+        cp_precs = [
+            precondition for precondition in all_preconditions
+            if precondition in selected_cp_preconditions
+        ]
+        direct_preconditions = [
+            p for p in all_preconditions if not self._needs_csp_materialization(p)
+        ]
+        transformed_direct_preconditions = []
+        for precondition in direct_preconditions:
+            transformed = transform_expr(precondition)
+            if transformed is not None and transformed != TRUE():
+                transformed_direct_preconditions.append(transformed)
+
+        # A direct copy such as ``small := large`` remains symbolic, but is
+        # applicable only when its source value fits the target range.  Encode
+        # this as ``not condition or source in target_range`` instead of
+        # materializing one action per possible source value.
+        for effect in independent_effects:
+            if not direct_assignment_needs_bound_guard(effect):
+                continue
+            target_type = effect.fluent.type
+            condition = transform_expr(effect.condition)
+            if effect.value.is_int_constant():
+                value_guard = FALSE()
+            elif effect.value.is_fluent_exp():
+                source_type = effect.value.fluent().type
+                lower = max(target_type.lower_bound, source_type.lower_bound)
+                upper = min(target_type.upper_bound, source_type.upper_bound)
+                value_conditions = [
+                    self._condition_for_value(effect.value, value, new_problem)
+                    for value in range(lower, upper + 1)
+                ]
+                value_conditions = [c for c in value_conditions if c is not None]
+                value_guard = (
+                    Or(*value_conditions).simplify() if value_conditions else FALSE()
+                )
+            else:
+                # Covered by the dependent-effect classification above.
+                continue
+            guard = Or(Not(condition), value_guard).simplify()
+            if guard != TRUE():
+                transformed_direct_preconditions.append(guard)
+
+        # A mixed Boolean expression (for example, ``direct OR arithmetic``)
+        # is deliberately treated as CSP-dependent as a whole.  Projecting
+        # only the direct part would change its semantics.
+        projection_nodes = set()
+        for precondition in cp_precs:
+            if self._needs_csp_materialization(precondition):
+                projection_nodes.update(projection_expression_nodes(precondition))
+        for effect in dependent_effects:
+            # The previous value of an assignment target is only needed for
+            # its range constraint, not to build the compiled effect.  By
+            # contrast, an increase/decrease must expose it to compute the
+            # next value.
+            expressions = (effect.value, effect.condition)
+            if effect.is_increase() or effect.is_decrease():
+                expressions = (effect.fluent, *expressions)
+            for expression in expressions:
+                projection_nodes.update(projection_expression_nodes(expression))
 
         # Setup CP-SAT
         self._object_to_index = {}
@@ -1005,10 +1262,20 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         if self.representation == 'object' and not cp_precs and not dependent_effects:
             solutions = [{}]
         else:
-            solutions = solve_with_cp_sat(variables, cp_model_obj)
+            solutions = solve_with_cp_sat(
+                variables, cp_model_obj,
+                projection_variables=[
+                    node for node in variables if node in projection_nodes
+                ],
+            )
             if not solutions:
                 return []
-            solutions = compress_solutions(variables, solutions, problem)
+
+            # A dependent effect is evaluated from the concrete CP-SAT
+            # assignment below.  A compressed set would change that
+            # semantics, so retain the original solutions in this case.
+            if not dependent_effects:
+                solutions = compress_solutions(variables, solutions, problem)
 
         self._index_to_object = {
             (t, idx): obj for (t, obj), idx in self._object_to_index.items()
@@ -1018,7 +1285,8 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         return self._create_multiple_actions(
             old_action, problem, new_problem, params, solutions, variables,
             dependent_effects=dependent_effects,
-            independent_effects=independent_effects
+            independent_effects=independent_effects,
+            direct_preconditions=transformed_direct_preconditions,
         )
 
     def _transform_actions(self, problem: Problem, new_problem: Problem) -> Dict[Action, Action]:
@@ -1216,6 +1484,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         assert isinstance(problem, Problem)
 
         original_problem = problem
+        self._expanded_condition_cache.clear()
         cleaned_problem = remove_write_only_fluents(problem)
 
         # Mapping name between cleaned and original actions
