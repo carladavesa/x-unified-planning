@@ -766,21 +766,45 @@ def requires_csp(node: FNode) -> bool:
     # The rest (arithmetic, <, <=, >, >=)
     return True
 
-def solve_with_cp_sat(variables, cp_model_obj):
+def solve_with_cp_sat(variables, cp_model_obj, projection_variables=None):
     """
-    Use CP-SAT solver to enumerate all valid value assignments.
+    Use CP-SAT solver to enumerate valid value assignments.
 
     Returns a list of solutions, where each solution is a dictionary
     mapping variable names to their assigned values.
+
+    If ``projection_variables`` is given, only distinct assignments to those
+    variables are enumerated.  All variables remain in the CP-SAT model, so
+    they still participate in propagation and can witness satisfiability.
     """
+    if projection_variables is None:
+        solver = cp_model.CpSolver()
+        collector = CPSolutionCollector(list(variables.values()))
+        solver.parameters.enumerate_all_solutions = True
+        status = solver.Solve(cp_model_obj, collector)
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            return None
+        return collector.solutions
+
+    projection_nodes = [node for node in projection_variables if node in variables]
+    projection_cp_vars = [variables[node] for node in projection_nodes]
     solver = cp_model.CpSolver()
-    collector = CPSolutionCollector(list(variables.values()))
-    solver.parameters.enumerate_all_solutions = True
-    status = solver.Solve(cp_model_obj, collector)
-    if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return None
-    solutions = collector.solutions
-    return solutions
+
+    if not projection_cp_vars:
+        status = solver.Solve(cp_model_obj)
+        return [{}] if status in (cp_model.OPTIMAL, cp_model.FEASIBLE) else None
+
+    solutions = []
+    while True:
+        status = solver.Solve(cp_model_obj)
+        if status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
+            break
+        values = tuple(solver.Value(var) for var in projection_cp_vars)
+        solutions.append({str(node): value for node, value in zip(projection_nodes, values)})
+        # Block this projection, while allowing CP-SAT to use any values for
+        # non-projected witness variables in the next iteration.
+        cp_model_obj.AddForbiddenAssignments(projection_cp_vars, [values])
+    return solutions or None
 
 
 def compress_solutions(variables, solutions, problem):
@@ -1107,10 +1131,13 @@ def add_effect_bounds_constraints(
             continue
 
         lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
-        # Registers the fluent variable
-        fluent_var = add_cp_constraints(problem, effect.fluent, variables, model, object_to_index)
 
         if effect.is_increase() or effect.is_decrease():
+            # Increments and decrements depend on the previous value of the
+            # target fluent, so it must be part of the CP-SAT model.
+            fluent_var = add_cp_constraints(
+                problem, effect.fluent, variables, model, object_to_index
+            )
             try:
                 delta = effect.value.constant_value()
                 result_expr = fluent_var + delta if effect.is_increase() else fluent_var - delta
@@ -1127,8 +1154,9 @@ def add_effect_bounds_constraints(
                 model.Add(result_expr <= ub)
 
         else:
-            if effect.value.node_type not in {OperatorKind.PLUS, OperatorKind.MINUS, OperatorKind.DIV, OperatorKind.TIMES}:
-                continue
+            # An assignment can copy a value from a wider integer fluent as
+            # well as evaluate arithmetic.  In both cases the assigned value
+            # must belong to the target fluent's declared range.
             expr = add_cp_constraints(problem, effect.value, variables, model, object_to_index)
             if effect.condition is not None and not effect.condition.is_true():
                 if effect.condition.is_false():
