@@ -277,6 +277,14 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             return True
         return any(self._needs_csp_materialization(arg) for arg in expr.args)
 
+    @staticmethod
+    def _contains_integer_fluent(expr: FNode) -> bool:
+        """Whether ``expr`` refers to an integer fluent removed by IFGR."""
+        return any(
+            fluent_exp.fluent().type.is_int_type()
+            for fluent_exp in get_fluent_exps_in_expression(expr)
+        )
+
     def _get_new_fluent(
             self,
             new_problem: "up.model.AbstractProblem",
@@ -401,13 +409,29 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             # current - delta must be in [lb, ub]  =>  current in [lb + delta, ub]
             valid_range = range(lb + delta, ub + 1)
 
+        # The guard of an increase/decrease can itself refer to an integer
+        # fluent.  It must be encoded before it is combined with the current
+        # value condition below; otherwise the removed fluent would remain in
+        # the compiled effect.
+        if effect.condition.is_true():
+            transformed_condition = TRUE()
+        elif (self._needs_csp_materialization(effect.condition)
+              or self._contains_integer_fluent(effect.condition)):
+            transformed_condition = self._expand_condition_with_cp(
+                problem, new_problem, effect.condition, {}
+            )
+        elif self.representation == 'object':
+            transformed_condition = self._transform_node_object(
+                problem, new_problem, effect.condition
+            )
+        else:
+            transformed_condition = self._get_new_expression(
+                new_problem, effect.condition
+            )
+
         # Representation-specific setup
         if self.representation == 'object':
             new_fluent = new_problem.fluent(fluent.name)(*effect.fluent.args)
-            transformed_condition = (
-                self._transform_node_object(problem, new_problem, effect.condition)
-                if not effect.condition.is_true() else TRUE()
-            )
         else: # binary
             name_fluent = fluent.name.split('[')[0]
             n_bits = self.n_bits[name_fluent]
@@ -444,8 +468,8 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     And(cond_clauses) if len(cond_clauses) > 1 else cond_clauses[0]
                 )
                 full_condition = (
-                    And(value_condition, effect.condition).simplify()
-                    if effect.condition != TRUE() else value_condition
+                    And(value_condition, transformed_condition).simplify()
+                    if not transformed_condition.is_true() else value_condition
                 )
 
                 for f, next_bit in zip(new_fluents, next_bits):
@@ -781,7 +805,8 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 # Forall variables don't go to CP translator
                 base_cond = self._transform_node_object(problem, new_problem, effect.condition) or TRUE()
             elif (effect.condition != TRUE()
-                  and self._needs_csp_materialization(effect.condition)):
+                  and (self._needs_csp_materialization(effect.condition)
+                       or self._contains_integer_fluent(effect.condition))):
                 base_cond = self._expand_condition_with_cp(problem, new_problem, effect.condition, solution)
             else:
                 base_cond = self._transform_node_object(problem, new_problem, effect.condition) or TRUE()
@@ -811,7 +836,8 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             new_action.add_effect(new_fluent, new_value, new_cond, effect.forall)
 
         elif (effect.condition != TRUE()
-              and self._needs_csp_materialization(effect.condition)):
+              and (self._needs_csp_materialization(effect.condition)
+                   or self._contains_integer_fluent(effect.condition))):
             expansions = self._expand_condition_with_cp(
                 problem, new_problem, effect.condition, solution
             )
