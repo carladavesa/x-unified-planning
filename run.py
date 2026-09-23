@@ -356,7 +356,7 @@ def solve_problem(
 
                 # Collect solutions but time each individually
                 all_results = []
-                for res in planner.get_solutions(problem, **anytime_kwargs):
+                for res in planner.get_solutions(problem, **anytime_kwargs, output_stream=sys.stdout):
                     solution_count += 1
                     all_results.append(res)
 
@@ -440,7 +440,6 @@ def compile_and_solve(
 
     get_environment().credits_stream = None  # suppress UP credits banner
 
-    total_start = time.time()
     comp_time = 0
     solve_time = 0
 
