@@ -68,7 +68,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
     @property
     def name(self):
-        return "iofgr" if self.representation == 'object' else "ilfgr"
+        return "ifgor" if self.representation == 'object' else "ifglr"
 
     @staticmethod
     def supported_kind() -> ProblemKind:
@@ -383,6 +383,21 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
     # ==================== ACTION TRANSFORMATION ====================
 
+    def _transform_increase_decrease_condition(self, effect, problem, new_problem):
+        """Translate the guard of an increase/decrease effect."""
+        if effect.condition.is_true():
+            return TRUE()
+        if (self._needs_csp_materialization(effect.condition)
+                or self._contains_integer_fluent(effect.condition)):
+            return self._expand_condition_with_cp(
+                problem, new_problem, effect.condition, {}
+            )
+        if self.representation == 'object':
+            return self._transform_node_object(
+                problem, new_problem, effect.condition
+            )
+        return self._get_new_expression(new_problem, effect.condition)
+
     def _transform_increase_decrease_effect(self, effect, problem, new_problem):
         """Convert increase/decrease effects to conditional assignments.
 
@@ -413,21 +428,9 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         # fluent.  It must be encoded before it is combined with the current
         # value condition below; otherwise the removed fluent would remain in
         # the compiled effect.
-        if effect.condition.is_true():
-            transformed_condition = TRUE()
-        elif (self._needs_csp_materialization(effect.condition)
-              or self._contains_integer_fluent(effect.condition)):
-            transformed_condition = self._expand_condition_with_cp(
-                problem, new_problem, effect.condition, {}
-            )
-        elif self.representation == 'object':
-            transformed_condition = self._transform_node_object(
-                problem, new_problem, effect.condition
-            )
-        else:
-            transformed_condition = self._get_new_expression(
-                new_problem, effect.condition
-            )
+        transformed_condition = self._transform_increase_decrease_condition(
+            effect, problem, new_problem
+        )
 
         # Representation-specific setup
         if self.representation == 'object':
@@ -479,6 +482,41 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     ))
 
         return result
+
+    def _increase_decrease_bound_precondition(self, effect, new_problem):
+        """Return the encoded range guard for a constant increase/decrease.
+
+        The conditional effects generated for an increase/decrease cover only valid values. The guard is
+        required to preserve the action applicability semantics: an action must not remain applicable when
+        its update would leave the target fluent's range.
+        """
+        try:
+            delta = effect.value.constant_value()
+        except Exception:
+            # Non-constant updates are handled through the CP-SAT path, which
+            # already contains their effect-bound constraints.
+            return TRUE()
+
+        fluent_type = effect.fluent.fluent().type
+        lb, ub = fluent_type.lower_bound, fluent_type.upper_bound
+        if effect.is_increase():
+            min_safe, max_safe = lb - delta, ub - delta
+        else:
+            min_safe, max_safe = lb + delta, ub + delta
+        min_safe, max_safe = max(lb, min_safe), min(ub, max_safe)
+
+        if min_safe > max_safe:
+            return FALSE()
+
+        allowed_values = [
+            self._condition_for_value(effect.fluent, value, new_problem)
+            for value in range(min_safe, max_safe + 1)
+        ]
+        if len(allowed_values) == ub - lb + 1:
+            return TRUE()
+        if len(allowed_values) == 1:
+            return allowed_values[0]
+        return Or(allowed_values).simplify()
 
     def _create_precondition_from_variable(
             self,
@@ -787,11 +825,19 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         """Add a single independent effect, representation-specific."""
         # Increase/decrease
         if effect.is_increase() or effect.is_decrease():
-            if requires_csp(effect.condition):
-                raise NotImplementedError(
-                    f"Independent increase/decrease with arithmetic condition not supported: "
-                    f"{effect} in action {old_action.name}"
-                )
+            bound_precondition = self._increase_decrease_bound_precondition(
+                effect, new_problem
+            )
+            if not bound_precondition.is_true():
+                if effect.condition.is_true() or effect.forall:
+                    new_action.add_precondition(bound_precondition)
+                else:
+                    condition = self._transform_increase_decrease_condition(
+                        effect, problem, new_problem
+                    )
+                    new_action.add_precondition(
+                        Or(Not(condition), bound_precondition).simplify()
+                    )
             # Both object and binary: expand via _transform_increase_decrease_effect
             for new_eff in self._transform_increase_decrease_effect(effect, problem, new_problem):
                 new_action.add_effect(new_eff.fluent, new_eff.value, new_eff.condition, new_eff.forall)
@@ -983,6 +1029,12 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             # ========== Increase/Decrease ==========
             if old_effect.is_increase() or old_effect.is_decrease():
                 fluent = old_effect.fluent.fluent()
+
+                bound_precondition = self._increase_decrease_bound_precondition(
+                    old_effect, new_problem
+                )
+                if not bound_precondition.is_true():
+                    new_action.add_precondition(bound_precondition)
 
                 try:
                     delta = old_effect.value.constant_value()
@@ -1319,8 +1371,10 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 self._object_to_index, False
             )
 
-        # Solve CP-SAT
-        if self.representation == 'object' and not cp_precs and not dependent_effects:
+        # Solve CP-SAT only when the action has a CP-SAT component.  This is
+        # independent of the chosen integer representation: a direct binary
+        # transformation does not need an empty solver call either.
+        if not cp_precs and not dependent_effects:
             solutions = [{}]
         else:
             solutions = solve_with_cp_sat(

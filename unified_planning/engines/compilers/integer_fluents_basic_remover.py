@@ -64,7 +64,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
 
     @property
     def name(self):
-        return "iofbr" if self.representation == 'object' else "ilfbr"
+        return "ifbor" if self.representation == 'object' else "ifblr"
 
     @staticmethod
     def supported_kind() -> ProblemKind:
@@ -1083,6 +1083,22 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """Transform f := c or f := g in binary representation."""
         f_ref = effect.fluent
         f_type = f_ref.fluent().type
+
+        # Binary encoding only replaces integer fluents.  Boolean and object
+        # effects introduced by preceding compilers (for example, membership
+        # predicates produced by SFR) must be copied to the new action.
+        if not f_type.is_int_type():
+            new_fluent = self._transform_expression(effect.fluent, new_problem)
+            new_value = self._transform_expression(effect.value, new_problem)
+            if f_type.is_bool_type():
+                return TRUE(), self._bool_assign_as_conditional(
+                    new_fluent, new_value, new_condition, effect.forall
+                )
+            return TRUE(), [Effect(
+                new_fluent, new_value, new_condition,
+                EffectKind.ASSIGN, effect.forall
+            )]
+
         f_name = f_ref.fluent().name
         f_nbits = self.n_bits[f_name]
         f_offset = self.offsets[f_name]
