@@ -41,17 +41,15 @@ from unified_planning.shortcuts import (
 # Each key maps a short alias to an ordered list of compilation steps.
 # Pipelines marked "numeric" keep integer fluents.
 COMPILATION_PIPELINES = {
-    # -------- Classical baseline --------
+    # -------- Baselines --------
     # For problems already in classical form (booleans + user types)
-    "cls": [
+    "B1": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-
-    # -------- Numeric baseline --------
     # For problems with integer fluents, targeting a numeric planner
-    "num": [
+    "B2": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         CompilationKind.BOUNDED_TYPES_REMOVING,
@@ -59,44 +57,41 @@ COMPILATION_PIPELINES = {
 
     # -------- Integer fluents (basic) --------
     # For problems with simple integer patterns (equality, ordered comparisons, plus/minus arithmetic).
-    "uti_basic": [ # object encoding, classical output
+    "I1": [ # object encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "log_basic": [ # binary encoding, classical output
+    "I2": [ # binary encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "binary"}),
+        # CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
 
     # -------- Integer fluents (general) --------
     # For problems with arbitrary integer arithmetic. Uses CP-SAT internally to compile to classical planning.
-    # object encoding, classical output
-    "uti_general": [
+    "I3": [ # object encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # + axioms
-    'uti_general_gaa': [
+    "I3+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
         CompilationKind.GOALS_AS_AXIOMS,
     ],
-    # binary encoding, classical output
-    "log_general": [
+    "I4": [ # binary encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # + axioms
-    "log_general_gaa": [
+    "I4+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
@@ -106,34 +101,33 @@ COMPILATION_PIPELINES = {
 
     # -------- Count expressions --------
     # For problems with Count expressions in preconditions or goals
-    "count_bool": [ # Count -> DNF, classical output
+    "C1": [ # Count -> DNF, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.COUNT_REMOVING, {"target": "bool"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # + axioms
-    "count_bool_gaa": [  # Count -> DNF, classical output
+    "C1+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.COUNT_REMOVING, {"target": "bool"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
         CompilationKind.GOALS_AS_AXIOMS,
     ],
-    "count_num": [ # Count -> integer sum, numeric planner
+    "C2": [ # Count -> integer sum, numeric planner
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "count_uti_general": [ # Count -> integer sum -> object encoding, classical output
+    "C3": [ # Count -> integer sum -> object encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "count_uti_general_gaa": [  # Count -> integer sum -> object encoding, classical output
+    "C3+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
@@ -141,14 +135,14 @@ COMPILATION_PIPELINES = {
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
         CompilationKind.GOALS_AS_AXIOMS,
     ],
-    "count_log_general": [ # Count -> integer sum -> binary encoding, classical output
+    "C4": [ # Count -> integer sum -> binary encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "count_log_general_gaa": [  # Count -> integer sum -> binary encoding, classical output
+    "C4+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
@@ -161,40 +155,120 @@ COMPILATION_PIPELINES = {
     # For problems with set fluents. The cardinality of a set can be handled in two ways:
     # as an auxiliary integer fluent (cardinality_encoding='integer'),
     # or as a Count expression over membership predicates (cardinality_encoding='count').
-    "set_num": [ # Sets -> integer cardinality, numeric planner
+    "S1": [ # Sets -> integer cardinality, numeric planner
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # Sets -> Count cardinality -> DNF, classical output
-    "set_count_bool": [
+    "S2": [ # Sets -> Count cardinality -> DNF, classical output
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
         (CompilationKind.COUNT_REMOVING, {"target": "bool"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    # + axioms
-    "set_count_bool_gaa": [
+    "S2+A": [
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
         (CompilationKind.COUNT_REMOVING, {"target": "bool"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
         CompilationKind.GOALS_AS_AXIOMS
     ],
-    "set_count_num": [ # Sets -> Count -> integer sum, numeric planner
+    "S3": [ # Sets -> Count -> integer sum, numeric planner
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "set_count_uti_general": [ # Sets -> Count -> int -> object, classical output
+    "S4": [ # Sets -> Count -> int -> object, classical output
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "set_count_log_general": [ # Sets -> Count -> int -> binary, classical output
+    "S5": [ # Sets -> Count -> int -> binary, classical output
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     "none": [],
+    # -------- Combined --------
+    # For problems with array and set fluents.
+    "M1": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M2": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M3": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M4": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.COUNT_REMOVING, {"target": "bool"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M5": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.COUNT_REMOVING, {"target": "bool"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M6": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.COUNT_REMOVING, {"target": "int"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M7": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.COUNT_REMOVING, {"target": "int"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M8": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.COUNT_REMOVING, {"target": "int"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M9": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M10": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "M11": [
+        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
+        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
+        (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "binary"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
 }
 
 # Maps a base solver name to its mode-specific variant.
@@ -321,7 +395,12 @@ def solve_problem(
     start_time = time.time()
 
     signal.signal(signal.SIGALRM, _timeout_handler)
-    signal.alarm(timeout)
+    # PDDLAnytimePlanner already enforces the timeout. An outer SIGALRM can interrupt that stream before
+    # the plans collected so far are processed, incorrectly reporting a timeout as unsolved.
+    if mode == "anytime":
+        signal.alarm(0)
+    else:
+        signal.alarm(timeout)
 
     params = dict(planner_params or {})
 
