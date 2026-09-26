@@ -1087,14 +1087,12 @@ class _KindFactory:
                 )
 
     def _has_int_vars(self, exp: "up.model.fnode.FNode"):
+        if exp.is_int_variable_exp():
+            return True
         if exp.is_forall() or exp.is_exists():
             if any(isinstance(f, up.model.int_variable.IntVariable) for f in exp.variables()):
                 return True
-        else:
-            for a in exp.args:
-                if self._has_int_vars(a):
-                    return True
-        return False
+        return any(self._has_int_vars(arg) for arg in exp.args)
 
     def update_problem_kind_expression(
         self,
@@ -1110,9 +1108,9 @@ class _KindFactory:
         if OperatorKind.EXISTS in ops:
             self.kind.set_conditions_kind("EXISTENTIAL_CONDITIONS")
         if OperatorKind.FORALL in ops:
-            if self._has_int_vars(exp):
-                self.kind.set_conditions_kind("INT_VARIABLES")
             self.kind.set_conditions_kind("UNIVERSAL_CONDITIONS")
+        if self._has_int_vars(exp):
+            self.kind.set_conditions_kind("INT_VARIABLES")
         if OperatorKind.INTERPRETED_FUNCTION_EXP in ops:
             self.kind.unset_problem_type("SIMPLE_NUMERIC_PLANNING")
             self.kind.set_conditions_kind("INTERPRETED_FUNCTIONS_IN_CONDITIONS")
