@@ -199,7 +199,7 @@ COMPILATION_PIPELINES = {
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
-        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        #(CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     "M3": [
@@ -435,10 +435,14 @@ def solve_problem(
 
                 # Collect solutions but time each individually
                 all_results = []
-                for res in planner.get_solutions(problem, **anytime_kwargs, output_stream=sys.stdout):
-                    solution_count += 1
-                    all_results.append(res)
-
+                try:
+                    for res in planner.get_solutions(problem, **anytime_kwargs, output_stream=sys.stdout):
+                        if res.plan is None:
+                            continue
+                        solution_count += 1
+                        all_results.append(res)
+                except TimeoutException:
+                    pass
                 # Stop the solving timer BEFORE validation/postprocessing
                 signal.alarm(0)
                 solving_time = time.time() - start_time
@@ -500,8 +504,9 @@ def solve_problem(
 
     except TimeoutException:
         signal.alarm(0)
+        solving_time = time.time() - start_time
         print(f"\nSolving timeout ({timeout}s)")
-        raise
+        return solving_time
     except Exception:
         signal.alarm(0)
         raise
