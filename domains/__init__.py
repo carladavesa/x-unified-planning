@@ -41,6 +41,7 @@ from .puzznic import DOMAIN as puzznic
 from .rovers import DOMAIN as rovers
 from .rush_hour import DOMAIN as rush_hour
 from .sailing import DOMAIN as sailing
+from .scrabble import DOMAIN as scrabble
 from .settlers import DOMAIN as settlers
 from .slitherlink import DOMAIN as slitherlink
 from .sokoban import DOMAIN as sokoban
@@ -68,6 +69,7 @@ DOMAINS: dict[str, Domain] = {
     "rovers": rovers,
     "rush_hour": rush_hour,
     "sailing": sailing,
+    "scrabble": scrabble,
     "settlers": settlers,
     "slitherlink": slitherlink,
     "sokoban": sokoban,
