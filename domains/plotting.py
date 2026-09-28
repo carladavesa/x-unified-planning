@@ -197,7 +197,7 @@ class PlottingDomain(Domain):
 
 
         shoot_column = InstantaneousAction('shoot_column', p=Colour, c=IntType(0, columns - 1),
-                                           l=IntType(0, rows))
+                                           l=IntType(0, rows-1))
         p = shoot_column.parameter('p')
         c = shoot_column.parameter('c')
         l = shoot_column.parameter('l')
