@@ -16,53 +16,51 @@ from unified_planning.shortcuts import (
     InstantaneousAction,
     MinimizeActionCosts,
     Problem, UserType, Not, And, Equals, BoolType, SetType, Or, SetMember, SetRemove, SetCardinality,
-    SetAdd, LT, Int, Exists, Implies, GE, Count, Forall
+    SetAdd, LT, Int
 )
 
 from domains.base import Domain
 
 
 ScrabbleInstance = tuple[int, int, list[tuple[str, ...]], list[str]]
+HAND_SIZE = 7
 
 
-def _chain_words(length: int, count: int) -> list[tuple[str, ...]]:
-    """Words in which each word overlaps on the last letter of the previous one."""
-    alphabet = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    return [
-        tuple(alphabet[(word_index * (length - 1) + offset) % len(alphabet)]
-              for offset in range(length))
-        for word_index in range(count)
-    ]
-
-
-def _chain_instance(board_size: int, word_length: int, word_count: int) -> ScrabbleInstance:
-    words = _chain_words(word_length, word_count)
+def _chain_instance(board_size: int, dictionary: tuple[str, ...]) -> ScrabbleInstance:
+    """Small English dictionaries with a reproducible chain of crossing words."""
+    words = [tuple(word) for word in dictionary]
+    if any(left[-1] != right[0] for left, right in zip(words, words[1:])):
+        raise ValueError("Successive words must share their last/first letter.")
     # First word consumes all its letters; later words overlap on their first
     # letter, so only their remaining letters need to appear in the bag.
     bag = [*words[0], *(letter for word in words[1:] for letter in word[1:])]
-    return board_size, word_length, words, bag
+    return board_size, HAND_SIZE, words, bag
 
 
 # (board size, hand capacity, dictionary words, ordered bag)
 INSTANCES: Dict[str, ScrabbleInstance] = {
-    "scr_01": _chain_instance(5, 3, 2),
-    "scr_02": _chain_instance(7, 3, 2),
-    "scr_03": _chain_instance(9, 3, 2),
-    "scr_04": _chain_instance(7, 4, 2),
-    "scr_05": _chain_instance(9, 5, 2),
-    "scr_06": _chain_instance(6, 4, 1),
-    "scr_07": _chain_instance(8, 4, 3),
-    "scr_08": _chain_instance(10, 4, 5),
-    "scr_09": _chain_instance(13, 5, 5),
-    "scr_10": _chain_instance(16, 6, 6),
-    # Same size as scr_07, but repeated letters yield many more bag-index
-    # combinations and therefore many more generated actions.
-    "scr_repeated": (
-        8,
-        4,
-        [("A", "B", "C", "A"), ("A", "D", "E", "F"), ("F", "G", "H", "A")],
-        ["A", "B", "C", "A", "D", "E", "F", "G", "H", "A"],
-    ),
+    # 3-letter words: same dictionary and bag, larger boards.
+    "scr_01": _chain_instance(5, ("CAT", "TOP", "PEN")),
+    "scr_02": _chain_instance(7, ("CAT", "TOP", "PEN")),
+    "scr_03": _chain_instance(9, ("CAT", "TOP", "PEN")),
+    "scr_04": _chain_instance(11, ("CAT", "TOP", "PEN")),
+    # Same 11x11 board, one more word each time (compare with scr_04).
+    "scr_05": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT")),
+    "scr_06": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT", "TUB")),
+    "scr_07": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT", "TUB", "BED")),
+
+    # 4-letter words: same dictionary and bag, larger boards.
+    "scr_08": _chain_instance(7, ("LAMP", "POND", "DESK")),
+    "scr_09": _chain_instance(9, ("LAMP", "POND", "DESK")),
+    "scr_10": _chain_instance(11, ("LAMP", "POND", "DESK")),
+    "scr_11": _chain_instance(13, ("LAMP", "POND", "DESK")),
+    # Same 13x13 board, one more word each time (compare with scr_11).
+    "scr_12": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE")),
+    "scr_13": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE", "ECHO")),
+    "scr_14": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE", "ECHO", "OVEN")),
+
+    # Same dimensions as scr_08, with more repeated letters.
+    "scr_repeated": _chain_instance(7, ("AREA", "ATOM", "MAMA")),
 }
 
 class ScrabbleDomain(Domain):
@@ -74,7 +72,8 @@ class ScrabbleDomain(Domain):
             name: {
                 "board_size": board_size,
                 "hand_size": hand_size,
-                "word_length": len(words[0]),
+                "min_word_length": min(map(len, words)),
+                "max_word_length": max(map(len, words)),
                 "words": len(words),
                 "bag_tiles": len(bag),
             }
@@ -90,9 +89,8 @@ class ScrabbleDomain(Domain):
         scrabble_problem = Problem('scrabble_problem')
 
         board_size, n_hand, dictionary_symbols, bag_symbols = self.get_instance(instance)
-        n_letters = len(dictionary_symbols[0])
-        if any(len(word) != n_letters for word in dictionary_symbols):
-            raise ValueError("All dictionary words in an instance must have the same length.")
+        if n_hand != HAND_SIZE:
+            raise ValueError("The Scrabble hand capacity must be 7.")
 
         Letter = UserType('Letter')
         none = Object('none', Letter)
@@ -138,6 +136,7 @@ class ScrabbleDomain(Domain):
 
         actions_for_cost = [pick_letter]
         for i, word in enumerate(dictionary_words):
+            n_letters = len(word)
             # We find the bag indices for each letter
             indices = []
             for j in range(n_letters):
