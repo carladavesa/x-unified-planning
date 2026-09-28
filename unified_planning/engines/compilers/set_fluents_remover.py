@@ -70,6 +70,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         self.cardinality_encoding = cardinality_encoding
         self._fluent_mapping = {}
         self._cardinality_registry = {}
+        self._cardinality_deltas = {}
         self._int_range_types = {}  # type_name → UserType
         self._int_to_obj = {}  # type_name → {int → Object}
         self._obj_to_int = {}  # type_name → {Object → int}
@@ -1190,7 +1191,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                         equality_conditions,
                         Not(new_effect.fluent),
                     ).simplify()
-                    action.add_increase_effect(card, 1, new_condition)
+                    self._record_cardinality_delta(card, new_effect.fluent, 1, new_condition)
                 return
 
             elif card_expr.is_set_union():
@@ -1213,7 +1214,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                                 Not(new_effect.fluent),
                                 Not(new_other_fluent(element, *other_fluent.args)),
                             ).simplify()
-                            action.add_increase_effect(card, 1, new_condition)
+                            self._record_cardinality_delta(card, new_effect.fluent, 1, new_condition)
                 return
 
         elif old_value.is_set_remove():
@@ -1227,7 +1228,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                         equality_conditions,
                         new_effect.fluent,  # the element WAS in the set
                     ).simplify()
-                    action.add_decrease_effect(card, 1, new_condition)
+                    self._record_cardinality_delta(card, new_effect.fluent, -1, new_condition)
                 return
 
             elif card_expr.is_set_union():
@@ -1252,7 +1253,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                                 new_effect.fluent,  # was in this set
                                 Not(new_other_fluent(element, *other_fluent.args)),  # not in other set
                             ).simplify()
-                            action.add_decrease_effect(card, 1, new_condition)
+                            self._record_cardinality_delta(card, new_effect.fluent, -1, new_condition)
                 return
 
         elif old_value.is_set_union():
@@ -1281,6 +1282,63 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
 
         raise NotImplementedError(f"Not implemented yet")
 
+    def _record_cardinality_delta(self, card, membership, delta, condition):
+        # Removing the same element under two active conditions changes the
+        # cardinality only once. The membership guard uses the pre-action state.
+        updates = self._cardinality_deltas.setdefault(card, {})
+        key = (membership, delta)
+        updates[key] = Or(updates.get(key, FALSE()), condition).simplify()
+
+    def _add_combined_cardinality_effects(self, action):
+        """Emit mutually exclusive effects for the total cardinality change."""
+        def literals(expression):
+            if expression.is_and():
+                return {term for arg in expression.args for term in literals(arg)}
+            return {expression}
+
+        def disjoint(left, right):
+            terms = literals(left) | literals(right)
+            values = {}
+            for term in terms:
+                if term.is_false() or (term.is_not() and term.arg(0) in terms):
+                    return True
+                if term.is_equals():
+                    expression, value = term.args
+                    if expression.is_constant():
+                        expression, value = value, expression
+                    if value.is_constant():
+                        if expression in values and values[expression] != value:
+                            return True
+                        values[expression] = value
+            return False
+
+        for card, updates in self._cardinality_deltas.items():
+            terms = [(delta, guard) for (_, delta), guard in updates.items()]
+            # Dynamic SetAdd/SetRemove can produce one exclusive case per
+            # element. Preserve that linear encoding instead of enumerating it.
+            if all(disjoint(a[1], b[1]) for a, b in itertools.combinations(terms, 2)):
+                totals = terms
+            else:
+                totals_by_delta = {0: TRUE()}
+                for delta, condition in terms:
+                    next_totals = {}
+                    for total, guard in totals_by_delta.items():
+                        for change, branch in ((0, Not(condition)), (delta, condition)):
+                            enabled = And(guard, branch).simplify()
+                            if enabled.is_false():
+                                continue
+                            value = total + change
+                            next_totals[value] = Or(
+                                next_totals.get(value, FALSE()), enabled
+                            ).simplify()
+                    totals_by_delta = next_totals
+                totals = totals_by_delta.items()
+            for delta, condition in totals:
+                if condition.is_false() or delta == 0:
+                    continue
+                add = action.add_increase_effect if delta > 0 else action.add_decrease_effect
+                add(card, abs(delta), condition)
+
     def _generate_card_effects(
             self, old_problem: Problem, new_problem: Problem, action: InstantaneousAction
     ) -> InstantaneousAction:
@@ -1290,6 +1348,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         """
         new_action = action.clone()
         new_action.clear_effects()
+        self._cardinality_deltas.clear()
 
         # PRIMERA PASSADA: transformar tots els effects per omplir el registry
         transformed = []
@@ -1352,6 +1411,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     ),
                 )
 
+        self._add_combined_cardinality_effects(new_action)
         return new_action
 
     def _compile(
@@ -1372,6 +1432,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         new_problem.clear_quality_metrics()
 
         self._fluent_mapping.clear()
+        self._cardinality_registry.clear()
         new_to_old: Dict[Action, Action] = {}
 
         # Transform set fluents
