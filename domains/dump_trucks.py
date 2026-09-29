@@ -118,8 +118,8 @@ class DumpTrucksDomain(Domain):
         load_truck.add_precondition(Equals(l, loc_of_truck(t)))
         load_truck.add_precondition(SetMember(p, pat(l)))
         load_truck.add_precondition(LT(SetCardinality(pin(t)), 6))
-        load_truck.add_effect(pat(l), SetRemove(p, pat(l)))
-        load_truck.add_effect(pin(t), SetAdd(p, pin(t)))
+        load_truck.add_effect(pat(l), SetRemove(pat(l), p))
+        load_truck.add_effect(pin(t), SetAdd(pin(t), p))
 
         unload_truck = InstantaneousAction('unload_truck', t=Truck, l=Location)
         t = unload_truck.parameter('t')
