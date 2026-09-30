@@ -180,7 +180,7 @@ class Simplifier(walkers.dag.DagWalker):
 
     def walk_exists(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 1
-        free_vars: FrozenSet["up.model.variable.Variable"] = (
+        free_vars: FrozenSet[Union["up.model.Variable", "up.model.IntVariable"]] = (
             self.environment.free_vars_oracle.get_free_variables(args[0])
         )
         vars = set(var for var in expression.variables() if var in free_vars)
@@ -226,10 +226,10 @@ class Simplifier(walkers.dag.DagWalker):
 
     def walk_forall(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 1
-        free_vars: FrozenSet["up.model.variable.Variable"] = (
+        free_vars: FrozenSet[Union["up.model.Variable", "up.model.IntVariable"]] = (
             self.environment.free_vars_oracle.get_free_variables(args[0])
         )
-        vars = tuple(var for var in expression.variables() if var in free_vars or isinstance(var, up.model.int_variable.IntVariable))
+        vars = tuple(var for var in expression.variables() if var in free_vars)
         if len(vars) == 0:
             return args[0]
         return self.manager.Forall(args[0], *vars)

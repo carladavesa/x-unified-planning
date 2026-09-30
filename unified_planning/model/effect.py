@@ -100,9 +100,9 @@ class Effect:
         self._condition = condition
         self._kind = kind
         fvo = fluent.environment.free_vars_oracle
-        free_vars: Set[Union["up.model.variable.Variable"]] = set(
-            fvo.get_free_variables(fluent)
-        )
+        free_vars: Set[
+            Union["up.model.variable.Variable", "up.model.int_variable.IntVariable"]
+        ] = set(fvo.get_free_variables(fluent))
         free_vars.update(fvo.get_free_variables(value))
         free_vars.update(fvo.get_free_variables(condition))
 
@@ -112,11 +112,9 @@ class Effect:
             for v in forall:
                 if v in free_vars and v not in seen:
                     seen.add(v)
-                    assert isinstance(v, up.model.variable.Variable), (
+                    assert isinstance(v, (up.model.variable.Variable, up.model.int_variable.IntVariable)), (
                         "Typing not respected"
                     )
-                    yield v
-                elif isinstance(v, up.model.int_variable.IntVariable):
                     yield v
             unbounded_vars = free_vars.difference(seen)
             if unbounded_vars:
