@@ -2,7 +2,7 @@
     (:domain rush-hour-dd)
     (:objects
         loc1_1 loc1_2 loc1_3 loc1_4 loc1_5 loc1_6 loc1_7 loc2_1 loc2_2 loc2_3 loc2_4 loc2_5 loc2_6 loc2_7 loc3_1 loc3_2 loc3_3 loc3_4 loc3_5 loc3_6 loc3_7 loc4_1 loc4_2 loc4_3 loc4_4 loc4_5 loc4_6 loc4_7 loc5_1 loc5_2 loc5_3 loc5_4 loc5_5 loc5_6 loc5_7 loc6_1 loc6_2 loc6_3 loc6_4 loc6_5 loc6_6 loc6_7 loc7_1 loc7_2 loc7_3 loc7_4 loc7_5 loc7_6 loc7_7  - position
-        red vehicle1 vehicle2 vehicle3 vehicle4 vehicle5 vehicle6 vehicle7 vehicle8 vehicle9 vehicle10 vehicle11 vehicle12 vehicle13 vehicle14 vehicle15 - vehicle
+        red vehicle1 vehicle2 vehicle3 vehicle4 vehicle6 vehicle7 vehicle8 vehicle9 vehicle10 vehicle11 vehicle12 vehicle13 vehicle14 vehicle15 - vehicle
     )
     (:init
         (= (total-cost) 0)
@@ -323,7 +323,6 @@
         (CAR vehicle2)
         (CAR vehicle3)
         (TRUCK vehicle4)
-        (CAR vehicle5)
         (CAR vehicle6)
         (CAR vehicle7)
         (CAR vehicle8)
@@ -347,8 +346,6 @@
         (containsVehicle loc1_7 vehicle4)
         (containsVehicle loc2_7 vehicle4)
         (containsVehicle loc3_7 vehicle4)
-        (containsVehicle loc3_1 vehicle5)
-        (containsVehicle loc3_2 vehicle5)
         (containsVehicle loc3_3 vehicle6)
         (containsVehicle loc4_3 vehicle6)
         (containsVehicle loc4_1 vehicle7)
@@ -385,8 +382,6 @@
         (isOccupied loc1_7) 
         (isOccupied loc2_7) 
         (isOccupied loc3_7) 
-        (isOccupied loc3_1) 
-        (isOccupied loc3_2) 
         (isOccupied loc3_3) 
         (isOccupied loc4_3) 
         (isOccupied loc4_1) 
