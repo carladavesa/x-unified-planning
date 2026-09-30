@@ -19,7 +19,6 @@ A Variable has a name and a type.
 
 from typing import List, Optional, FrozenSet, Union
 from unified_planning.environment import Environment, get_environment
-from unified_planning.model import IntVariable
 from unified_planning.model.fnode import FNode
 from unified_planning.model.operators import OperatorKind
 import unified_planning
@@ -189,7 +188,7 @@ class FreeVarsOracle(walkers.DagWalker):
                     children.extend((variable.initial, variable.last))
         return children
 
-    def get_free_variables(self, expression: FNode) -> FrozenSet[Union[Variable, IntVariable]]:
+    def get_free_variables(self, expression: FNode) -> FrozenSet[Union[Variable, "IntVariable"]]:
         """Returns the FrozenSet of Symbols appearing free in the expression."""
         return self.walk(expression)
 
@@ -202,17 +201,17 @@ class FreeVarsOracle(walkers.DagWalker):
 
     @walkers.handles(OperatorKind.INT_VARIABLE_EXP)
     def walk_int_variable_exp(
-            self, expression: FNode, args: List[FrozenSet[IntVariable]], **kwargs
-    ) -> FrozenSet[IntVariable]:
+            self, expression: FNode, args: List[FrozenSet["IntVariable"]], **kwargs
+    ) -> FrozenSet["IntVariable"]:
         return frozenset((expression.int_variable(),))
 
     @walkers.handles(OperatorKind.EXISTS, OperatorKind.FORALL)
     def walk_quantifier(
         self,
         expression: FNode,
-        args: List[FrozenSet[Union[Variable, IntVariable]]],
+        args: List[FrozenSet[Union[Variable, "IntVariable"]]],
         **kwargs,
-    ) -> FrozenSet[Union[Variable, IntVariable]]:
+    ) -> FrozenSet[Union[Variable, "IntVariable"]]:
         # pylint: disable=unused-argument
         return frozenset(v for variables in args for v in variables).difference(
             expression.variables()
@@ -222,9 +221,9 @@ class FreeVarsOracle(walkers.DagWalker):
     def walk_constant(
         self,
         expression: FNode,
-        args: List[FrozenSet[Union[Variable, IntVariable]]],
+        args: List[FrozenSet[Union[Variable, "IntVariable"]]],
         **kwargs,
-    ) -> FrozenSet[Union[Variable, IntVariable]]:
+    ) -> FrozenSet[Union[Variable, "IntVariable"]]:
         # pylint: disable=unused-argument
         return frozenset()
 
@@ -233,6 +232,6 @@ class FreeVarsOracle(walkers.DagWalker):
         - {OperatorKind.VARIABLE_EXP, OperatorKind.INT_VARIABLE_EXP, OperatorKind.EXISTS, OperatorKind.FORALL}
     )
     def walk_all(
-        self, expression: FNode, args: List[FrozenSet[Union[Variable, IntVariable]]], **kwargs,
-    ) -> FrozenSet[Union[Variable, IntVariable]]:
+        self, expression: FNode, args: List[FrozenSet[Union[Variable, "IntVariable"]]], **kwargs,
+    ) -> FrozenSet[Union[Variable, "IntVariable"]]:
         return frozenset(v for s in args for v in s)
