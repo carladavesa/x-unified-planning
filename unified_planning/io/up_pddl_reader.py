@@ -1384,19 +1384,28 @@ class UPPDDLReader:
             problem = htn.HierarchicalProblem(
                 domain_res["name"],
                 self._env,
-                initial_defaults={self._tm.BoolType(): self._em.FALSE()},
+                initial_defaults={
+                    self._tm.BoolType(): self._em.FALSE(),
+                    self._tm.DerivedBoolType(): self._em.FALSE(),
+                },
             )
         elif ":contingent" in set(domain_res.get("features", [])):
             problem = ContingentProblem(
                 domain_res["name"],
                 self._env,
-                initial_defaults={self._tm.BoolType(): self._em.FALSE()},
+                initial_defaults={
+                    self._tm.BoolType(): self._em.FALSE(),
+                    self._tm.DerivedBoolType(): self._em.FALSE(),
+                },
             )
         else:
             problem = up.model.Problem(
                 domain_res["name"],
                 self._env,
-                initial_defaults={self._tm.BoolType(): self._em.FALSE()},
+                initial_defaults={
+                    self._tm.BoolType(): self._em.FALSE(),
+                    self._tm.DerivedBoolType(): self._em.FALSE(),
+                },
             )
 
         types_map: TypesMap = {}
