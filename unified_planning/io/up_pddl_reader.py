@@ -1482,10 +1482,18 @@ class UPPDDLReader:
                     params[param_name] = param_type
             return params
 
+        derived_names = {
+            a["head"][0][0] for a in domain_res.get("axioms", [])
+        }
         for p in domain_res.get("predicates", []):
             n = p[0]
             params = get_fluent_params(p)
-            f = up.model.Fluent(n, self._tm.BoolType(), params, self._env)
+            typename = (
+                self._tm.DerivedBoolType()
+                if n in derived_names
+                else self._tm.BoolType()
+            )
+            f = up.model.Fluent(n, typename, params, self._env)
             problem.add_fluent(f)
 
         for p in domain_res.get("functions", []):
@@ -1595,9 +1603,6 @@ class UPPDDLReader:
 
             # Extract the fluent name from the axiom's head
             fluent_name = axiom_entry["head"][0][0]
-
-            # Set the fluent's type to DerivedBoolType
-            problem.fluent(fluent_name)._typename = self._tm.DerivedBoolType()
 
             # Extract and organize the axiom's parameters
             axiom_params = OrderedDict()
