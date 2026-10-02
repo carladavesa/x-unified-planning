@@ -134,7 +134,7 @@ class SokobanDomain(Domain):
         problem.add_fluent(grid, default_initial_value=False)
         for (r, c), v in initial_state.items():
             problem.set_initial_value(grid(pattern_by_symbol[v])[r][c], True)
-        problem.set_initial_value(grid(P)[0][0], True)
+
         # --- Actions ---
         move_right = InstantaneousAction('move_right', r=IntType(0, rows - 1), c=IntType(0, columns - 1))
         r = move_right.parameter('r')
