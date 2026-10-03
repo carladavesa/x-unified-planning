@@ -52,19 +52,27 @@ from functools import partial
 
 class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
     """
-    IntParametersAndVariablesRemover remover class: this class offers the capability
-    to transform a problem with bounded integer parameters in actions and integer
-    variables into a problem without.
+    Removes bounded integer action parameters and quantified integer variables.
 
-    Transforms:
-    1. Integer action parameters -> grounded instantiated actions for each valid integer value
-    2. Int variables -> expanded quantifiers (forall/exists) over instantiated ranges
+    Each combination of integer parameter values produces an action candidate.
+    Other parameter types remain in the action signature. For example, an
+    action with ``n: IntType(1, 3)`` and precondition ``n < 2`` produces only the
+    instance with ``n = 1``; the other candidates have false preconditions.
 
-    Example:
-        action(p: Int[1,3]) with precondition p < 2
-    Becomes:
-        action_p1 (where p=1), action_p2 (where p=2), action_p3 (where p=3)
-        But only action_p1 is created since 1 < 2 is true, while 2 < 2 and 3 < 2 are false.
+    After substituting action parameters, ``IntVariable`` ranges are expanded
+    into conjunctions for ``Forall``, disjunctions for ``Exists``, and individual
+    effects for universal effects. Both endpoints are included. Dependencies
+    between integer variables determine their expansion order, and all bounds
+    must become integer constants. Object variables remain quantified.
+
+    Supports instantaneous and durative actions; continuous effects are not
+    supported. Integer-valued fluents and integer fluent parameters are not
+    removed by this compiler.
+
+    The returned ``CompilerResult.map_back_action_instance`` restores the
+    original action and the integer arguments at their original positions.
+    Use it with ``Plan.replace_action_instances`` to reconstruct a plan for
+    the original problem.
     """
 
     def __init__(self):
