@@ -18,19 +18,23 @@ A IntVariable has a name and a type.
 """
 
 
-from typing import List, Optional, Union, FrozenSet
+from typing import List, Optional, Union
 
 from unified_planning.environment import Environment, get_environment
 from unified_planning.model import Parameter
 from unified_planning.model.fnode import FNode
-from unified_planning.model.operators import OperatorKind
 import unified_planning
-import unified_planning.model.walkers as walkers
-import unified_planning.model.operators as op
 
 
 class IntVariable:
-    """Represents an integer variable; a `IntVariable` has a name and a type."""
+    """Represents an integer variable for quantified expressions and effects.
+
+    The range includes both ``initial`` and ``last``. Bounds may depend on integer constants,
+    integer action parameters or on integer variables in scope.
+
+    Use the variable with ``Forall``, ``Exists``, or the ``forall`` argument of an effect.
+    For example, ``IntVariable("i", 1, 3)`` ranges over 1, 2 and 3.
+    """
 
     def __init__(
         self,
@@ -78,12 +82,12 @@ class IntVariable:
 
     @property
     def initial(self) -> FNode:
-        """Returns the `IntVariable` `Initial`."""
+        """Returns the inclusive lower bound as an expression."""
         return self._env.expression_manager.auto_promote(self._initial)[0]
 
     @property
     def last(self) -> FNode:
-        """Returns the `IntVariable` `Last`."""
+        """Returns the inclusive upper bound as an expression."""
         return self._env.expression_manager.auto_promote(self._last)[0]
 
 
