@@ -28,6 +28,7 @@ from unified_planning.exceptions import (
     UPValueError,
 )
 from fractions import Fraction
+from collections.abc import Iterable as ABCIterable
 from typing import Optional, Iterable, List, Union, Dict, Tuple, Iterator, Sequence, Set
 
 BoolExpression = Union[
@@ -123,7 +124,12 @@ class ExpressionManager(object):
         set is a value rather than an argument list.
         """
         for a in args:
-            if isinstance(a, Iterable) and not isinstance(a, (str, set, frozenset)):
+            # FNode has no __iter__, so this check also
+            # serves as a fast path that skips the Iterable ABC machinery for
+            # the overwhelmingly common case of an already-promoted expression.
+            if isinstance(a, up.model.fnode.FNode):
+                yield a
+            elif isinstance(a, ABCIterable) and not isinstance(a, (str, set, frozenset)):
                 for p in a:
                     yield p
             else:
@@ -141,7 +147,12 @@ class ExpressionManager(object):
         """
         res = []
         for e in self._polymorph_args_to_iterator(*args):
-            if isinstance(e, up.model.fluent.Fluent):
+            if isinstance(e, up.model.fnode.FNode):
+                assert e.environment == self.environment, (
+                    "Expression has a different environment of the expression manager"
+                )
+                res.append(e)
+            elif isinstance(e, up.model.fluent.Fluent):
                 assert e.environment == self.environment, (
                     "Fluent has a different environment of the expression manager"
                 )
@@ -196,10 +207,10 @@ class ExpressionManager(object):
             elif isinstance(e, Set):
                 res.append(self.Set(e))
             else:
-                assert e.environment == self.environment, (
-                    "Expression has a different environment of the expression manager"
+                raise UPTypeError(
+                    f"{e!r} of type {type(e)} cannot be promoted to an FNode: it does "
+                    "not match any of the types accepted by the ExpressionManager."
                 )
-                res.append(e)
         return res
 
     def create_node(

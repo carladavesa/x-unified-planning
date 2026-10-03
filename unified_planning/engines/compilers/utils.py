@@ -141,6 +141,46 @@ def check_and_simplify_preconditions(
     return (True, nap)
 
 
+def _naming_list(subs: Dict[Expression, Expression]) -> List[str]:
+    """Builds the fresh-name suffix for a grounded action from its substitution map. Kept as
+    a separate call (instead of at the very top of `create_action_with_given_subs`) so it, and
+    the `FNode.__repr__` call `str(value)` triggers, are only paid for an accepted candidate,
+    not for one rejected by the early feasibility check below."""
+    naming_list = []
+    for param, value in subs.items():
+        assert isinstance(param, Parameter)
+        assert isinstance(value, FNode)
+        naming_list.append(str(value))
+    return naming_list
+
+
+def _substitute_and_simplify_preconditions(
+    preconditions: List[FNode],
+    subs: Dict[Expression, Expression],
+    simplifier,
+    em,
+) -> Optional[List[FNode]]:
+    """Substitutes `subs` into `preconditions` and simplifies their conjunction, returning
+    the resulting precondition list, or `None` if the conjunction simplifies to a
+    contradiction (the grounding is infeasible).
+
+    Used by `create_action_with_given_subs` to test feasibility *before* cloning the action,
+    building its name or rebuilding its effects -- all of which are wasted work for a
+    candidate that gets rejected here anyway -- and, on the accepted path, to compute the
+    action's final preconditions directly instead of substituting them once (raw) and then
+    simplifying them a second time via `check_and_simplify_preconditions`.
+    """
+    if not preconditions:
+        return []
+    substituted = [p.substitute(subs) for p in preconditions]
+    ps = simplifier.simplify(em.And(substituted))
+    if ps.is_bool_constant():
+        return [] if ps.bool_constant_value() else None
+    if ps.is_and():
+        return list(ps.args)
+    return [ps]
+
+
 def create_effect_with_given_subs(
     problem: Problem,
     old_effect: Effect,
@@ -182,15 +222,37 @@ def create_action_with_given_subs(
     original name instead of going through :func:`get_fresh_name`: since ``old_action``
     is still registered in ``problem`` under that name, `get_fresh_name` would otherwise
     treat it as colliding with itself and rename it needlessly.
+
+    For an `InstantaneousAction`, feasibility is checked *before* any of the above: its
+    preconditions are substituted and simplified first, and if that simplifies to a
+    contradiction, `None` is returned immediately without cloning the action, computing its
+    name, or rebuilding its effects -- all of which would otherwise be wasted work for a
+    candidate that gets rejected anyway. (This does not extend to `DurativeAction` yet: its
+    conditions are de-duplicated per timing interval by `add_condition` on the way in, so an
+    early check over the raw substituted list is not guaranteed to see the same argument
+    multiset as the current post-clone path when substitution collapses two distinct lifted
+    conditions into one.)
     """
-    naming_list: List[str] = []
-    for param, value in subs.items():
-        assert isinstance(param, Parameter)
-        assert isinstance(value, FNode)
-        naming_list.append(str(value))
+    em = problem.environment.expression_manager
     c_subs = cast(Dict[Parameter, FNode], subs)
     if isinstance(old_action, InstantaneousAction):
-        new_action = cast(InstantaneousAction, old_action.clone())
+        new_preconditions = _substitute_and_simplify_preconditions(
+            old_action.preconditions, subs, simplifier, em
+        )
+        if new_preconditions is None:
+            return None
+        naming_list = _naming_list(subs)
+        new_action: InstantaneousAction
+        if type(old_action) is InstantaneousAction:
+            # Cloned without effects: they would only be immediately discarded and rebuilt
+            # below from old_action's (not new_action's) effects, so cloning them first via
+            # the generic clone() would be pure waste -- see _clone_without_effects's docstring.
+            new_action = old_action._clone_without_effects()
+        else:
+            # Any InstantaneousAction *subclass* (SensingAction, InstantaneousMotionAction,
+            # or any future one) falls back to a full clone() + clear_effects() instead.
+            new_action = cast(InstantaneousAction, old_action.clone())
+            new_action.clear_effects()
         new_action.name = (
             old_action.name
             if not subs
@@ -203,12 +265,10 @@ def create_action_with_given_subs(
             new_action._observed_fluents = [
                 f.substitute(subs) for f in new_action.observed_fluents
             ]
-        old_preconditions = new_action.preconditions
-        new_action._set_preconditions([p.substitute(subs) for p in old_preconditions])
+        new_action._set_preconditions(new_preconditions)
 
-        old_effects = list(new_action.effects)
-        old_simulated_effect = new_action.simulated_effect
-        new_action.clear_effects()
+        old_effects = old_action.effects
+        old_simulated_effect = old_action.simulated_effect
         for e in old_effects:
             new_effect = create_effect_with_given_subs(problem, e, simplifier, subs)
             if new_effect is not None:
@@ -238,14 +298,9 @@ def create_action_with_given_subs(
                 new_action.set_simulated_effect(new_simulated_effect)
             except UPConflictingEffectsException:
                 return None
-        is_feasible, new_preconditions = check_and_simplify_preconditions(
-            problem, new_action, simplifier
-        )
-        if not is_feasible:
-            return None
-        new_action._set_preconditions(new_preconditions)
         return new_action
     elif isinstance(old_action, DurativeAction):
+        naming_list = _naming_list(subs)
         new_durative_action = cast(DurativeAction, old_action.clone())
         new_durative_action.name = (
             old_action.name
@@ -307,14 +362,17 @@ def create_action_with_given_subs(
             for f in old_se.fluents:
                 new_fluents.append(f.substitute(subs))
 
-            def fun(_problem, _state, _):
-                return old_se.function(_problem, _state, c_subs)
+            # _inner_simulated_effect bound as a default: the closure outlives the
+            # iteration, so capturing the loop variable would make every timing call
+            # the last one's function.
+            def durative_fun(_problem, _state, _, _inner_simulated_effect=old_se):
+                return _inner_simulated_effect.function(_problem, _state, c_subs)
 
             # this rebuilds a simulated effect the user already defined (and got
             # warned about), so the deprecation warning is silenced here
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
-                new_simulated_effect = SimulatedEffect(new_fluents, fun)
+                new_simulated_effect = SimulatedEffect(new_fluents, durative_fun)
             # We try to add the new simulated effect, but a compiler might generate conflicting effects,
             # so the action is just considered invalid
             try:
@@ -610,6 +668,12 @@ def updated_minimize_action_costs(
     updated equivalent metric for the new problem. This simply changes the costs keys
     and does not alter the cost expression, so it does not cover use-cases like grounding.
 
+    The original metric's `default` is carried over unchanged to the returned metric. Actions
+    with no original counterpart (mapped to `None` in `new_to_old`) always get cost `0`, not the
+    default: they are compiler-introduced bookkeeping actions (e.g. the fake actions
+    `DisjunctiveConditionsRemover` adds to encode a disjunctive goal) that every valid compiled
+    plan must apply, so giving them a non-zero cost would change the compiled problem's optimum.
+
     :param quality_metric: The `MinimizeActionCosts`metric to update.
     :param new_to_old: The action's mapping from the compiled problem to the original problem.
     :param environment: The environment of the new problem (therefore, also of the new actions).
@@ -623,7 +687,9 @@ def updated_minimize_action_costs(
                 new_costs[new_act] = new_cost
         else:
             new_costs[new_act] = environment.expression_manager.Int(0)
-    return MinimizeActionCosts(new_costs, environment=environment)
+    return MinimizeActionCosts(
+        new_costs, default=quality_metric.default, environment=environment
+    )
 
 
 def remove_fluents(problem: Problem, fluents: Set[Fluent]) -> None:
@@ -638,7 +704,7 @@ def remove_fluents(problem: Problem, fluents: Set[Fluent]) -> None:
     :param fluents: The `fluents` to remove; must all belong to the given `problem`.
     """
     for fluent in fluents:
-        problem._fluents.remove(fluent)
+        problem._remove_fluent(fluent)
         problem._fluents_defaults.pop(fluent, None)
     problem._initial_value = {
         fluent_exp: value

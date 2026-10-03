@@ -26,6 +26,7 @@ from unified_planning.exceptions import (
 from unified_planning.test.examples import get_example_problems
 from unified_planning.test import unittest_TestCase, main
 from unified_planning.model.action import InstantaneousAction
+from unified_planning.model.multi_agent import Agent, MultiAgentProblem
 
 
 class TestModel(unittest_TestCase):
@@ -105,6 +106,109 @@ class TestModel(unittest_TestCase):
             self.assertNotEqual(problem_clone_2, problem)
             self.assertNotEqual(problem, problem_clone_2)
 
+    def test_clone_preserves_timed_effect_conflict_tracking(self):
+        x = Fluent("x", RealType())
+        y = Fluent("y", RealType())
+        problem = Problem("p")
+        problem.add_fluent(x, default_initial_value=0)
+        problem.add_fluent(y, default_initial_value=0)
+        t = GlobalStartTiming()
+        problem.add_increase_effect(t, x, 1)
+
+        # sanity: the original detects the conflict
+        with self.assertRaises(UPConflictingEffectsException):
+            problem.add_timed_effect(t, x, 2)
+
+        problem_clone = problem.clone()
+        self.assertEqual(problem_clone._fluents_inc_dec, problem._fluents_inc_dec)
+        # the clone must detect the very same conflict
+        with self.assertRaises(UPConflictingEffectsException):
+            problem_clone.add_timed_effect(t, x, 2)
+
+        # ... and the copy must be independent from the original
+        problem_clone.add_increase_effect(t, y, 1)
+        problem.add_timed_effect(t, y, 2)  # no conflict on the original
+
+    def test_clone_to_without_actions_and_metrics_preserves_everything_else(self):
+        Location = UserType("Location")
+        l1 = Object("l1", Location)
+        l2 = Object("l2", Location)
+        at_l2 = Fluent("at_l2")
+        cost = Fluent("cost", IntType())
+        move = InstantaneousAction("move")
+        move.add_precondition(Not(at_l2))
+        move.add_effect(at_l2, True)
+
+        problem = Problem("clone_without_actions")
+        problem.add_object(l1)
+        problem.add_object(l2)
+        problem.add_fluent(at_l2, default_initial_value=False)
+        problem.add_fluent(cost, default_initial_value=0)
+        problem.add_action(move)
+        problem.add_goal(at_l2)
+        problem.add_timed_goal(GlobalStartTiming(5), at_l2)
+        problem.add_timed_effect(GlobalStartTiming(3), cost, 10)
+        problem.add_trajectory_constraint(Sometime(at_l2))
+        problem.add_process(Process("idle"))
+        problem.add_event(Event("tick"))
+        problem.add_quality_metric(MinimizeActionCosts({move: 1}))
+        problem.epsilon = Fraction(1, 100)
+        problem.discrete_time = True
+        problem.self_overlapping = True
+
+        new_problem = Problem("clone_without_actions_target", problem.environment)
+        problem._clone_to_without_actions_and_metrics(new_problem)
+
+        # actions and quality metrics are intentionally dropped, not cloned
+        self.assertEqual(new_problem.actions, [])
+        self.assertEqual(new_problem.quality_metrics, [])
+
+        # everything else survives the clone
+        self.assertEqual(set(new_problem.user_types), set(problem.user_types))
+        self.assertEqual(set(new_problem.all_objects), set(problem.all_objects))
+        self.assertEqual(set(new_problem.fluents), set(problem.fluents))
+        self.assertEqual(new_problem.initial_values, problem.initial_values)
+        self.assertEqual(new_problem.goals, problem.goals)
+        self.assertEqual(new_problem.timed_goals, problem.timed_goals)
+        self.assertEqual(new_problem.timed_effects, problem.timed_effects)
+        self.assertEqual(
+            new_problem.trajectory_constraints, problem.trajectory_constraints
+        )
+        self.assertEqual(
+            {p.name for p in new_problem.processes},
+            {p.name for p in problem.processes},
+        )
+        self.assertEqual(
+            {e.name for e in new_problem.events}, {e.name for e in problem.events}
+        )
+        self.assertEqual(new_problem.epsilon, problem.epsilon)
+        self.assertEqual(new_problem.discrete_time, problem.discrete_time)
+        self.assertEqual(new_problem.self_overlapping, problem.self_overlapping)
+        self.assertEqual(new_problem._fluents_assigned, problem._fluents_assigned)
+
+        # the original problem is untouched
+        self.assertEqual(len(problem.actions), 1)
+        self.assertEqual(len(problem.quality_metrics), 1)
+
+    def test_clone_remaps_minimize_action_costs_to_the_cloned_actions(self):
+        done = Fluent("done")
+        move = InstantaneousAction("move")
+        move.add_effect(done, True)
+
+        problem = Problem("clone_metrics")
+        problem.add_fluent(done, default_initial_value=False)
+        problem.add_action(move)
+        problem.add_quality_metric(MinimizeActionCosts({move: 5}))
+
+        problem_clone = problem.clone()
+
+        cloned_move = problem_clone.action("move")
+        self.assertIsNot(cloned_move, move)
+        self.assertEqual(len(problem_clone.quality_metrics), 1)
+        metric = problem_clone.quality_metrics[0]
+        assert isinstance(metric, MinimizeActionCosts)
+        self.assertEqual(metric.get_action_cost(cloned_move), Int(5))
+
     def test_clone_action(self):
         Location = UserType("Location")
         with self.assertRaises(TypeError):
@@ -150,6 +254,35 @@ class TestModel(unittest_TestCase):
         b = InstantaneousAction("b")
         with self.assertRaises(UPProblemDefinitionError):
             b.add_effect(value(other), 9)
+
+    def test_effect_dot_target(self):
+        Location = UserType("Location")
+        l1 = Object("l1", Location)
+        at = Fluent("at", BoolType(), l=Location)
+        home = Fluent("home", Location)
+        counter = Fluent("counter", IntType())
+
+        ma = MultiAgentProblem("ma")
+        ma.add_object(l1)
+        ag = Agent("a1", ma)
+        ag.add_fluent(at, default_initial_value=False)
+        ag.add_fluent(home, default_initial_value=l1)
+        ag.add_fluent(counter, default_initial_value=0)
+        ma.add_agent(ag)
+
+        # a Dot target with no other fluents nested in its arguments is accepted...
+        c = InstantaneousAction("c")
+        c.add_effect(Dot(ag, at(l1)), True)
+        self.assertEqual(c.effects[0].fluent, Dot(ag, at(l1)))
+
+        d = InstantaneousAction("d")
+        d.add_increase_effect(Dot(ag, counter()), 1)
+        self.assertEqual(d.effects[0].fluent, Dot(ag, counter()))
+
+        # ...but a Dot target with another fluent nested in its arguments is still rejected.
+        e = InstantaneousAction("e")
+        with self.assertRaises(UPProblemDefinitionError):
+            e.add_effect(Dot(ag, at(home())), True)
 
     def test_interpreted_functions_in_numeric_assignments(self):
         i_type = IntType(0, 5)
@@ -435,6 +568,30 @@ class TestModel(unittest_TestCase):
         kind = p.kind
         self.assertTrue(kind.has_disjunctive_conditions())
         self.assertTrue(kind.has_increase_effects())
+
+    def test_iff_condition_kind(self):
+        a = Fluent("a", BoolType())
+        b = Fluent("b", BoolType())
+
+        act = InstantaneousAction("act")
+        act.add_precondition(Iff(a, b))
+        act.add_effect(a, True)
+
+        precondition_problem = Problem("p1")
+        precondition_problem.add_fluent(a, default_initial_value=False)
+        precondition_problem.add_fluent(b, default_initial_value=False)
+        precondition_problem.add_action(act)
+
+        goal_problem = Problem("p2")
+        goal_problem.add_fluent(a, default_initial_value=False)
+        goal_problem.add_fluent(b, default_initial_value=False)
+        goal_problem.add_action(act)
+        goal_problem.add_goal(Iff(a, b))
+
+        for problem in (precondition_problem, goal_problem):
+            kind = problem.kind
+            self.assertTrue(kind.has_disjunctive_conditions())
+            self.assertFalse(kind.has_negative_conditions())
 
     def test_istantaneous_action(self):
         Location = UserType("Location")
@@ -787,6 +944,35 @@ class TestModel(unittest_TestCase):
         self.assertIs(pickle.loads(pickle.dumps(tm.BoolType())), tm.BoolType())
         self.assertIs(pickle.loads(pickle.dumps(BOOL)), BOOL)
         self.assertIs(pickle.loads(pickle.dumps(TIME)), TIME)
+
+    def test_problem_pickle_roundtrip_keeps_name_lookups(self):
+        # a problem is pickled whole when the parallel engine sends it to another process
+        # (with the `spawn` start method), so nothing reachable from it may be a closure;
+        # the by-name indexes must also still resolve on the unpickled copy
+        import pickle
+
+        problem = self.problems["robot"].problem
+        clone = pickle.loads(pickle.dumps(problem))
+
+        for fluent in problem.fluents:
+            self.assertTrue(clone.has_fluent(fluent.name))
+            self.assertEqual(clone.fluent(fluent.name).name, fluent.name)
+        for action in problem.actions:
+            self.assertTrue(clone.has_action(action.name))
+            self.assertEqual(clone.action(action.name).name, action.name)
+        for obj in problem.all_objects:
+            self.assertTrue(clone.has_object(obj.name))
+        for user_type in problem.user_types:
+            self.assertTrue(clone.has_type(user_type.name))
+
+        # the index must keep working for elements added after the round-trip
+        # (the `note_appended` fast path is keyed on the list it last saw)
+        clone.add_fluent(
+            Fluent("added_after_unpickling", BoolType(), environment=clone.environment),
+            default_initial_value=False,
+        )
+        self.assertTrue(clone.has_fluent("added_after_unpickling"))
+        self.assertFalse(problem.has_fluent("added_after_unpickling"))
 
     def test_set_initial_value_rejects_non_constant_arguments(self):
         # set_initial_value's own docstring says the fluent must be grounded; a fluent

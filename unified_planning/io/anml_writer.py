@@ -20,6 +20,7 @@ import sys
 import unified_planning as up
 import unified_planning.environment
 import unified_planning.model.walkers as walkers
+from unified_planning.io.utils import decimal_literal
 from unified_planning.model import (
     DurativeAction,
     InstantaneousAction,
@@ -99,6 +100,8 @@ INITIAL_LETTER: Dict[type, str] = {
 
 class ConverterToANMLString(walkers.DagWalker):
     """Expression converter to an ANML string."""
+
+    DECIMAL_PRECISION = 10  # Number of decimal places used for real type bounds
 
     def __init__(
         self,
@@ -530,18 +533,16 @@ def _get_anml_name(
             new_name = f"integer {left_bound}, {right_bound}"
         elif isinstance(item, up.model.Type) and item.is_real_type():
             num_real_type = cast(_RealType, item)
-            if num_real_type.lower_bound is None:
-                left_bound = "(-infinity"
-            elif num_real_type.lower_bound.denominator == 1:
-                left_bound = f"[{str(num_real_type.lower_bound)}.0"
-            else:
-                left_bound = f"[{str(num_real_type.lower_bound)}"
-            if num_real_type.upper_bound is None:
-                right_bound = "infinity)"
-            elif num_real_type.upper_bound.denominator == 1:
-                right_bound = f"{str(num_real_type.upper_bound)}.0]"
-            else:
-                right_bound = f"{str(num_real_type.upper_bound)}]"
+            left_bound = (
+                "(-infinity"
+                if num_real_type.lower_bound is None
+                else f"[{decimal_literal(num_real_type.lower_bound, ConverterToANMLString.DECIMAL_PRECISION, 'ANML')}"
+            )
+            right_bound = (
+                "infinity)"
+                if num_real_type.upper_bound is None
+                else f"{decimal_literal(num_real_type.upper_bound, ConverterToANMLString.DECIMAL_PRECISION, 'ANML')}]"
+            )
             new_name = f"float {left_bound}, {right_bound}"
         else:  # We mangle the name and get a fresh one
             new_name = _get_anml_valid_name(item)

@@ -165,7 +165,7 @@ class DurativeActionToProcesses(engines.engine.Engine, CompilerMixin):
     ) -> ProblemKind:
         new_kind = problem_kind.clone()
         new_kind.unset_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
-        if new_kind.has("DURATION_INEQUALITIES"):
+        if new_kind.has_duration_inequalities():
             new_kind.unset_time("DURATION_INEQUALITIES")
             new_kind.set_conditions_kind("DISJUNCTIVE_CONDITIONS")
         new_kind.unset_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
@@ -202,9 +202,18 @@ class DurativeActionToProcesses(engines.engine.Engine, CompilerMixin):
         start_actions: Dict[Action, Action] = {}
         first_end_actions: Dict[Action, Tuple[Action, Timing]] = {}
 
-        new_problem = problem.clone()
+        if type(problem) is Problem:
+            # _clone_to_without_actions_and_metrics() skips deep-cloning every lifted action
+            # (and drops quality metrics). Restricted to the exact Problem class: Problem
+            # subclasses like HierarchicalProblem/ContingentProblem hand-roll their own clone()
+            # that _clone_to_without_actions_and_metrics() knows nothing about, and calling it
+            # on one of them would silently drop its subclass-only state.
+            new_problem = Problem(problem.name, problem.environment)
+            problem._clone_to_without_actions_and_metrics(new_problem)
+        else:
+            new_problem = problem.clone()
+            new_problem.clear_actions()
         new_problem.name = f"{problem.name}_DurativeActionsToProcesses"
-        new_problem.clear_actions()
 
         epsilon: Fraction = (
             problem.epsilon if problem.epsilon is not None else self._default_epsilon

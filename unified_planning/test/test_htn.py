@@ -14,10 +14,12 @@
 
 import os
 import tempfile
+from fractions import Fraction
 
 import unified_planning as up
-from unified_planning.io import PDDLReader, PDDLWriter
-from unified_planning.model.htn import TaskNetwork, Task
+from unified_planning.environment import Environment
+from unified_planning.io import PDDLReader, PDDLWriter, UPPDDLReader
+from unified_planning.model.htn import HierarchicalProblem, Method, TaskNetwork, Task
 from unified_planning.model.htn.ordering import PartialOrder, TotalOrder
 from unified_planning.shortcuts import *
 from unified_planning.test import unittest_TestCase, main, examples
@@ -61,6 +63,64 @@ class TestProblem(unittest_TestCase):
             "TASK_ORDER_TEMPORAL"
             in self.problems["htn-go-temporal"].problem.kind.features
         )
+
+    def test_hierarchical_problem_clone_preserves_fields(self):
+        x = Fluent("x", BoolType())
+        a = InstantaneousAction("a")
+        a.add_effect(x, True)
+
+        problem = HierarchicalProblem("p")
+        problem.add_fluent(x, default_initial_value=False)
+        problem.add_action(a)
+
+        # TimeModelMixin state
+        problem.epsilon = Fraction(1, 100)
+        problem.discrete_time = True
+        problem.self_overlapping = True
+
+        # natural transitions
+        event = Event("ev")
+        event.add_effect(x, True)
+        problem.add_event(event)
+        process = Process("proc")
+        y = Fluent("y", RealType())
+        problem.add_fluent(y, default_initial_value=0)
+        process.add_increase_continuous_effect(y, 1)
+        problem.add_process(process)
+
+        # quality metric default
+        problem.add_quality_metric(MinimizeActionCosts({a: 5}, default=99))
+
+        # trajectory constraint
+        problem.add_trajectory_constraint(Always(x))
+
+        # HTN-specific state
+        go = problem.add_task("go")
+        go_noop = Method("go-noop")
+        go_noop.set_task(go)
+        problem.add_method(go_noop)
+        problem.task_network.add_subtask(go, ident="go1")
+
+        clone = problem.clone()
+
+        self.assertEqual(problem.epsilon, clone.epsilon)
+        self.assertEqual(problem.discrete_time, clone.discrete_time)
+        self.assertEqual(problem.self_overlapping, clone.self_overlapping)
+        self.assertEqual(len(problem.events), len(clone.events))
+        self.assertEqual(len(problem.processes), len(clone.processes))
+        metric, clone_metric = problem.quality_metrics[0], clone.quality_metrics[0]
+        assert isinstance(metric, MinimizeActionCosts) and isinstance(
+            clone_metric, MinimizeActionCosts
+        )
+        self.assertEqual(metric.default, clone_metric.default)
+        self.assertEqual(problem.trajectory_constraints, clone.trajectory_constraints)
+        self.assertEqual(len(problem.tasks), len(clone.tasks))
+        self.assertEqual(len(problem.methods), len(clone.methods))
+        self.assertEqual(
+            len(problem.task_network.subtasks), len(clone.task_network.subtasks)
+        )
+        self.assertEqual(problem, clone)
+        self.assertEqual(clone, problem)
 
     def test_task_network_constraint_kind(self):
         Loc = UserType("Loc")
@@ -160,6 +220,30 @@ class TestProblem(unittest_TestCase):
             tn.add_constraint(c)
             assert_temporal(tn)
 
+    def test_method_instances_do_not_share_a_decomposition(self):
+        # decomposition used to default to one shared Decomposition, so mutating one
+        # instance's subtasks leaked into every other default-constructed one.
+        from unified_planning.plans.hierarchical_plan import MethodInstance
+        from unified_planning.plans.plan import ActionInstance
+
+        top_task = Task("top-task")
+        m = up.model.htn.Method("m1")
+        m.set_task(top_task)
+
+        a = InstantaneousAction("a")
+
+        first = MethodInstance(m, ())
+        second = MethodInstance(m, ())
+
+        self.assertIsNot(first.decomposition, second.decomposition)
+        self.assertEqual(first.decomposition.subtasks, {})
+        self.assertEqual(second.decomposition.subtasks, {})
+
+        first.decomposition.subtasks["s1"] = ActionInstance(a)
+
+        self.assertEqual(list(first.decomposition.subtasks), ["s1"])
+        self.assertEqual(second.decomposition.subtasks, {})
+
     def test_hddl_parsing(self):
         """Tests that all HDDL benchmarks are successfully parsed."""
         hddl_dir = os.path.join(FILE_PATH, "hddl")
@@ -213,3 +297,49 @@ class TestProblem(unittest_TestCase):
                 reader = PDDLReader(disable_warnings=True)
                 parsed_problem = reader.parse_problem(domain_filename, problem_filename)
                 self.assertEqual(parsed_problem.kind, problem.kind)
+
+    def test_hddl_parsing_custom_environment(self):
+        """`UPPDDLReader` must build every HTN model object (tasks, methods,
+        subtasks/parameters) in the `Environment` given to it, not the
+        process-global one, on a couple of representative HDDL benchmarks."""
+        hddl_dir = os.path.join(FILE_PATH, "hddl")
+        for name in ("2020-to-Blocksworld-GTOHP", "2020-po-Rover"):
+            domain_filename = os.path.join(hddl_dir, name, "domain.hddl")
+            problem_filename = os.path.join(hddl_dir, name, "instance.1.pb.hddl")
+            env = Environment()
+            problem = UPPDDLReader(env).parse_problem(domain_filename, problem_filename)
+
+            assert isinstance(problem, HierarchicalProblem)
+            self.assertIs(problem.environment, env)
+            # Task/Method have no public `.environment`; their `Parameter`s do,
+            # and each Parameter is built from the Task's/Method's own `_env`
+            # (which defaults to the global environment if not forwarded), so
+            # this still catches a missing forward at Task/Method construction.
+            for task in problem.tasks:
+                for param in task.parameters:
+                    self.assertIs(param.environment, env)
+            for method in problem.methods:
+                for param in method.parameters:
+                    self.assertIs(param.environment, env)
+                for subtask in method.subtasks:
+                    for p in subtask.parameters:
+                        self.assertIs(p.environment, env)
+            for subtask in problem.task_network.subtasks:
+                for p in subtask.parameters:
+                    self.assertIs(p.environment, env)
+
+            # parsing must still succeed the same way (well-formed
+            # HierarchicalProblem, same task/method/subtask counts) with the
+            # default environment. (Not compared via str(...): auto-generated
+            # subtask identifiers come from a process-global counter, so two
+            # parses are not expected to produce identical identifiers.)
+            default_problem = UPPDDLReader().parse_problem(
+                domain_filename, problem_filename
+            )
+            assert isinstance(default_problem, HierarchicalProblem)
+            self.assertEqual(len(problem.tasks), len(default_problem.tasks))
+            self.assertEqual(len(problem.methods), len(default_problem.methods))
+            self.assertEqual(
+                len(problem.task_network.subtasks),
+                len(default_problem.task_network.subtasks),
+            )

@@ -14,10 +14,19 @@
 # limitations under the License
 
 import os
+import re
 import tempfile
 import pytest
 from typing import cast
 import unified_planning
+from unified_planning.environment import Environment
+from unified_planning.model.action import DurativeAction, InstantaneousAction
+from unified_planning.model.metrics import (
+    MaximizeExpressionOnFinalState,
+    MinimizeActionCosts,
+    MinimizeExpressionOnFinalState,
+    MinimizeMakespan,
+)
 from unified_planning.shortcuts import *
 from unified_planning.test import (
     unittest_TestCase,
@@ -36,7 +45,7 @@ from unified_planning.exceptions import (
     UPUnsupportedProblemTypeError,
 )
 from unified_planning.model.metrics import MinimizeSequentialPlanLength
-from unified_planning.plans import SequentialPlan
+from unified_planning.plans import SequentialPlan, TimeTriggeredPlan
 from unified_planning.model.problem_kind import simple_numeric_kind
 from unified_planning.model.types import _UserType
 from unified_planning.interop import (
@@ -76,6 +85,22 @@ class TestPddlIO(unittest_TestCase):
         self.assertIn("(:domain basic-domain)", pddl_problem)
         self.assertIn("(:init)", pddl_problem)
         self.assertIn("(:goal (and (x)))", pddl_problem)
+
+    def test_iff_condition_writer(self):
+        a = Fluent("a", BoolType())
+        b = Fluent("b", BoolType())
+        act = InstantaneousAction("act")
+        act.add_precondition(Iff(a, b))
+        act.add_effect(a, True)
+
+        problem = Problem("iff_problem")
+        problem.add_fluent(a, default_initial_value=False)
+        problem.add_fluent(b, default_initial_value=False)
+        problem.add_action(act)
+
+        w = PDDLWriter(problem)
+        pddl_domain = self._normalized_pddl_str(w.get_domain())
+        self.assertIn("(:requirements :strips :disjunctive-preconditions)", pddl_domain)
 
     def test_basic_non_constant_boolean_assignment(self):
         problem = self.problems["basic"].problem.clone()
@@ -604,6 +629,34 @@ class TestPddlIO(unittest_TestCase):
         problem_2 = reader.parse_problem_string(domain_str, problem_str)
         self._test_htn_transport_reader(problem_2)
 
+    def test_htn_transport_reader_custom_environment(self):
+        """`UPPDDLReader` must build the HTN `Task`/`Method`/`Subtask` objects
+        it parses from HDDL in the `Environment` given to it, not the
+        process-global one."""
+        domain_filename = os.path.join(
+            PDDL_DOMAINS_PATH, "htn-transport", "domain.hddl"
+        )
+        problem_filename = os.path.join(
+            PDDL_DOMAINS_PATH, "htn-transport", "problem.hddl"
+        )
+        env = Environment()
+        problem = UPPDDLReader(env).parse_problem(domain_filename, problem_filename)
+        self._test_htn_transport_reader(problem)
+
+        assert isinstance(problem, unified_planning.model.htn.HierarchicalProblem)
+        for task in problem.tasks:
+            for param in task.parameters:
+                self.assertIs(param.environment, env)
+        for method in problem.methods:
+            for param in method.parameters:
+                self.assertIs(param.environment, env)
+            for subtask in method.subtasks:
+                for p in subtask.parameters:
+                    self.assertIs(p.environment, env)
+        for subtask in problem.task_network.subtasks:
+            for p in subtask.parameters:
+                self.assertIs(p.environment, env)
+
     def test_examples_io(self):
         for example in self.problems.values():
             problem = example.problem
@@ -836,6 +889,114 @@ class TestPddlIO(unittest_TestCase):
             pddl_txt = w.get_problem()
             self.assertNotIn("10/3", pddl_txt)
             self.assertIn("3.333333333", pddl_txt)
+
+    def test_strict_reader_decimal_precision(self):
+        # NumericValue.value from the `pddl` package is a binary float, so converting
+        # it with `Fraction(value)` bakes in IEEE-754 rounding error (`Fraction(0.1)`
+        # is not exactly 1/10). The strict ai-pddl-parser path must build the Fraction
+        # from the literal's string instead, exactly like ANMLReader does for ANML's
+        # decimal literals.
+        problem = self.problems["robot_decrease"].problem
+        w = PDDLWriter(problem)
+        domain_str = w.get_domain()
+
+        problem_str = """(define (problem robot_decrease-problem)
+ (:domain robot_decrease-domain)
+ (:init (= (battery_charge) 0.1))
+ (:goal (and))
+)
+"""
+        reader = PDDLReader(force_ai_planning_reader=True)
+        parsed_problem = reader.parse_problem_string(domain_str, problem_str)
+        parsed_battery = parsed_problem.fluent("battery_charge")
+        self.assertEqual(
+            parsed_problem.initial_value(parsed_battery()), Real(Fraction(1, 10))
+        )
+
+        problem_str_small = problem_str.replace("0.1", "0.00001")
+        parsed_problem_small = reader.parse_problem_string(
+            domain_str, problem_str_small
+        )
+        parsed_battery_small = parsed_problem_small.fluent("battery_charge")
+        self.assertEqual(
+            parsed_problem_small.initial_value(parsed_battery_small()),
+            Real(Fraction(1, 100000)),
+        )
+
+    def test_small_rationals(self):
+        # A real constant whose magnitude makes Python's str()/repr() switch to
+        # scientific notation (below 1e-4) must still be written as a plain decimal:
+        # PDDL's numeric-literal grammar has no exponent notation, so e.g. "1e-05" is
+        # not valid PDDL and the strict ai-pddl-parser rejects it outright.
+        problem = self.problems["robot_decrease"].problem.clone()
+        battery = problem.fluent("battery_charge")
+        problem.set_initial_value(battery, Fraction(1, 100000))
+        w = PDDLWriter(problem)
+        pddl_txt = w.get_problem()
+        self.assertIsNone(re.search(r"\de[+-]?\d", pddl_txt))
+        self.assertIn("0.00001", pddl_txt)
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            domain_filename = os.path.join(tempdir, "domain.pddl")
+            problem_filename = os.path.join(tempdir, "problem.pddl")
+            w.write_domain(domain_filename)
+            w.write_problem(problem_filename)
+
+            for reader in (
+                PDDLReader(force_ai_planning_reader=True),
+                PDDLReader(force_up_pddl_reader=True),
+            ):
+                parsed_problem = reader.parse_problem(domain_filename, problem_filename)
+                parsed_battery = parsed_problem.fluent("battery_charge")
+                self.assertEqual(
+                    parsed_problem.initial_value(parsed_battery()),
+                    Real(Fraction(1, 100000)),
+                )
+
+    def test_time_triggered_plan_small_rationals(self):
+        # PDDLWriter._write_plan formatted TimeTriggeredPlan start times/durations
+        # with a raw float(...), bypassing convert_fraction entirely, so a small
+        # enough value (e.g. 1/100000) was written in scientific notation and
+        # UPPDDLReader's own plan-parsing regex (which only accepts plain decimals)
+        # could not read it back.
+        problem = self.problems["matchcellar"].problem
+        light_match = problem.action("light_match")
+        m1 = problem.object("m1")
+        w = PDDLWriter(problem)
+
+        plan = TimeTriggeredPlan(
+            [
+                (
+                    Fraction(1, 100000),
+                    up.plans.ActionInstance(light_match, (ObjectExp(m1),)),
+                    Fraction(1, 100000),
+                )
+            ]
+        )
+        plan_str = w.get_plan(plan)
+        self.assertIsNone(re.search(r"\de[+-]?\d", plan_str))
+        self.assertEqual(plan_str, "0.00001: (light_match m1)[0.00001]\n")
+        parsed_plan = UPPDDLReader().parse_plan_string(
+            problem, plan_str, w.get_item_named
+        )
+        self.assertEqual(parsed_plan, plan)
+
+        # Non-tiny values keep printing exactly as before.
+        plan_2 = TimeTriggeredPlan(
+            [
+                (
+                    Fraction(1, 2),
+                    up.plans.ActionInstance(light_match, (ObjectExp(m1),)),
+                    Fraction(3, 2),
+                )
+            ]
+        )
+        plan_str_2 = w.get_plan(plan_2)
+        self.assertEqual(plan_str_2, "0.5: (light_match m1)[1.5]\n")
+        parsed_plan_2 = UPPDDLReader().parse_plan_string(
+            problem, plan_str_2, w.get_item_named
+        )
+        self.assertEqual(parsed_plan_2, plan_2)
 
     def test_ad_hoc_1(self):
         when = UserType("when")
@@ -1095,6 +1256,74 @@ class TestPddlIO(unittest_TestCase):
             writer = PDDLWriter(problem)
             pddl_problem = self._normalized_pddl_str(writer.get_problem())
             self.assertIn(expected_goal, pddl_problem)
+
+    def test_total_cost_metric_with_no_actions(self):
+        # use_plan_length was never initialised, so this raised UnboundLocalError
+        domain = """(define (domain d)
+         (:requirements :strips :action-costs :fluents)
+         (:functions (total-cost))
+        )"""
+        problem_str = """(define (problem p)
+         (:domain d)
+         (:init (= (total-cost) 0))
+         (:goal (and))
+         (:metric minimize (total-cost))
+        )"""
+        problem = UPPDDLReader().parse_problem_string(domain, problem_str)
+        self.assertEqual(len(problem.quality_metrics), 1)
+        # with no action contributing a cost, total-cost and plan length coincide
+        self.assertIsInstance(problem.quality_metrics[0], MinimizeSequentialPlanLength)
+
+    def test_unit_action_costs_parse_as_plan_length(self):
+        # `cost.value != 1` compared an FNode to an int, so this metric was unreachable
+        domain_template = """(define (domain d)
+         (:requirements :strips :action-costs :fluents)
+         (:predicates (p))
+         (:functions (total-cost))
+         (:action a :parameters () :precondition (and)
+          :effect (and (p) (increase (total-cost) {cost})))
+        )"""
+        problem_str = """(define (problem p)
+         (:domain d)
+         (:init (= (total-cost) 0))
+         (:goal (and (p)))
+         (:metric minimize (total-cost))
+        )"""
+
+        unit = UPPDDLReader().parse_problem_string(
+            domain_template.format(cost="1"), problem_str
+        )
+        self.assertIsInstance(unit.quality_metrics[0], MinimizeSequentialPlanLength)
+        self.assertTrue(unit.kind.has_plan_length())
+
+        # any other cost keeps the action-costs metric
+        non_unit = UPPDDLReader().parse_problem_string(
+            domain_template.format(cost="3"), problem_str
+        )
+        self.assertIsInstance(
+            non_unit.quality_metrics[0],
+            unified_planning.model.metrics.MinimizeActionCosts,
+        )
+        self.assertTrue(non_unit.kind.has_actions_cost())
+
+    def test_plan_length_metric_pddl_round_trip(self):
+        # the writer emits unit increase effects, so reading back must give plan length again
+        p = Fluent("p")
+        a = InstantaneousAction("a")
+        a.add_effect(p, True)
+        problem = Problem("plan_length_round_trip")
+        problem.add_fluent(p, default_initial_value=False)
+        problem.add_action(a)
+        problem.add_goal(p)
+        problem.add_quality_metric(MinimizeSequentialPlanLength())
+
+        writer = PDDLWriter(problem)
+        # UPPDDLReader directly: PDDLReader would fall back to it anyway
+        parsed = UPPDDLReader().parse_problem_string(
+            writer.get_domain(), writer.get_problem()
+        )
+        self.assertEqual(len(parsed.quality_metrics), 1)
+        self.assertIsInstance(parsed.quality_metrics[0], MinimizeSequentialPlanLength)
 
     def test_grounding_tpp_metric(self):
         reader = UPPDDLReader()
@@ -1425,6 +1654,373 @@ class TestPddlIO(unittest_TestCase):
         with self.assertRaises(SyntaxError) as ctx:
             reader.parse_problem_string(domain, problem_str)
         self.assertIn("nonexistent_type", str(ctx.exception))
+
+    def test_ai_pddl_reader_custom_environment(self):
+        """The AI-PDDL fast path (`AIPDDLConverter`) must build every model object
+        (fluents, objects, actions/parameters, forall-effect variables, quality
+        metrics) in the `Environment` given to the `PDDLReader`, not the global one."""
+        domain = """
+(define (domain custom-env-d)
+    (:requirements :strips :typing :negative-preconditions :equality
+                   :existential-preconditions :universal-preconditions
+                   :conditional-effects :numeric-fluents :action-costs)
+    (:types loc item)
+    (:constants depot - loc)
+    (:predicates (at ?i - item ?l - loc) (clear ?l - loc))
+    (:functions (fuel ?l - loc) (total-cost))
+    (:action move
+        :parameters (?i - item ?from - loc ?to - loc)
+        :precondition (and
+            (at ?i ?from)
+            (not (= ?from ?to))
+            (exists (?j - item) (at ?j ?to))
+        )
+        :effect (and
+            (not (at ?i ?from))
+            (at ?i ?to)
+            (forall (?l - loc) (when (clear ?l) (at ?i ?l)))
+            (increase (fuel ?to) 1)
+            (increase (total-cost) 3)
+        )
+    )
+)
+"""
+        problem = """
+(define (problem custom-env-p) (:domain custom-env-d)
+    (:objects l1 - loc i1 - item)
+    (:init (at i1 l1) (clear l1) (clear depot)
+           (= (fuel l1) 0) (= (fuel depot) 0) (= (total-cost) 0))
+    (:goal (at i1 depot))
+    (:metric minimize (total-cost))
+)
+"""
+        env = Environment()
+        self.assertTrue(check_ai_pddl_requirements(extract_pddl_requirements(domain)))
+        up_problem = PDDLReader(
+            env, force_ai_planning_reader=True
+        ).parse_problem_string(domain, problem)
+
+        self.assertIs(up_problem.environment, env)
+        for fluent in up_problem.fluents:
+            self.assertIs(fluent.environment, env)
+        for obj in up_problem.all_objects:
+            self.assertIs(obj.environment, env)
+        for action in up_problem.actions:
+            self.assertIs(action.environment, env)
+            for param in action.parameters:
+                self.assertIs(param.environment, env)
+            assert isinstance(action, InstantaneousAction)
+            for effect in action.effects:
+                self.assertIs(effect.fluent.environment, env)
+                self.assertIs(effect.value.environment, env)
+                self.assertIs(effect.condition.environment, env)
+                for v in effect.forall:
+                    self.assertIs(v.environment, env)
+        for metric in up_problem.quality_metrics:
+            self.assertIs(metric.environment, env)
+
+        # parsing the same PDDL text into a second fresh environment must be
+        # semantics-preserving and environment-independent
+        up_problem_2 = PDDLReader(
+            Environment(), force_ai_planning_reader=True
+        ).parse_problem_string(domain, problem)
+        self.assertEqual(str(up_problem), str(up_problem_2))
+
+    def test_ai_pddl_reader_custom_environment_expression_metric(self):
+        """A `minimize`/`maximize` final-state-expression metric (as opposed to
+        the action-costs metric) must also be built in the given `Environment`."""
+        domain = """
+(define (domain custom-env-metric-d)
+    (:requirements :strips :typing :numeric-fluents)
+    (:types loc)
+    (:predicates (at ?l - loc))
+    (:functions (fuel))
+    (:action noop
+        :parameters (?l - loc)
+        :precondition (at ?l)
+        :effect (increase (fuel) 1)
+    )
+)
+"""
+        problem = """
+(define (problem custom-env-metric-p) (:domain custom-env-metric-d)
+    (:objects l1 - loc)
+    (:init (at l1) (= (fuel) 0))
+    (:goal (at l1))
+    (:metric minimize (fuel))
+)
+"""
+        env = Environment()
+        up_problem = PDDLReader(
+            env, force_ai_planning_reader=True
+        ).parse_problem_string(domain, problem)
+        self.assertEqual(len(up_problem.quality_metrics), 1)
+        metric = up_problem.quality_metrics[0]
+        assert isinstance(
+            metric, (MinimizeExpressionOnFinalState, MaximizeExpressionOnFinalState)
+        )
+        self.assertIs(metric.environment, env)
+        self.assertIs(metric.expression.environment, env)
+
+    def test_ai_pddl_reader_custom_environment_parameter_named_environment(self):
+        """A predicate/action parameter literally named `?environment` must not
+        collide with the `environment=` keyword used internally to forward the
+        converter's Environment to `Fluent`/`InstantaneousAction`."""
+        domain = """
+(define (domain custom-env-name-d)
+    (:requirements :strips :typing)
+    (:types loc)
+    (:predicates (p ?environment - loc))
+    (:action a
+        :parameters (?environment - loc)
+        :precondition (p ?environment)
+        :effect (p ?environment)
+    )
+)
+"""
+        problem = """
+(define (problem custom-env-name-p) (:domain custom-env-name-d)
+    (:objects l1 - loc)
+    (:init (p l1))
+    (:goal (p l1))
+)
+"""
+        env = Environment()
+        up_problem = PDDLReader(
+            env, force_ai_planning_reader=True
+        ).parse_problem_string(domain, problem)
+        self.assertEqual(
+            [p.name for p in up_problem.fluent("p").signature], ["environment"]
+        )
+        self.assertEqual(
+            [p.name for p in up_problem.action("a").parameters], ["environment"]
+        )
+
+    def test_up_pddl_reader_custom_environment(self):
+        """`UPPDDLReader` must build every model object (fluents, objects,
+        actions/parameters, forall-effect variables) in the `Environment` given
+        to it, not the process-global one."""
+        domain = """
+(define (domain custom-env-d)
+    (:requirements :strips :typing :negative-preconditions :equality
+                   :existential-preconditions :universal-preconditions
+                   :conditional-effects)
+    (:types loc item)
+    (:constants depot - loc)
+    (:predicates (at ?i - item ?l - loc) (clear ?l - loc))
+    (:action move
+        :parameters (?i - item ?from - loc ?to - loc)
+        :precondition (and
+            (at ?i ?from)
+            (not (= ?from ?to))
+            (exists (?j - item) (at ?j ?to))
+        )
+        :effect (and
+            (not (at ?i ?from))
+            (at ?i ?to)
+            (forall (?l - loc) (when (clear ?l) (at ?i ?l)))
+        )
+    )
+)
+"""
+        problem = """
+(define (problem custom-env-p) (:domain custom-env-d)
+    (:objects l1 - loc i1 - item)
+    (:init (at i1 l1) (clear l1) (clear depot))
+    (:goal (at i1 depot))
+)
+"""
+        env = Environment()
+        up_problem = UPPDDLReader(env).parse_problem_string(domain, problem)
+
+        self.assertIs(up_problem.environment, env)
+        for fluent in up_problem.fluents:
+            self.assertIs(fluent.environment, env)
+        for obj in up_problem.all_objects:
+            self.assertIs(obj.environment, env)
+        for action in up_problem.actions:
+            self.assertIs(action.environment, env)
+            for param in action.parameters:
+                self.assertIs(param.environment, env)
+            assert isinstance(action, InstantaneousAction)
+            for effect in action.effects:
+                self.assertIs(effect.fluent.environment, env)
+                self.assertIs(effect.value.environment, env)
+                self.assertIs(effect.condition.environment, env)
+                for v in effect.forall:
+                    self.assertIs(v.environment, env)
+        for goal in up_problem.goals:
+            self.assertIs(goal.environment, env)
+
+        # parsing the same PDDL text into a second fresh environment must be
+        # semantics-preserving and environment-independent
+        up_problem_2 = UPPDDLReader(Environment()).parse_problem_string(domain, problem)
+        self.assertEqual(str(up_problem), str(up_problem_2))
+
+    def test_up_pddl_reader_custom_environment_durative(self):
+        """A `forall` inside a durative action's timed effect must also build
+        its `Variable` in the `Environment` given to `UPPDDLReader`."""
+        domain = """
+(define (domain custom-env-durative-d)
+    (:requirements :strips :typing :durative-actions :conditional-effects
+                   :universal-preconditions)
+    (:types loc)
+    (:predicates (clear ?l - loc) (visited ?l - loc) (ok))
+    (:durative-action a
+        :parameters ()
+        :duration (= ?duration 2)
+        :condition (at start (ok))
+        :effect (forall (?l - loc) (when (at start (clear ?l)) (at start (visited ?l))))
+    )
+)
+"""
+        problem = """
+(define (problem custom-env-durative-p) (:domain custom-env-durative-d)
+    (:objects l1 - loc)
+    (:init (ok) (clear l1))
+    (:goal (visited l1))
+)
+"""
+        env = Environment()
+        up_problem = UPPDDLReader(env).parse_problem_string(domain, problem)
+
+        self.assertIs(up_problem.environment, env)
+        for action in up_problem.actions:
+            self.assertIs(action.environment, env)
+            assert isinstance(action, DurativeAction)
+            for effect_list in action.effects.values():
+                for effect in effect_list:
+                    self.assertIs(effect.fluent.environment, env)
+                    self.assertIs(effect.value.environment, env)
+                    self.assertIs(effect.condition.environment, env)
+                    for v in effect.forall:
+                        self.assertIs(v.environment, env)
+        for goal in up_problem.goals:
+            self.assertIs(goal.environment, env)
+
+        up_problem_2 = UPPDDLReader(Environment()).parse_problem_string(domain, problem)
+        self.assertEqual(str(up_problem), str(up_problem_2))
+
+    def test_up_pddl_reader_custom_environment_metrics(self):
+        """Every quality-metric constructor `UPPDDLReader` can build must use
+        the `Environment` given to it, not the process-global one."""
+        instantaneous_domain = """
+(define (domain custom-env-metric-d)
+    (:requirements :strips :typing :action-costs)
+    (:types loc)
+    (:predicates (at ?l - loc))
+    (:functions (total-cost))
+    (:action move
+        :parameters (?from - loc ?to - loc)
+        :precondition (at ?from)
+        :effect (and (not (at ?from)) (at ?to) (increase (total-cost) %(cost)s))
+    )
+)
+"""
+        instantaneous_problem = """
+(define (problem custom-env-metric-p) (:domain custom-env-metric-d)
+    (:objects l1 l2 - loc)
+    (:init (at l1) (= (total-cost) 0))
+    (:goal (at l2))
+    (:metric minimize (total-cost))
+)
+"""
+        durative_domain = """
+(define (domain custom-env-makespan-d)
+    (:requirements :strips :typing :durative-actions)
+    (:types loc)
+    (:predicates (at ?l - loc))
+    (:durative-action move
+        :parameters (?from - loc ?to - loc)
+        :duration (= ?duration 2)
+        :condition (at start (at ?from))
+        :effect (and (at start (not (at ?from))) (at end (at ?to)))
+    )
+)
+"""
+        durative_problem = """
+(define (problem custom-env-makespan-p) (:domain custom-env-makespan-d)
+    (:objects l1 l2 - loc)
+    (:init (at l1))
+    (:goal (at l2))
+    (:metric minimize (total-time))
+)
+"""
+        expression_domain = """
+(define (domain custom-env-expr-d)
+    (:requirements :strips :typing :numeric-fluents)
+    (:types loc)
+    (:predicates (at ?l - loc))
+    (:functions (fuel))
+    (:action move
+        :parameters (?from - loc ?to - loc)
+        :precondition (at ?from)
+        :effect (and (not (at ?from)) (at ?to) (increase (fuel) 1))
+    )
+)
+"""
+        expression_problem = """
+(define (problem custom-env-expr-p) (:domain custom-env-expr-d)
+    (:objects l1 l2 - loc)
+    (:init (at l1) (= (fuel) 0))
+    (:goal (at l2))
+    (:metric %(direction)s (fuel))
+)
+"""
+        cases = [
+            (
+                "unit_cost_plan_length",
+                instantaneous_domain % {"cost": "1"},
+                instantaneous_problem,
+                MinimizeSequentialPlanLength,
+            ),
+            (
+                "non_unit_cost_action_costs",
+                instantaneous_domain % {"cost": "5"},
+                instantaneous_problem,
+                MinimizeActionCosts,
+            ),
+            (
+                "total_time_makespan",
+                durative_domain,
+                durative_problem,
+                MinimizeMakespan,
+            ),
+            (
+                "minimize_expression",
+                expression_domain,
+                expression_problem % {"direction": "minimize"},
+                MinimizeExpressionOnFinalState,
+            ),
+            (
+                "maximize_expression",
+                expression_domain,
+                expression_problem % {"direction": "maximize"},
+                MaximizeExpressionOnFinalState,
+            ),
+        ]
+        for name, domain_str, problem_str, expected_type in cases:
+            with self.subTest(name):
+                env = Environment()
+                up_problem = UPPDDLReader(env).parse_problem_string(
+                    domain_str, problem_str
+                )
+                self.assertEqual(len(up_problem.quality_metrics), 1)
+                metric = up_problem.quality_metrics[0]
+                self.assertIsInstance(metric, expected_type)
+                self.assertIs(metric.environment, env)
+                if isinstance(
+                    metric,
+                    (MinimizeExpressionOnFinalState, MaximizeExpressionOnFinalState),
+                ):
+                    self.assertIs(metric.expression.environment, env)
+
+                # parsing into a second fresh environment must be
+                # semantics-preserving and environment-independent
+                up_problem_2 = UPPDDLReader(Environment()).parse_problem_string(
+                    domain_str, problem_str
+                )
+                self.assertEqual(str(up_problem), str(up_problem_2))
 
 
 def _have_same_user_types_considering_renamings(
