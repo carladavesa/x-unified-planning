@@ -39,6 +39,11 @@ def _chain_instance(board_size: int, dictionary: tuple[str, ...]) -> ScrabbleIns
 
 # (board size, hand capacity, dictionary words, ordered bag)
 INSTANCES: Dict[str, ScrabbleInstance] = {
+    # Smaller cases: same two words and seven bag tiles, larger boards.
+    "scr_small_01": _chain_instance(4, ("LAMP", "POND")),
+    "scr_small_02": _chain_instance(5, ("LAMP", "POND")),
+    "scr_small_03": _chain_instance(7, ("LAMP", "POND")),
+
     # 3-letter words: same dictionary and bag, larger boards.
     "scr_01": _chain_instance(5, ("CAT", "TOP", "PEN")),
     "scr_02": _chain_instance(7, ("CAT", "TOP", "PEN")),
