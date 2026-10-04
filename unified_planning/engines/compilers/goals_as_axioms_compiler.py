@@ -10,7 +10,14 @@ support (e.g. Fast Downward) by keeping the goal formula flat.
 
 from functools import partial
 import unified_planning.engines as engines
-from unified_planning.model import Problem, ProblemKind, FNode, Fluent, Axiom
+from unified_planning.model import (
+    AbstractProblem,
+    Problem,
+    ProblemKind,
+    FNode,
+    Fluent,
+    Axiom,
+)
 from unified_planning.engines.compilers.utils import replace_action
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
@@ -153,8 +160,9 @@ class GoalsAsAxiomsCompiler(engines.engine.Engine, CompilerMixin):
         return derived_fluent()
 
     def _compile(
-        self, problem: Problem, compilation_kind: CompilationKind
+        self, problem: AbstractProblem, compilation_kind: CompilationKind
     ) -> CompilerResult:
+        assert isinstance(problem, Problem)
         new_problem = problem.clone()
         new_problem.clear_goals()
 

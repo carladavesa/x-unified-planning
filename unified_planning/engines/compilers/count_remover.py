@@ -20,6 +20,7 @@ from unified_planning.exceptions import UPValueError, UPProblemDefinitionError
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
 from unified_planning.model import (
+    AbstractProblem,
     InstantaneousAction,
     Fluent,
     Parameter,
@@ -776,7 +777,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
 
     def _compile(
         self,
-        problem: Problem,
+        problem: AbstractProblem,
         compilation_kind: CompilationKind,
     ) -> CompilerResult:
         """Main compilation"""
