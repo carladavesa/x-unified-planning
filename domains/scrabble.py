@@ -252,7 +252,7 @@ class ScrabbleDomain(Domain):
             And(bag_exhausted, Equals(SetCardinality(hand), 0))
         )
 
-        costs: Dict = {a: Int(1) if a.name == 'pick_letter' else Int(0)
+        costs: Dict = {a: Int(0) if a.name == 'pick_letter' else Int(1)
                        for a in actions_for_cost}
         scrabble_problem.add_quality_metric(MinimizeActionCosts(costs))
 
