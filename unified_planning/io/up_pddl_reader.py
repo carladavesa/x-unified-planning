@@ -1473,7 +1473,7 @@ class UPPDDLReader:
 
         has_actions_cost = False
 
-        def get_fluent_params(p: ParseResults) -> OrderedDict():
+        def get_fluent_params(p: ParseResults) -> OrderedDict[str, "up.model.Type"]:
             params = OrderedDict()
             for g in p[1]:
                 try:

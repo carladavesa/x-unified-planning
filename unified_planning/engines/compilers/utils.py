@@ -60,6 +60,7 @@ from unified_planning.model import (
 )
 from unified_planning.plans import ActionInstance
 from typing import (
+    Any,
     Callable,
     Dict,
     Iterable,
@@ -966,10 +967,10 @@ def compress_solutions(variables, solutions, problem):
 def add_cp_constraints(
     problem: Problem,
     node: FNode,
-    variables: bidict,
+    variables: bidict.bidict,
     model: cp_model.CpModel,
     object_to_index: dict,
-) -> any:
+) -> Any:
     # -- Constants --
     if node.is_array_constant():
         return node.array_constant_value()
@@ -1249,7 +1250,7 @@ def add_cp_constraints(
 
 def add_effect_bounds_constraints(
     problem: Problem,
-    variables: bidict,
+    variables: bidict.bidict,
     model: cp_model.CpModel,
     effects: List[Effect],
     object_to_index: dict,
