@@ -50,8 +50,6 @@
 
 (:functions
     (total-cost) - number
-    (move-robot-cost) - number
-    (move-card) - number
 )
 
 ;; moves the robot between to cards
@@ -74,7 +72,7 @@
         (and
             (not (robot-at ?cfrom))
             (robot-at ?cto)
-            (increase (total-cost) (move-robot-cost))
+            (increase (total-cost) 1)
         )
 )
 
@@ -97,7 +95,7 @@
         (and
             (not (robot-at ?cfrom))
             (robot-at ?cto)
-            (increase (total-cost) (move-robot-cost))
+            (increase (total-cost) 1)
         )
 )
 
@@ -120,7 +118,7 @@
         (and
             (not (robot-at ?cfrom))
             (robot-at ?cto)
-            (increase (total-cost) (move-robot-cost))
+            (increase (total-cost) 1)
         )
 )
 
@@ -143,7 +141,7 @@
         (and
             (not (robot-at ?cfrom))
             (robot-at ?cto)
-            (increase (total-cost) (move-robot-cost))
+            (increase (total-cost) 1)
         )
 )
 
@@ -175,7 +173,7 @@
         (not (card-at ?cm ?x ?y ))
         (new-headtail-card ?cm)
         (next-moving-card ?cnext)
-        (increase (total-cost) (move-card))
+        (increase (total-cost) 1)
     )
 )
 
@@ -253,7 +251,7 @@
         (not (card-at ?cm ?x ?y ))
         (new-headtail-card ?cm)
         (next-moving-card ?cnext)
-        (increase (total-cost) (move-card))
+        (increase (total-cost) 1)
     )
 )
 
@@ -327,7 +325,7 @@
         (not (card-at ?cm ?x ?y ))
         (new-headtail-card ?cm)
         (next-moving-card ?cnext)
-        (increase (total-cost) (move-card))
+        (increase (total-cost) 1)
     )
 )
 
@@ -401,7 +399,7 @@
         (not (card-at ?cm ?x ?y ))
         (new-headtail-card ?cm)
         (next-moving-card ?cnext)
-        (increase (total-cost) (move-card))
+        (increase (total-cost) 1)
     )
 )
 

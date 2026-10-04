@@ -76,8 +76,6 @@
 	(robot-at card0)
 
 	(= (total-cost) 0)
-	(= (move-robot-cost) 1)
-	(= (move-card) 1)
 )
 (:goal
 	(and
