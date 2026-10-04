@@ -81,12 +81,11 @@ class Effect:
         # extractor yields that inner expression rather than the Dot node itself.
         target_fluent_exp = fluent.arg(0) if fluent.is_dot() else fluent
         fluents_in_fluent = set(fve.get(fluent))
-        fluents_in_fluent.discard(target_fluent_exp)
-        if fluent.is_array_access():
-            base_fluent = fluent
+        if target_fluent_exp.is_array_access():
+            base_fluent = target_fluent_exp
             while base_fluent.is_array_access():
                 base_fluent = base_fluent.arg(0)
-            fluents_in_fluent.discard(target_fluent_exp)
+            fluents_in_fluent.discard(base_fluent)
         else:
             fluents_in_fluent.discard(target_fluent_exp)
         if fluents_in_fluent:
