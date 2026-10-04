@@ -199,7 +199,7 @@ COMPILATION_PIPELINES = {
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
-        #(CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
     "M3": [
@@ -260,13 +260,6 @@ COMPILATION_PIPELINES = {
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
-        CompilationKind.USERTYPE_FLUENTS_REMOVING,
-    ],
-    "M11": [
-        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
-        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
-        (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
 }
