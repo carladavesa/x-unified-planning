@@ -435,6 +435,14 @@ class Simplifier(walkers.dag.DagWalker):
         sr = args[1]
 
         if sl.is_constant() and sr.is_constant():
+            if sl.is_set_constant() and sr.is_set_constant():
+                return self.manager.Bool(
+                    sl.set_constant_value() == sr.set_constant_value()
+                )
+            if sl.is_array_constant() and sr.is_array_constant():
+                return self.manager.Bool(
+                    sl.array_constant_value() == sr.array_constant_value()
+                )
             l = sl.constant_value()
             r = sr.constant_value()
             return self.manager.Bool(l == r)
@@ -499,13 +507,17 @@ class Simplifier(walkers.dag.DagWalker):
         new_exp = self.manager.InterpretedFunctionExp(
             expression.interpreted_function(), tuple(args)
         )
-        newlist = []
+        newlist: List[object] = []
         for a in args:
             if not a.is_constant():
                 return new_exp
             else:
-                v = a.constant_value()
-                newlist.append(v)
+                if a.is_array_constant():
+                    newlist.append(a.array_constant_value())
+                elif a.is_set_constant():
+                    newlist.append(a.set_constant_value())
+                else:
+                    newlist.append(a.constant_value())
         constantval = expression.interpreted_function().function(*newlist)
         if expression.interpreted_function().return_type.is_bool_type():
             constantval = self.manager.Bool(constantval)
@@ -546,7 +558,7 @@ class Simplifier(walkers.dag.DagWalker):
         # Both constant: resolve the access to the concrete element
         if array_arg.is_array_constant() and index_arg.is_int_constant():
             elements = array_arg.array_constant_value()
-            i = index_arg.constant_value()
+            i = index_arg.int_constant_value()
             if 0 <= i < len(elements):
                 return elements[i]
         # Otherwise rebuild the node with the simplified children
@@ -558,7 +570,7 @@ class Simplifier(walkers.dag.DagWalker):
         if set_expr == self.manager.EMPTY_SET():
             return self.manager.FALSE()
         if element.is_constant() and set_expr.is_constant():
-            if element in set_expr.constant_value():
+            if element in set_expr.set_constant_value():
                 return self.manager.TRUE()
             return self.manager.FALSE()
         return self.manager.SetMember(element, set_expr)
@@ -571,8 +583,8 @@ class Simplifier(walkers.dag.DagWalker):
             return self.manager.TRUE()
         # Both constant
         if set1.is_constant() and set2.is_constant():
-            s1 = set(set1.constant_value())
-            s2 = set(set2.constant_value())
+            s1 = set(set1.set_constant_value())
+            s2 = set(set2.set_constant_value())
             return self.manager.TRUE() if s1.issubset(s2) else self.manager.FALSE()
         return self.manager.SetSubseteq(set1, set2)
 
@@ -583,8 +595,8 @@ class Simplifier(walkers.dag.DagWalker):
             return self.manager.TRUE()
         # Both constant
         if set1.is_constant() and set2.is_constant():
-            s1 = set(set1.constant_value())
-            s2 = set(set2.constant_value())
+            s1 = set(set1.set_constant_value())
+            s2 = set(set2.set_constant_value())
             return self.manager.TRUE() if s1.isdisjoint(s2) else self.manager.FALSE()
         return self.manager.SetDisjoint(set1, set2)
 
@@ -594,7 +606,7 @@ class Simplifier(walkers.dag.DagWalker):
         if set_expr == self.manager.EMPTY_SET():
             return self.manager.Int(0)
         if set_expr.is_constant():
-            return self.manager.Int(len(set_expr.constant_value()))
+            return self.manager.Int(len(set_expr.set_constant_value()))
         return self.manager.SetCardinality(set_expr)
 
     def walk_set_add(self, expression: FNode, args: List[FNode]) -> FNode:
@@ -605,7 +617,7 @@ class Simplifier(walkers.dag.DagWalker):
             return self.manager.Set({element})
         # Both constant
         if set_expr.is_constant() and element.is_constant():
-            new_elements = set(set_expr.constant_value())
+            new_elements = set(set_expr.set_constant_value())
             new_elements.add(element)
             return self.manager.Set(new_elements)
         return self.manager.SetAdd(set_expr, element)
@@ -617,7 +629,7 @@ class Simplifier(walkers.dag.DagWalker):
             return self.manager.EMPTY_SET()
         # Both constant
         if set_expr.is_constant() and element.is_constant():
-            new_elements = set(set_expr.constant_value())
+            new_elements = set(set_expr.set_constant_value())
             new_elements.discard(element)
             return self.manager.Set(new_elements)
         return self.manager.SetRemove(set_expr, element)
@@ -632,7 +644,7 @@ class Simplifier(walkers.dag.DagWalker):
         # Both constant
         if set1.is_constant() and set2.is_constant():
             return self.manager.Set(
-                set(set1.constant_value()) | set(set2.constant_value())
+                set(set1.set_constant_value()) | set(set2.set_constant_value())
             )
         # Same operand
         if set1 == set2:
@@ -647,7 +659,7 @@ class Simplifier(walkers.dag.DagWalker):
         # Both constant
         if set1.is_constant() and set2.is_constant():
             return self.manager.Set(
-                set(set1.constant_value()) & set(set2.constant_value())
+                set(set1.set_constant_value()) & set(set2.set_constant_value())
             )
         # Same operand
         if set1 == set2:
@@ -664,7 +676,7 @@ class Simplifier(walkers.dag.DagWalker):
         # Both constant
         if set1.is_constant() and set2.is_constant():
             return self.manager.Set(
-                set(set1.constant_value()) - set(set2.constant_value())
+                set(set1.set_constant_value()) - set(set2.set_constant_value())
             )
         # Same operand
         if set1 == set2:

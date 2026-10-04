@@ -384,7 +384,7 @@ class ExpressionManager(object):
         (set_expr,) = self.auto_promote(set_expr)
 
         if set_expr.is_set_constant():
-            return self.Int(len(set_expr.constant_value()))
+            return self.Int(len(set_expr.set_constant_value()))
         return self.create_node(
             node_type=OperatorKind.SET_CARDINALITY, args=(set_expr,)
         )

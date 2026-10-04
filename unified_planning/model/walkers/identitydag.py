@@ -123,7 +123,7 @@ class IdentityDagWalker(walkers.dag.DagWalker):
     def walk_set_constant(
         self, expression: FNode, args: List[FNode], **kwargs
     ) -> FNode:
-        return self.manager.Set(set(expression.constant_value()))
+        return self.manager.Set(set(expression.set_constant_value()))
 
     def walk_set_member(self, expression: FNode, args: List[FNode], **kwargs) -> FNode:
         return self.manager.SetMember(args[0], args[1])

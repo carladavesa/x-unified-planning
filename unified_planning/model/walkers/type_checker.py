@@ -295,9 +295,9 @@ class TypeChecker(walkers.dag.DagWalker):
     def walk_identity_list(self, expression, args):
         assert expression is not None
         assert len(args) == 0
-        size = len(expression.constant_value())
+        size = len(expression.array_constant_value())
         all_types = []
-        for e in expression.constant_value():
+        for e in expression.array_constant_value():
             all_types.append(e.type)
         elements_type = combine_types(all_types)
         return self.environment.type_manager.ArrayType(size, elements_type)
@@ -307,7 +307,7 @@ class TypeChecker(walkers.dag.DagWalker):
         assert expression is not None
         assert len(args) == 0
         all_types = []
-        for e in expression.constant_value():
+        for e in expression.set_constant_value():
             all_types.append(self.get_type(e))
 
         if len(all_types) == 0:

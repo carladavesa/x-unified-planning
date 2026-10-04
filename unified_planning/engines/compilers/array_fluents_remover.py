@@ -505,7 +505,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         """Extract element value from nested array constant."""
         element = array_value
         for idx in indices:
-            element = element.constant_value()[idx]
+            element = element.array_constant_value()[idx]
         return element
 
     def _get_new_fluent_value(

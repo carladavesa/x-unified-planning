@@ -17,13 +17,16 @@ This module defines the Variable class.
 A Variable has a name and a type.
 """
 
-from typing import List, Optional, FrozenSet, Union
+from typing import TYPE_CHECKING, List, Optional, FrozenSet, Union
 from unified_planning.environment import Environment, get_environment
 from unified_planning.model.fnode import FNode
 from unified_planning.model.operators import OperatorKind
 import unified_planning
 import unified_planning.model.walkers as walkers
 import unified_planning.model.operators as op
+
+if TYPE_CHECKING:
+    from unified_planning.model.int_variable import IntVariable
 
 
 class Variable:

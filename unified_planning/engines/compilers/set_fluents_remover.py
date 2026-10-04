@@ -274,9 +274,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         for params in param_combinations:
             initial_value = problem.explicit_initial_values.get(fluent(*params))
             if initial_value:
-                elements = initial_value.constant_value()
+                elements = initial_value.set_constant_value()
             elif default_value and default_value != EMPTY_SET():
-                elements = default_value.constant_value()
+                elements = default_value.set_constant_value()
             else:
                 continue
 
@@ -364,7 +364,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             else:
                 # set is constant: check if any element in the constant set equals the dynamic value
                 or_expr = []
-                for element_set in list(set_expr.constant_value()):
+                for element_set in list(set_expr.set_constant_value()):
                     elem_obj = self._to_element_object(
                         new_problem, elements_type, element_set
                     )
@@ -385,7 +385,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         else:
             em = new_problem.environment.expression_manager
             or_expr = []
-            for element_set in list(set_expr.constant_value()):
+            for element_set in list(set_expr.set_constant_value()):
                 elem_obj = self._to_element_object(
                     new_problem, elements_type, element_set
                 )
@@ -462,9 +462,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 )
         else:
             fluent, constant_raw = (
-                (set1, set2.constant_value())
+                (set1, set2.set_constant_value())
                 if set1.is_fluent_exp()
-                else (set2, set1.constant_value())
+                else (set2, set1.set_constant_value())
             )
             new_fluent = self._fluent_mapping[fluent.fluent().name]
             for elem in constant_raw:
@@ -513,7 +513,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                         self._to_element_object(new_problem, elements_type, value)
                     ),
                 )
-                for value in set_expr.constant_value()
+                for value in set_expr.set_constant_value()
             ]
             return em.Or(*members).simplify() if members else em.FALSE()
 
@@ -582,7 +582,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     fluent_name, IntType(0, len(elements)), card_parameters
                 )
                 default_initial_value = len(
-                    old_problem.fluents_defaults[old_fluent].constant_value()
+                    old_problem.fluents_defaults[old_fluent].set_constant_value()
                 )
 
                 self._cardinality_registry[fluent_name] = set_expr
@@ -599,7 +599,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                         initial_value = len(
                             old_problem.explicit_initial_values[
                                 old_fluent(*p)
-                            ].constant_value()
+                            ].set_constant_value()
                         )
                         new_problem.set_initial_value(new_fluent(*p), initial_value)
                     except KeyError:
@@ -617,7 +617,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
 
                 new_fluent = Fluent(fluent_name, IntType(0, len(elements)))
                 default_initial_value = len(
-                    old_problem.fluents_defaults[old_fluent].constant_value()
+                    old_problem.fluents_defaults[old_fluent].set_constant_value()
                 )
                 new_problem.add_fluent(
                     new_fluent, default_initial_value=default_initial_value
@@ -629,7 +629,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     initial_value = len(
                         old_problem.explicit_initial_values[
                             old_fluent(*set_expr.args)
-                        ].constant_value()
+                        ].set_constant_value()
                     )
                     new_problem.set_initial_value(
                         new_fluent(*set_expr.args), initial_value
@@ -661,8 +661,8 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
 
                 default_value = len(
                     set(
-                        old_problem.fluents_defaults[old_fluent1].constant_value()
-                        + old_problem.fluents_defaults[old_fluent2].constant_value()
+                        old_problem.fluents_defaults[old_fluent1].set_constant_value()
+                        + old_problem.fluents_defaults[old_fluent2].set_constant_value()
                     )
                 )
                 default_initial_value = default_value
@@ -684,10 +684,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     try:
                         initial_value1 = old_problem.explicit_initial_values[
                             old_fluent1(*p)
-                        ].constant_value()
+                        ].set_constant_value()
                         initial_value2 = old_problem.explicit_initial_values[
                             old_fluent2(*p)
-                        ].constant_value()
+                        ].set_constant_value()
                         new_problem.set_initial_value(
                             new_fluent(*p), len(initial_value1 | initial_value2)
                         )
@@ -711,8 +711,8 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 new_fluent = Fluent(fluent_name, IntType(0, len(elements)))
                 default_value = len(
                     set(
-                        old_problem.fluents_defaults[old_fluent1].constant_value()
-                        | old_problem.fluents_defaults[old_fluent2].constant_value()
+                        old_problem.fluents_defaults[old_fluent1].set_constant_value()
+                        | old_problem.fluents_defaults[old_fluent2].set_constant_value()
                     )
                 )
                 default_initial_value = default_value
@@ -724,10 +724,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 try:
                     initial_value1 = old_problem.explicit_initial_values[
                         old_fluent1(*set1.args)
-                    ].constant_value()
+                    ].set_constant_value()
                     initial_value2 = old_problem.explicit_initial_values[
                         old_fluent1(*set2.args)
-                    ].constant_value()
+                    ].set_constant_value()
                     new_problem.set_initial_value(
                         new_fluent(*set_expr.args), len(initial_value1 | initial_value2)
                     )
@@ -810,7 +810,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             fluent_name = set_fluent.fluent().name
             fluent_args = set_fluent.args
             elements_type = set_fluent.fluent().type.elements_type
-            constant_raw = list(constant_set.constant_value())
+            constant_raw = list(constant_set.set_constant_value())
             constant_objects = [
                 self._to_element_object(new_problem, elements_type, e)
                 for e in constant_raw
@@ -1193,7 +1193,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         if old_value.is_constant():
             if card_expr.is_fluent_exp():
                 # effect condition + equality conditions
-                n_elements = len(old_value.constant_value())
+                n_elements = len(old_value.set_constant_value())
                 action.add_effect(card, n_elements, And(equality_conditions).simplify())
                 return
 
@@ -1212,7 +1212,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                             card_expr.arg(0).fluent().type.elements_type
                         )
                     )
-                    constant_set = set(o.object() for o in old_value.constant_value())
+                    constant_set = set(
+                        o.object() for o in old_value.set_constant_value()
+                    )
                     constant_len = len(constant_set)
                     remaining_elements = all_elements - constant_set
                     new_other_fluents = [

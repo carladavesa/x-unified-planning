@@ -455,7 +455,14 @@ def check_conflicting_effects(
                 if assigned_value != effect.value and not (
                     assigned_value.is_constant()
                     and effect.value.is_constant()
-                    and assigned_value.constant_value() == effect.value.constant_value()
+                    and (
+                        assigned_value.set_constant_value()
+                        == effect.value.set_constant_value()
+                        if assigned_value.is_set_constant()
+                        and effect.value.is_set_constant()
+                        else assigned_value.constant_value()
+                        == effect.value.constant_value()
+                    )
                 ):
                     if timing is None:
                         msg = f"The effect {effect} is in conflict with the effects already in the {name}."

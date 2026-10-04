@@ -971,6 +971,10 @@ def add_cp_constraints(
     object_to_index: dict,
 ) -> any:
     # -- Constants --
+    if node.is_array_constant():
+        return node.array_constant_value()
+    if node.is_set_constant():
+        return node.set_constant_value()
     if node.is_constant():
         return node.constant_value()
 
