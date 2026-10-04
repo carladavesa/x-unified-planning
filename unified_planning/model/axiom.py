@@ -23,11 +23,11 @@ from unified_planning.environment import get_environment, Environment
 
 class Axiom(InstantaneousAction):
     def __init__(
-            self,
-            _name: str,
-            _parameters: Optional["OrderedDict[str, up.model.types.Type]"] = None,
-            _env: Optional[Environment] = None,
-            **kwargs: "up.model.types.Type",
+        self,
+        _name: str,
+        _parameters: Optional["OrderedDict[str, up.model.types.Type]"] = None,
+        _env: Optional[Environment] = None,
+        **kwargs: "up.model.types.Type",
     ):
         InstantaneousAction.__init__(self, _name, _parameters, _env, **kwargs)
 
@@ -38,22 +38,22 @@ class Axiom(InstantaneousAction):
         self.add_effect(fluent)
 
     def add_body_condition(
-            self,
-            precondition: Union[
-                "up.model.fnode.FNode",
-                "up.model.fluent.Fluent",
-                "up.model.parameter.Parameter",
-                bool,
-            ],
+        self,
+        precondition: Union[
+            "up.model.fnode.FNode",
+            "up.model.fluent.Fluent",
+            "up.model.parameter.Parameter",
+            bool,
+        ],
     ):
         super().add_precondition(precondition)
 
     def add_effect(
-            self,
-            fluent: Union["up.model.fnode.FNode", "up.model.fluent.Fluent"],
-            value: "up.model.expression.Expression" = True,
-            condition: "up.model.expression.BoolExpression" = True,
-            forall: Iterable["up.model.variable.Variable"] = tuple(),
+        self,
+        fluent: Union["up.model.fnode.FNode", "up.model.fluent.Fluent"],
+        value: "up.model.expression.Expression" = True,
+        condition: "up.model.expression.BoolExpression" = True,
+        forall: Iterable["up.model.variable.Variable"] = tuple(),
     ):
         if value != True:
             raise UPUsageError("value can only be true for an axiom")

@@ -61,7 +61,9 @@ class InitialStateMixin:
         if fluent.type.is_array_type() and isinstance(value, list):
             value = self._env.expression_manager.Array(value)
         fluent_exp, value_exp = self._env.expression_manager.auto_promote(fluent, value)
-        assert fluent_exp.is_fluent_exp() or fluent_exp.is_array_access(), "fluent field must be a fluent or an array access"
+        assert fluent_exp.is_fluent_exp() or fluent_exp.is_array_access(), (
+            "fluent field must be a fluent or an array access"
+        )
         # Check that all the arguments of the fluent expression are constants
         node = fluent_exp
         while node.is_array_access():
@@ -85,7 +87,10 @@ class InitialStateMixin:
         # Crear un array multidimensional usando recursión
         if len(dimensions) == 1:
             return [elements_default] * dimensions[0]
-        return [self.create_multidimensional_array(dimensions[1:], elements_default) for _ in range(dimensions[0])]
+        return [
+            self.create_multidimensional_array(dimensions[1:], elements_default)
+            for _ in range(dimensions[0])
+        ]
 
     def initial_value(
         self, fluent: Union["up.model.fnode.FNode", "up.model.fluent.Fluent"]
@@ -106,14 +111,20 @@ class InitialStateMixin:
             return self._initial_value[fluent_exp]
         elif fluent_exp.fluent() in self._fluent_set.fluents_defaults:
             if fluent.type.is_array_type():
-                elements_default = self._fluent_set.fluents_defaults[fluent_exp.fluent()]
+                elements_default = self._fluent_set.fluents_defaults[
+                    fluent_exp.fluent()
+                ]
                 this_fluent = fluent.type
                 dimensions = []
                 while this_fluent.is_array_type():
                     dimensions.append(this_fluent.size)
                     this_fluent = this_fluent.elements_type
-                new_default = self.create_multidimensional_array(dimensions, elements_default)
-                (new_expression,) = self._env.expression_manager.auto_promote([new_default])
+                new_default = self.create_multidimensional_array(
+                    dimensions, elements_default
+                )
+                (new_expression,) = self._env.expression_manager.auto_promote(
+                    [new_default]
+                )
                 return new_expression
             else:
                 return self._fluent_set.fluents_defaults[fluent_exp.fluent()]
@@ -176,7 +187,9 @@ class InitialStateMixin:
         """Returns a list of fluents that have at least one undefined value in the initial state"""
         undef_fluents = []
         # gather a count of all explicit initial values for each fluent
-        inits = Counter([x.base_fluent().fluent() for x in self.explicit_initial_values])
+        inits = Counter(
+            [x.base_fluent().fluent() for x in self.explicit_initial_values]
+        )
         for fluent in self._fluent_set.fluents:
             if fluent in self._fluent_set.fluents_defaults:
                 continue  # fluent has a default values and thus can not be undefined

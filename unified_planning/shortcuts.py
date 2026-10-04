@@ -38,6 +38,7 @@ from unified_planning.plans import PlanKind
 from typing import IO, Any, Iterable, Union, Dict, Optional, Sequence, List
 from fractions import Fraction
 
+
 def Count(*args: Union[Expression, Iterable[Expression]]) -> FNode:
     """
     | Creates an expression of the form:
@@ -149,7 +150,11 @@ def Iff(left: BoolExpression, right: BoolExpression) -> FNode:
 
 
 def Exists(
-    expression: BoolExpression, *vars: Union["unified_planning.model.Variable", "unified_planning.model.int_variable.IntVariable"]
+    expression: BoolExpression,
+    *vars: Union[
+        "unified_planning.model.Variable",
+        "unified_planning.model.int_variable.IntVariable",
+    ],
 ) -> FNode:
     """
     Creates an expression of the form:
@@ -167,7 +172,10 @@ def Exists(
 
 
 def Forall(
-    expression: BoolExpression, *vars: Union["unified_planning.model.Variable", "unified_planning.model.IntVariable"]
+    expression: BoolExpression,
+    *vars: Union[
+        "unified_planning.model.Variable", "unified_planning.model.IntVariable"
+    ],
 ) -> FNode:
     """Creates an expression of the form:
         ``Forall (var[0]... var[n]) | expression``
@@ -299,6 +307,7 @@ def VariableExp(var: "unified_planning.model.Variable") -> FNode:
     """
     return get_environment().expression_manager.VariableExp(var)
 
+
 def IntVariableExp(var: "unified_planning.model.IntVariable") -> FNode:
     """
     Returns an expression for the given ``IntVariable``.
@@ -338,9 +347,11 @@ def FALSE() -> FNode:
     """Return the boolean constant ``False``."""
     return get_environment().expression_manager.FALSE()
 
+
 def EMPTY_SET() -> FNode:
     """Return the boolean constant ``False``."""
     return get_environment().expression_manager.EMPTY_SET()
+
 
 def Bool(value: bool) -> FNode:
     """
@@ -509,6 +520,7 @@ def Dot(
     """
     return get_environment().expression_manager.Dot(agent, fluent_exp)
 
+
 def SetMember(element: Expression, set_expr: SetExpression) -> FNode:
     """
     Creates an expression of the form:
@@ -519,6 +531,7 @@ def SetMember(element: Expression, set_expr: SetExpression) -> FNode:
     :return: The created ``SetMember`` expression.
     """
     return get_environment().expression_manager.SetMember(element, set_expr)
+
 
 def SetSubseteq(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode:
     """
@@ -543,6 +556,7 @@ def SetDisjoint(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode:
     """
     return get_environment().expression_manager.SetDisjoint(set_expr1, set_expr2)
 
+
 def SetCardinality(set_expr: SetExpression) -> FNode:
     """
     Creates an expression of the form:
@@ -552,6 +566,7 @@ def SetCardinality(set_expr: SetExpression) -> FNode:
     :return: The created ``SetCardinality`` expression.
     """
     return get_environment().expression_manager.SetCardinality(set_expr)
+
 
 def SetAdd(set_expr: SetExpression, element: Expression) -> FNode:
     """
@@ -563,6 +578,7 @@ def SetAdd(set_expr: SetExpression, element: Expression) -> FNode:
     """
     return get_environment().expression_manager.SetAdd(set_expr, element)
 
+
 def SetRemove(set_expr: SetExpression, element: Expression) -> FNode:
     """
     Creates an expression of the form:
@@ -572,6 +588,7 @@ def SetRemove(set_expr: SetExpression, element: Expression) -> FNode:
     :return: The created ``SetRemove`` expression.
     """
     return get_environment().expression_manager.SetRemove(set_expr, element)
+
 
 def SetUnion(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode:
     """
@@ -584,6 +601,7 @@ def SetUnion(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode:
     """
     return get_environment().expression_manager.SetUnion(set_expr1, set_expr2)
 
+
 def SetIntersection(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode:
     """
     Creates an expression of the form:
@@ -594,6 +612,7 @@ def SetIntersection(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode
     :return: The created ``SetIntersection`` expression.
     """
     return get_environment().expression_manager.SetIntersection(set_expr1, set_expr2)
+
 
 def SetDifference(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode:
     """
@@ -606,9 +625,11 @@ def SetDifference(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode:
     """
     return get_environment().expression_manager.SetDifference(set_expr1, set_expr2)
 
+
 def BoolType() -> unified_planning.model.types.Type:
     """Returns the global environment's boolean type."""
     return get_environment().type_manager.BoolType()
+
 
 def DerivedBoolType() -> unified_planning.model.types.Type:
     """Returns the global environment's boolean type."""
@@ -645,14 +666,12 @@ def RealType(
 
 
 def ArrayType(
-        size: int, elements_type: Type = None
+    size: int, elements_type: Type = None
 ) -> unified_planning.model.types.Type:
     return get_environment().type_manager.ArrayType(size, elements_type)
 
 
-def SetType(
-        elements_type: Type = None
-) -> unified_planning.model.types.Type:
+def SetType(elements_type: Type = None) -> unified_planning.model.types.Type:
     return get_environment().type_manager.SetType(elements_type)
 
 

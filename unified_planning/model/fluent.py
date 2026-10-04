@@ -53,9 +53,13 @@ class Fluent:
             self._typename = typename
         sizes = None
         if undefined_positions is not None:
-            assert typename.is_array_type(), "'undefined_positions' parameter is only allowed with ArrayType Fluents."
+            assert typename.is_array_type(), (
+                "'undefined_positions' parameter is only allowed with ArrayType Fluents."
+            )
             for position in undefined_positions:
-                assert type(position) == tuple, f"Position {position} not in the correct format: tuple"
+                assert type(position) == tuple, (
+                    f"Position {position} not in the correct format: tuple"
+                )
         self._undefined_positions = undefined_positions
         if self._typename.is_array_type():
             sizes = typename.size
@@ -100,9 +104,11 @@ class Fluent:
         if self.arity > 0:
             sign_items = [f"{p.name}={str(p.type)}" for p in self.signature]
             sign = f"[{', '.join(sign_items)}]"
-        return f"{str(self.type)} {self.name}{sign} - excluding: {self.undefined_positions}" \
-            if self.undefined_positions is not None \
+        return (
+            f"{str(self.type)} {self.name}{sign} - excluding: {self.undefined_positions}"
+            if self.undefined_positions is not None
             else f"{str(self.type)} {self.name}{sign}"
+        )
 
     def __eq__(self, oth: object) -> bool:
         if isinstance(oth, Fluent):
@@ -121,7 +127,15 @@ class Fluent:
             res += hash(p)
         return res ^ hash(self._name)
 
-    def __getitem__(self, index: Union["up.model.parameter.Parameter", "up.model.fnode.FNode", "up.model.int_variable.IntVariable", int]):
+    def __getitem__(
+        self,
+        index: Union[
+            "up.model.parameter.Parameter",
+            "up.model.fnode.FNode",
+            "up.model.int_variable.IntVariable",
+            int,
+        ],
+    ):
         assert self.type.is_array_type(), "The Fluent has no array type"
         idx = self.environment.expression_manager.auto_promote(index)[0]
         simplified = idx.simplify()
@@ -132,31 +146,35 @@ class Fluent:
                 raise UPProblemDefinitionError(
                     f"Array index {i} is out of bounds for array of size {size}."
                 )
-        return  self.environment.expression_manager.ArrayAccess(self, index)
+        return self.environment.expression_manager.ArrayAccess(self, index)
 
     def add(self, element):
-        """ Adds `element` to `Fluent` that has a Set Type """
+        """Adds `element` to `Fluent` that has a Set Type"""
         assert self.type.is_set_type(), "The Fluent must be a set type to use add()"
         return self._env.expression_manager.SetAdd(element, self)
 
     def remove(self, element):
-        """ Removes `element` from `Fluent` that has a Set Type """
+        """Removes `element` from `Fluent` that has a Set Type"""
         assert self.type.is_set_type(), "The Fluent must be a set type to use remove()"
         return self._env.expression_manager.SetRemove(element, self)
 
     def union(self, other):
-        """ Returns a new set with all items from both sets. """
+        """Returns a new set with all items from both sets."""
         assert self.type.is_set_type(), "The Fluent must be a set type to use union()"
         return self._env.expression_manager.SetUnion(self, other)
 
     def intersection(self, other):
-        """ Return a set that contains the items that exist in both sets. """
-        assert self.type.is_set_type(), "The Fluent must be a set type to use intersection()"
+        """Return a set that contains the items that exist in both sets."""
+        assert self.type.is_set_type(), (
+            "The Fluent must be a set type to use intersection()"
+        )
         return self._env.expression_manager.SetIntersection(self, other)
 
     def difference(self, other):
-        """ Return a set that contains the items that only exist in the set, and not in `other`. """
-        assert self.type.is_set_type(), "The Fluent must be a set type to use difference()"
+        """Return a set that contains the items that only exist in the set, and not in `other`."""
+        assert self.type.is_set_type(), (
+            "The Fluent must be a set type to use difference()"
+        )
         return self._env.expression_manager.SetDifference(self, other)
 
     @property

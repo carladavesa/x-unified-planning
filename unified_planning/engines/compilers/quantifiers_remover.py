@@ -30,7 +30,8 @@ from unified_planning.model import (
     Object,
     Variable,
     Expression,
-    Effect, Axiom,
+    Effect,
+    Axiom,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.model.walkers import ExpressionQuantifiersRemover

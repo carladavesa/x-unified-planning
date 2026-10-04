@@ -69,6 +69,7 @@ class OperatorKind(Enum):
     SET_UNION = auto()
     SET_DIFFERENCE = auto()
 
+
 BOOL_OPERATORS = frozenset(
     [
         OperatorKind.AND,
@@ -84,8 +85,13 @@ BOOL_OPERATORS = frozenset(
 )
 
 CONSTANTS = frozenset(
-    [OperatorKind.BOOL_CONSTANT, OperatorKind.REAL_CONSTANT, OperatorKind.INT_CONSTANT, OperatorKind.ARRAY_CONSTANT,
-     OperatorKind.SET_CONSTANT]
+    [
+        OperatorKind.BOOL_CONSTANT,
+        OperatorKind.REAL_CONSTANT,
+        OperatorKind.INT_CONSTANT,
+        OperatorKind.ARRAY_CONSTANT,
+        OperatorKind.SET_CONSTANT,
+    ]
 )
 
 IRA_RELATIONS = frozenset([OperatorKind.LE, OperatorKind.LT])
@@ -93,8 +99,14 @@ IRA_RELATIONS = frozenset([OperatorKind.LE, OperatorKind.LT])
 RELATIONS = frozenset((OperatorKind.EQUALS,)) | IRA_RELATIONS
 
 IRA_OPERATORS = frozenset(
-    [OperatorKind.PLUS, OperatorKind.MINUS, OperatorKind.TIMES, OperatorKind.DIV, OperatorKind.COUNT,
-     OperatorKind.SET_CARDINALITY]
+    [
+        OperatorKind.PLUS,
+        OperatorKind.MINUS,
+        OperatorKind.TIMES,
+        OperatorKind.DIV,
+        OperatorKind.COUNT,
+        OperatorKind.SET_CARDINALITY,
+    ]
 )
 
 TRAJECTORY_CONSTRAINTS = frozenset(

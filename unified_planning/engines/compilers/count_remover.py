@@ -13,17 +13,28 @@
 # limitations under the License.
 #
 """This module defines the count remover class."""
+
 import itertools
 import unified_planning.engines as engines
 from unified_planning.exceptions import UPValueError, UPProblemDefinitionError
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
 from unified_planning.model import (
-    InstantaneousAction, Fluent, Parameter, Problem, Action, ProblemKind, OperatorKind, FNode, Effect
+    InstantaneousAction,
+    Fluent,
+    Parameter,
+    Problem,
+    Action,
+    ProblemKind,
+    OperatorKind,
+    FNode,
+    Effect,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.engines.compilers.utils import (
-    replace_action, get_fresh_name, updated_minimize_action_costs,
+    replace_action,
+    get_fresh_name,
+    updated_minimize_action_costs,
 )
 from typing import Dict, Optional, Tuple, List
 from functools import partial
@@ -43,18 +54,17 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
     This `Compiler` supports only the `COUNT_REMOVING` :class:`~unified_planning.engines.CompilationKind`.
     """
 
-    def __init__(self, target: str = 'bool'):
+    def __init__(self, target: str = "bool"):
         engines.engine.Engine.__init__(self)
         CompilerMixin.__init__(self, CompilationKind.COUNT_REMOVING)
-        if target not in ('bool', 'int'):
+        if target not in ("bool", "int"):
             raise ValueError(f"Target must be 'bool' or 'int', got {target!r}")
         self.target = target
         self._count_registry: Dict[str, FNode] = {}
 
-
     @property
     def name(self):
-        return "ctbr" if self.target == 'bool' else "ctir"
+        return "ctbr" if self.target == "bool" else "ctir"
 
     @staticmethod
     def supported_kind() -> ProblemKind:
@@ -127,11 +137,13 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         return compilation_kind == CompilationKind.COUNT_REMOVING
 
     def resulting_problem_kind(
-        self, problem_kind: ProblemKind, compilation_kind: Optional[CompilationKind] = None
+        self,
+        problem_kind: ProblemKind,
+        compilation_kind: Optional[CompilationKind] = None,
     ) -> ProblemKind:
         new_kind = problem_kind.clone()
         new_kind.unset_conditions_kind("COUNTING")
-        if self.target == 'int':
+        if self.target == "int":
             new_kind.set_fluents_type("INT_FLUENTS")
         return new_kind
 
@@ -164,7 +176,9 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         new_action.clear_effects()
 
         for precondition in action.preconditions:
-            new_precondition = self._bool_transform_expression(new_problem, precondition)
+            new_precondition = self._bool_transform_expression(
+                new_problem, precondition
+            )
             new_action.add_precondition(new_precondition)
 
         for effect in action.effects:
@@ -176,18 +190,28 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         """
         Transform expressions recursively, replacing count expressions with boolean formulas.
         """
-        if (node.is_fluent_exp() or node.is_parameter_exp()
-                or node.is_variable_exp() or node.is_constant()):
+        if (
+            node.is_fluent_exp()
+            or node.is_parameter_exp()
+            or node.is_variable_exp()
+            or node.is_constant()
+        ):
             return node
 
         comparison_ops = {OperatorKind.LT, OperatorKind.LE, OperatorKind.EQUALS}
-        if node.node_type in comparison_ops and any(arg.is_count() for arg in node.args):
+        if node.node_type in comparison_ops and any(
+            arg.is_count() for arg in node.args
+        ):
             return self._bool_transform_count_comparison(node)
 
         em = new_problem.environment.expression_manager
-        new_args = [self._bool_transform_expression(new_problem, arg) for arg in node.args]
+        new_args = [
+            self._bool_transform_expression(new_problem, arg) for arg in node.args
+        ]
         if node.is_exists() or node.is_forall():
-            return em.create_node(node.node_type, tuple(new_args), tuple(node.variables()))
+            return em.create_node(
+                node.node_type, tuple(new_args), tuple(node.variables())
+            )
         return em.create_node(node.node_type, tuple(new_args)).simplify()
 
     def _bool_transform_count_comparison(self, node: FNode) -> FNode:
@@ -219,7 +243,9 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         else:
             raise UPValueError(f"Unexpected Count comparison structure: {node}")
 
-    def _bool_exactly_k_combinations(self, arguments: List[FNode], k: int) -> List[FNode]:
+    def _bool_exactly_k_combinations(
+        self, arguments: List[FNode], k: int
+    ) -> List[FNode]:
         """
         Generate all formulas representing exactly k arguments being true.
         Returns list of conjunctions, one for each k-combination of true arguments.
@@ -237,7 +263,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         return combinations
 
     def _bool_between_k_true_formula(
-            self, arguments: List[FNode], min_true: int, max_true: int
+        self, arguments: List[FNode], min_true: int, max_true: int
     ) -> FNode:
         """
         Generate formula: "between min_true and max_true arguments are true".
@@ -431,9 +457,13 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
 
         # Transform effects (conditions and values)
         for effect in action.effects:
-            new_fluent = self._int_replace_count_with_fluents(new_problem, effect.fluent)
+            new_fluent = self._int_replace_count_with_fluents(
+                new_problem, effect.fluent
+            )
             new_value = self._int_replace_count_with_fluents(new_problem, effect.value)
-            new_condition = self._int_replace_count_with_fluents(new_problem, effect.condition)
+            new_condition = self._int_replace_count_with_fluents(
+                new_problem, effect.condition
+            )
 
             if effect.is_increase():
                 new_action.add_increase_effect(
@@ -450,16 +480,23 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
 
         return new_action
 
-    def _int_replace_count_with_fluents(self, problem: Problem, expression: FNode) -> FNode:
+    def _int_replace_count_with_fluents(
+        self, problem: Problem, expression: FNode
+    ) -> FNode:
         """Recursively replace Count sub-expressions with sums of helper fluents."""
         em = problem.environment.expression_manager
-        if expression.is_fluent_exp() or expression.is_parameter_exp() or expression.is_constant():
+        if (
+            expression.is_fluent_exp()
+            or expression.is_parameter_exp()
+            or expression.is_constant()
+        ):
             return expression
 
         if expression.is_count():
             return self._int_expand_count(problem, expression)
         new_args = [
-            self._int_replace_count_with_fluents(problem, arg) for arg in expression.args
+            self._int_replace_count_with_fluents(problem, arg)
+            for arg in expression.args
         ]
         return em.create_node(expression.node_type, tuple(new_args))
 
@@ -508,7 +545,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         )
 
     def _int_create_ground_helper(
-            self, problem: Problem, arg: FNode, fluent_name: str
+        self, problem: Problem, arg: FNode, fluent_name: str
     ) -> FNode:
         """Create a helper fluent for a ground Count argument (no action parameters).
 
@@ -527,8 +564,11 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         return new_fluent()
 
     def _int_create_parameterised_helper(
-            self, problem: Problem, arg: FNode, fluent_name: str,
-            count_parameters: List[Parameter]
+        self,
+        problem: Problem,
+        arg: FNode,
+        fluent_name: str,
+        count_parameters: List[Parameter],
     ) -> FNode:
         """Create a helper fluent for a parameterised Count argument.
 
@@ -537,6 +577,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         substituted argument against the initial state.
         """
         from unified_planning.model.walkers import Substituter
+
         em = problem.environment.expression_manager
         subst = Substituter(problem.environment)
 
@@ -553,10 +594,11 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
             if initial_eval.is_bool_constant():
                 initial_value = Int(1) if initial_eval.is_true() else Int(0)
             else:
-                initial_value = Int(0)  # Fallback if the arg couldn't be fully evaluated
+                initial_value = Int(
+                    0
+                )  # Fallback if the arg couldn't be fully evaluated
             problem.set_initial_value(
-                new_fluent(*[em.ObjectExp(v) for v in values]),
-                initial_value
+                new_fluent(*[em.ObjectExp(v) for v in values]), initial_value
             )
         return new_fluent(*[em.ParameterExp(p) for p in count_parameters])
 
@@ -748,7 +790,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         new_problem.clear_quality_metrics()
 
         # Select target-specific transformations
-        if self.target == 'bool':
+        if self.target == "bool":
             transform_action = self._bool_transform_action
             transform_goal = self._bool_transform_expression
             post_process = None

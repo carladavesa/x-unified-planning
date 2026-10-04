@@ -150,12 +150,16 @@ class FluentsSetMixin:
         self._fluents.append(fluent)
         self._fluents_index.note_appended(self._fluents)
         if not default_initial_value is None:
-            assert not (isinstance(default_initial_value, list)), \
-                "The default initial value must be a single element, not a list: it is applied to " \
+            assert not (isinstance(default_initial_value, list)), (
+                "The default initial value must be a single element, not a list: it is applied to "
                 "every position of the array, so it must match the type of the deepest elements."
+            )
             if fluent.type.is_set_type():
-                assert default_initial_value == self.environment.expression_manager.EMPTY_SET() or \
-                       isinstance(default_initial_value, (set, Set)), f"The default initial value must be a set type."
+                assert (
+                    default_initial_value
+                    == self.environment.expression_manager.EMPTY_SET()
+                    or isinstance(default_initial_value, (set, Set))
+                ), f"The default initial value must be a set type."
             (v_exp,) = self.environment.expression_manager.auto_promote(
                 default_initial_value
             )
@@ -163,9 +167,10 @@ class FluentsSetMixin:
                 this_fluent = fluent.type
                 while this_fluent.is_array_type():
                     this_fluent = this_fluent.elements_type
-                assert this_fluent.is_compatible(v_exp.type), \
-                    (f"Default initial value: {default_initial_value} does not match the type of the deepest elements "
-                     f"in the array structure.")
+                assert this_fluent.is_compatible(v_exp.type), (
+                    f"Default initial value: {default_initial_value} does not match the type of the deepest elements "
+                    f"in the array structure."
+                )
             self._fluents_defaults[fluent] = v_exp
         elif fluent.type in self._initial_defaults:
             self._fluents_defaults[fluent] = self._initial_defaults[fluent.type]

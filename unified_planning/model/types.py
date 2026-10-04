@@ -102,6 +102,7 @@ class _DerivedBoolType(Type):
         """Returns true iff is derived bool type."""
         return True
 
+
 class _TimeType(Type):
     """Represent the type for an absolute Time"""
 
@@ -259,6 +260,7 @@ class _RealType(Type):
 
 class _ArrayType(Type):
     """Represents an array composed with a number (size) of elements of a given type (elements_type)."""
+
     def __init__(self, size: int, elements_type: Type):
         Type.__init__(self)
         self._size = size
@@ -281,14 +283,18 @@ class _ArrayType(Type):
         """Returns the type of elements in this list."""
         return self._size
 
+
 class _SetType(Type):
     """Represents a set composed with a given type (elements_type)."""
+
     def __init__(self, elements_type: Type):
         Type.__init__(self)
         self._elements_type = elements_type
 
     def __repr__(self) -> str:
-        return f"set{{{self._elements_type if self._elements_type is not None else ''}}}"
+        return (
+            f"set{{{self._elements_type if self._elements_type is not None else ''}}}"
+        )
 
     def is_set_type(self) -> bool:
         """Returns true iff is a set type."""
@@ -298,6 +304,7 @@ class _SetType(Type):
     def elements_type(self) -> Type:
         """Returns the type of elements in this set."""
         return self._elements_type
+
 
 def _get_bool_type() -> "_BoolType":
     return BOOL
@@ -385,7 +392,8 @@ def is_compatible_type(
     if t_left == t_right:
         return True
     if (t_left.is_derived_bool_type() and t_right.is_bool_type()) or (
-            t_left.is_bool_type() and t_right.is_derived_bool_type()):
+        t_left.is_bool_type() and t_right.is_derived_bool_type()
+    ):
         return True
     if t_left.is_user_type() and t_right.is_user_type():
         assert isinstance(t_left, _UserType) and isinstance(t_right, _UserType)
@@ -400,8 +408,7 @@ def is_compatible_type(
             return False
     if t_left.is_set_type() or t_right.is_set_type():
         if t_right.is_set_type() and t_right.is_set_type():
-            assert (isinstance(t_left, _SetType) and
-                    isinstance(t_right, _SetType))
+            assert isinstance(t_left, _SetType) and isinstance(t_right, _SetType)
             if t_left.elements_type is None or t_right.elements_type is None:
                 return True
             else:

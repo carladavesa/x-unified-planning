@@ -43,7 +43,8 @@ from unified_planning.model import (
     Object,
     Expression,
     DurationInterval,
-    UPState, Axiom,
+    UPState,
+    Axiom,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.model.walkers import UsertypeFluentsWalker

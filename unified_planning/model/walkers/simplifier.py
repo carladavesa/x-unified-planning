@@ -631,7 +631,9 @@ class Simplifier(walkers.dag.DagWalker):
             return set1
         # Both constant
         if set1.is_constant() and set2.is_constant():
-            return self.manager.Set(set(set1.constant_value()) | set(set2.constant_value()))
+            return self.manager.Set(
+                set(set1.constant_value()) | set(set2.constant_value())
+            )
         # Same operand
         if set1 == set2:
             return set1
@@ -644,7 +646,9 @@ class Simplifier(walkers.dag.DagWalker):
             return self.manager.EMPTY_SET()
         # Both constant
         if set1.is_constant() and set2.is_constant():
-            return self.manager.Set(set(set1.constant_value()) & set(set2.constant_value()))
+            return self.manager.Set(
+                set(set1.constant_value()) & set(set2.constant_value())
+            )
         # Same operand
         if set1 == set2:
             return set1
@@ -659,7 +663,9 @@ class Simplifier(walkers.dag.DagWalker):
             return self.manager.EMPTY_SET()
         # Both constant
         if set1.is_constant() and set2.is_constant():
-            return self.manager.Set(set(set1.constant_value()) - set(set2.constant_value()))
+            return self.manager.Set(
+                set(set1.constant_value()) - set(set2.constant_value())
+            )
         # Same operand
         if set1 == set2:
             return self.manager.EMPTY_SET()

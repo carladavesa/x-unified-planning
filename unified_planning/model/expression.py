@@ -129,7 +129,9 @@ class ExpressionManager(object):
             # the overwhelmingly common case of an already-promoted expression.
             if isinstance(a, up.model.fnode.FNode):
                 yield a
-            elif isinstance(a, ABCIterable) and not isinstance(a, (str, set, frozenset)):
+            elif isinstance(a, ABCIterable) and not isinstance(
+                a, (str, set, frozenset)
+            ):
                 for p in a:
                     yield p
             else:
@@ -173,9 +175,9 @@ class ExpressionManager(object):
                 )
                 res.append(self.VariableExp(e))
             elif isinstance(e, up.model.int_variable.IntVariable):
-                assert (
-                    e.environment == self.environment
-                ), "IntVariable has a different environment of the expression manager"
+                assert e.environment == self.environment, (
+                    "IntVariable has a different environment of the expression manager"
+                )
                 res.append(self.IntVariableExp(e))
             elif isinstance(e, up.model.object.Object):
                 assert e.environment == self.environment, (
@@ -234,7 +236,13 @@ class ExpressionManager(object):
                 list,
                 tuple,
                 set,
-                Tuple[Union["up.model.variable.Variable", "up.model.int_variable.IntVariable"], ...],
+                Tuple[
+                    Union[
+                        "up.model.variable.Variable",
+                        "up.model.int_variable.IntVariable",
+                    ],
+                    ...,
+                ],
             ]
         ] = None,
     ) -> "up.model.fnode.FNode":
@@ -286,7 +294,7 @@ class ExpressionManager(object):
             return self.create_node(node_type=OperatorKind.COUNT, args=tuple_args)
 
     def ArrayAccess(
-            self, array_expr: Expression, index: Expression
+        self, array_expr: Expression, index: Expression
     ) -> "up.model.fnode.FNode":
         """
         | Creates an expression of the form:
@@ -300,7 +308,9 @@ class ExpressionManager(object):
         :return: The ``ARRAY_ACCESS`` expression created.
         """
         array_expr, index = self.auto_promote(array_expr, index)
-        return self.create_node(node_type=OperatorKind.ARRAY_ACCESS, args=(array_expr, index))
+        return self.create_node(
+            node_type=OperatorKind.ARRAY_ACCESS, args=(array_expr, index)
+        )
 
     def SetMember(
         self, element: Expression, set_expr: SetExpression
@@ -318,7 +328,9 @@ class ExpressionManager(object):
         :return: The ``MEMBER`` expression created.
         """
         element, set_expr = self.auto_promote(element, set_expr)
-        return self.create_node(node_type=OperatorKind.SET_MEMBER, args=(element, set_expr))
+        return self.create_node(
+            node_type=OperatorKind.SET_MEMBER, args=(element, set_expr)
+        )
 
     def SetSubseteq(
         self, set_expr1: SetExpression, set_expr2: SetExpression
@@ -335,7 +347,9 @@ class ExpressionManager(object):
         :return: The ``SUBSETEQ`` expression created.
         """
         set_expr1, set_expr2 = self.auto_promote(set_expr1, set_expr2)
-        return self.create_node(node_type=OperatorKind.SET_SUBSETEQ, args=(set_expr1, set_expr2))
+        return self.create_node(
+            node_type=OperatorKind.SET_SUBSETEQ, args=(set_expr1, set_expr2)
+        )
 
     def SetDisjoint(
         self, set_expr1: SetExpression, set_expr2: SetExpression
@@ -352,7 +366,9 @@ class ExpressionManager(object):
         :return: The ``DISJOINT`` expression created.
         """
         set_expr1, set_expr2 = self.auto_promote(set_expr1, set_expr2)
-        return self.create_node(node_type=OperatorKind.SET_DISJOINT, args=(set_expr1, set_expr2))
+        return self.create_node(
+            node_type=OperatorKind.SET_DISJOINT, args=(set_expr1, set_expr2)
+        )
 
     def SetCardinality(self, set_expr: SetExpression) -> "up.model.fnode.FNode":
         """
@@ -369,10 +385,12 @@ class ExpressionManager(object):
 
         if set_expr.is_set_constant():
             return self.Int(len(set_expr.constant_value()))
-        return self.create_node(node_type=OperatorKind.SET_CARDINALITY, args=(set_expr,))
+        return self.create_node(
+            node_type=OperatorKind.SET_CARDINALITY, args=(set_expr,)
+        )
 
     def SetAdd(
-            self, set_expr: SetExpression, element: Expression
+        self, set_expr: SetExpression, element: Expression
     ) -> "up.model.fnode.FNode":
         """
         | Creates an expression that adds an element to a set:
@@ -389,10 +407,12 @@ class ExpressionManager(object):
         set_expr, element = self.auto_promote(set_expr, element)
         if set_expr == self.EMPTY_SET():
             return self.Set({element})
-        return self.create_node(node_type=OperatorKind.SET_ADD, args=(set_expr, element))
+        return self.create_node(
+            node_type=OperatorKind.SET_ADD, args=(set_expr, element)
+        )
 
     def SetRemove(
-            self, set_expr: SetExpression, element: Expression
+        self, set_expr: SetExpression, element: Expression
     ) -> "up.model.fnode.FNode":
         """
         | Creates an expression that removes an element from a set:
@@ -409,10 +429,12 @@ class ExpressionManager(object):
         set_expr, element = self.auto_promote(set_expr, element)
         if set_expr == self.EMPTY_SET():
             return self.EMPTY_SET()
-        return self.create_node(node_type=OperatorKind.SET_REMOVE, args=(set_expr, element))
+        return self.create_node(
+            node_type=OperatorKind.SET_REMOVE, args=(set_expr, element)
+        )
 
     def SetUnion(
-            self, set_expr1: SetExpression, set_expr2: SetExpression
+        self, set_expr1: SetExpression, set_expr2: SetExpression
     ) -> "up.model.fnode.FNode":
         """
         | Creates a union of sets:
@@ -427,10 +449,12 @@ class ExpressionManager(object):
         :return: The ``SET_UNION`` expression created.
         """
         set_expr1, set_expr2 = tuple(self.auto_promote(set_expr1, set_expr2))
-        return self.create_node(node_type=OperatorKind.SET_UNION, args=(set_expr1, set_expr2))
+        return self.create_node(
+            node_type=OperatorKind.SET_UNION, args=(set_expr1, set_expr2)
+        )
 
     def SetIntersection(
-            self, set_expr1: SetExpression, set_expr2: SetExpression
+        self, set_expr1: SetExpression, set_expr2: SetExpression
     ) -> "up.model.fnode.FNode":
         """
         | Creates an intersection of sets:
@@ -445,10 +469,12 @@ class ExpressionManager(object):
         :return: The ``SET_INTERSECTION`` expression created.
         """
         set_expr1, set_expr2 = tuple(self.auto_promote(set_expr1, set_expr2))
-        return self.create_node(node_type=OperatorKind.SET_INTERSECT, args=(set_expr1, set_expr2))
+        return self.create_node(
+            node_type=OperatorKind.SET_INTERSECT, args=(set_expr1, set_expr2)
+        )
 
     def SetDifference(
-            self, set_expr1: SetExpression, set_expr2: SetExpression
+        self, set_expr1: SetExpression, set_expr2: SetExpression
     ) -> "up.model.fnode.FNode":
         """
         | Creates a set difference:
@@ -462,7 +488,9 @@ class ExpressionManager(object):
         :return: The ``SET_DIFFERENCE`` expression created.
         """
         set_expr1, set_expr2 = self.auto_promote(set_expr1, set_expr2)
-        return self.create_node(node_type=OperatorKind.SET_DIFFERENCE, args=(set_expr1, set_expr2))
+        return self.create_node(
+            node_type=OperatorKind.SET_DIFFERENCE, args=(set_expr1, set_expr2)
+        )
 
     def And(
         self, *args: Union[BoolExpression, Iterable[BoolExpression]]
@@ -597,7 +625,11 @@ class ExpressionManager(object):
         return self.create_node(node_type=OperatorKind.IFF, args=(left, right))
 
     def Exists(
-        self, expression: BoolExpression, *vars: Union["unified_planning.model.Variable", "unified_planning.model.IntVariable"]
+        self,
+        expression: BoolExpression,
+        *vars: Union[
+            "unified_planning.model.Variable", "unified_planning.model.IntVariable"
+        ],
     ) -> "up.model.fnode.FNode":
         """
         Creates an expression of the form:
@@ -617,14 +649,23 @@ class ExpressionManager(object):
                 f"Exists of expression: {str(expression)} must be created with at least one variable, otherwise it is not needed."
             )
         for v in vars:
-            if not (isinstance(v, up.model.variable.Variable) or isinstance(v, unified_planning.model.int_variable.IntVariable)):
-                raise UPTypeError("Expecting 'up.Variable' or 'up.IntVariable, got %s", type(v))
+            if not (
+                isinstance(v, up.model.variable.Variable)
+                or isinstance(v, unified_planning.model.int_variable.IntVariable)
+            ):
+                raise UPTypeError(
+                    "Expecting 'up.Variable' or 'up.IntVariable, got %s", type(v)
+                )
         return self.create_node(
             node_type=OperatorKind.EXISTS, args=expressions, payload=vars
         )
 
     def Forall(
-        self, expression: BoolExpression, *vars: Union["unified_planning.model.Variable", "unified_planning.model.IntVariable"]
+        self,
+        expression: BoolExpression,
+        *vars: Union[
+            "unified_planning.model.Variable", "unified_planning.model.IntVariable"
+        ],
     ) -> "up.model.fnode.FNode":
         """Creates an expression of the form:
             ``Forall (var[0]... var[n]) | expression``
@@ -643,8 +684,13 @@ class ExpressionManager(object):
                 f"Forall of expression: {str(expression)} must be created with at least one variable, otherwise it is not needed."
             )
         for v in vars:
-            if not (isinstance(v, up.model.variable.Variable) or isinstance(v, unified_planning.model.int_variable.IntVariable)):
-                raise UPTypeError("Expecting 'up.Variable' or 'up.IntVariable, got %s", type(v))
+            if not (
+                isinstance(v, up.model.variable.Variable)
+                or isinstance(v, unified_planning.model.int_variable.IntVariable)
+            ):
+                raise UPTypeError(
+                    "Expecting 'up.Variable' or 'up.IntVariable, got %s", type(v)
+                )
         return self.create_node(
             node_type=OperatorKind.FORALL, args=expressions, payload=vars
         )
@@ -817,7 +863,9 @@ class ExpressionManager(object):
             node_type=OperatorKind.VARIABLE_EXP, args=tuple(), payload=var
         )
 
-    def IntVariableExp(self, var: "up.model.int_variable.IntVariable") -> "up.model.fnode.FNode":
+    def IntVariableExp(
+        self, var: "up.model.int_variable.IntVariable"
+    ) -> "up.model.fnode.FNode":
         """
         Returns an expression for the given ``IntVariable``.
 

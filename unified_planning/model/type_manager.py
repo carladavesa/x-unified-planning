@@ -24,7 +24,8 @@ from unified_planning.model.types import (
     _UserType,
     BOOL,
     DERIVED_BOOL,
-    TIME, _SetType,
+    TIME,
+    _SetType,
 )
 from unified_planning.model.motion.objects import ConfigurationKind
 from unified_planning.model.motion.types import (
@@ -151,13 +152,9 @@ class TypeManager:
             self._reals[k] = rt
             return rt
 
-    def ArrayType(
-            self,
-            size: int,
-            elements_type: Type = None
-    ) -> Type:
+    def ArrayType(self, size: int, elements_type: Type = None) -> Type:
         """Returns the array type with a specific element type."""
-        #assert size > 1, "Size of ArrayType must be greater than 1."
+        # assert size > 1, "Size of ArrayType must be greater than 1."
         if elements_type is None:
             elements_type = self.BoolType()
         k = (size, elements_type)
@@ -168,10 +165,7 @@ class TypeManager:
             self._arrays[k] = at
             return at
 
-    def SetType(
-            self,
-            elements_type: Type = None
-    ) -> Type:
+    def SetType(self, elements_type: Type = None) -> Type:
         """Returns the set type with a specific element type."""
         k = elements_type
         if k in self._sets:

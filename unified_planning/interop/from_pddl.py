@@ -855,9 +855,7 @@ def check_ai_pddl_requirements(requirements: List[str]) -> bool:
         ":adl",
         ":action-costs",
     }
-    ai_pddl_planning_supported_requirements_not_up_supported = {
-        ""
-    }
+    ai_pddl_planning_supported_requirements_not_up_supported = {""}
     non_up_supported_requirements = (
         ai_pddl_planning_supported_requirements_not_up_supported.intersection(
             requirements

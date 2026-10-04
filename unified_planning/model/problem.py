@@ -694,8 +694,8 @@ class Problem(  # type: ignore[misc]
         )
         (goal_exp,) = self._env.expression_manager.auto_promote(goal)
         assert (
-                self._env.type_checker.get_type(goal_exp).is_bool_type()
-                or self._env.type_checker.get_type(goal_exp).is_derived_bool_type()
+            self._env.type_checker.get_type(goal_exp).is_bool_type()
+            or self._env.type_checker.get_type(goal_exp).is_derived_bool_type()
         )
         if goal_exp != self._env.expression_manager.TRUE():
             self._goals.append(goal_exp)
@@ -1121,7 +1121,10 @@ class _KindFactory:
         if exp.is_int_variable_exp():
             return True
         if exp.is_forall() or exp.is_exists():
-            if any(isinstance(f, up.model.int_variable.IntVariable) for f in exp.variables()):
+            if any(
+                isinstance(f, up.model.int_variable.IntVariable)
+                for f in exp.variables()
+            ):
                 return True
         return any(self._has_int_vars(arg) for arg in exp.args)
 

@@ -188,7 +188,9 @@ class FreeVarsOracle(walkers.DagWalker):
                     children.extend((variable.initial, variable.last))
         return children
 
-    def get_free_variables(self, expression: FNode) -> FrozenSet[Union[Variable, "IntVariable"]]:
+    def get_free_variables(
+        self, expression: FNode
+    ) -> FrozenSet[Union[Variable, "IntVariable"]]:
         """Returns the FrozenSet of Symbols appearing free in the expression."""
         return self.walk(expression)
 
@@ -201,7 +203,7 @@ class FreeVarsOracle(walkers.DagWalker):
 
     @walkers.handles(OperatorKind.INT_VARIABLE_EXP)
     def walk_int_variable_exp(
-            self, expression: FNode, args: List[FrozenSet["IntVariable"]], **kwargs
+        self, expression: FNode, args: List[FrozenSet["IntVariable"]], **kwargs
     ) -> FrozenSet["IntVariable"]:
         return frozenset((expression.int_variable(),))
 
@@ -229,9 +231,17 @@ class FreeVarsOracle(walkers.DagWalker):
 
     @walkers.handles(
         set(OperatorKind)
-        - {OperatorKind.VARIABLE_EXP, OperatorKind.INT_VARIABLE_EXP, OperatorKind.EXISTS, OperatorKind.FORALL}
+        - {
+            OperatorKind.VARIABLE_EXP,
+            OperatorKind.INT_VARIABLE_EXP,
+            OperatorKind.EXISTS,
+            OperatorKind.FORALL,
+        }
     )
     def walk_all(
-        self, expression: FNode, args: List[FrozenSet[Union[Variable, "IntVariable"]]], **kwargs,
+        self,
+        expression: FNode,
+        args: List[FrozenSet[Union[Variable, "IntVariable"]]],
+        **kwargs,
     ) -> FrozenSet[Union[Variable, "IntVariable"]]:
         return frozenset(v for s in args for v in s)

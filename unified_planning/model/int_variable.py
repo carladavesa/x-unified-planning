@@ -17,7 +17,6 @@ This module defines the IntVariable class.
 A IntVariable has a name and a type.
 """
 
-
 from typing import List, Optional, Union
 
 from unified_planning.environment import Environment, get_environment
@@ -63,11 +62,11 @@ class IntVariable:
     def __eq__(self, oth: object) -> bool:
         if isinstance(oth, IntVariable):
             return (
-                    self._name == oth._name
-                    and self._initial == oth._initial
-                    and self._last == oth._last
-                    and self._type_int == oth._type_int
-                    and self._env == oth._env
+                self._name == oth._name
+                and self._initial == oth._initial
+                and self._last == oth._last
+                and self._type_int == oth._type_int
+                and self._env == oth._env
             )
         else:
             return False
@@ -89,7 +88,6 @@ class IntVariable:
     def last(self) -> FNode:
         """Returns the inclusive upper bound as an expression."""
         return self._env.expression_manager.auto_promote(self._last)[0]
-
 
     @property
     def type(self) -> "unified_planning.model.types.Type":

@@ -7,12 +7,11 @@ fluent whose axiom body is the original goal expression.
 Benefits planners with native axiom
 support (e.g. Fast Downward) by keeping the goal formula flat.
 """
+
 from functools import partial
 import unified_planning.engines as engines
 from unified_planning.model import Problem, ProblemKind, FNode, Fluent, Axiom
-from unified_planning.engines.compilers.utils import (
-    replace_action
-)
+from unified_planning.engines.compilers.utils import replace_action
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
@@ -123,10 +122,10 @@ class GoalsAsAxiomsCompiler(engines.engine.Engine, CompilerMixin):
         return any(self.is_complex_goal(arg) for arg in node.args)
 
     def wrap_as_derived_fluent_axiom(
-            self,
-            new_problem: Problem,
-            body_expr: FNode,
-            fluent_name: str,
+        self,
+        new_problem: Problem,
+        body_expr: FNode,
+        fluent_name: str,
     ) -> FNode:
         """Wrap a boolean expression in a derived fluent + axiom.
 
@@ -138,8 +137,13 @@ class GoalsAsAxiomsCompiler(engines.engine.Engine, CompilerMixin):
         heuristic search, the disjunction is hidden inside an axiom.
         """
 
-        derived_fluent = Fluent(fluent_name, new_problem.environment.type_manager.DerivedBoolType())
-        new_problem.add_fluent(derived_fluent, default_initial_value=new_problem.environment.expression_manager.FALSE())
+        derived_fluent = Fluent(
+            fluent_name, new_problem.environment.type_manager.DerivedBoolType()
+        )
+        new_problem.add_fluent(
+            derived_fluent,
+            default_initial_value=new_problem.environment.expression_manager.FALSE(),
+        )
 
         axiom = Axiom(f"{derived_fluent}")
         axiom.set_head(derived_fluent())
@@ -148,14 +152,18 @@ class GoalsAsAxiomsCompiler(engines.engine.Engine, CompilerMixin):
 
         return derived_fluent()
 
-    def _compile(self, problem: Problem, compilation_kind: CompilationKind) -> CompilerResult:
+    def _compile(
+        self, problem: Problem, compilation_kind: CompilationKind
+    ) -> CompilerResult:
         new_problem = problem.clone()
         new_problem.clear_goals()
 
         for i, goal in enumerate(problem.goals):
             if self.is_complex_goal(goal):
                 fluent_name = f"goal_{i}"
-                new_goal = self.wrap_as_derived_fluent_axiom(new_problem, goal, fluent_name)
+                new_goal = self.wrap_as_derived_fluent_axiom(
+                    new_problem, goal, fluent_name
+                )
                 new_problem.add_goal(new_goal)
             else:
                 new_problem.add_goal(goal)

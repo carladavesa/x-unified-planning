@@ -45,9 +45,9 @@ class AxiomsSetMixin:
         Adds the given `axiom` to the `problem`.
         :param axiom: The `axiom` that must be added to the `problem`.
         """
-        assert (
-            axiom.environment == self._env
-        ), "Axiom does not have the same environment of the problem"
+        assert axiom.environment == self._env, (
+            "Axiom does not have the same environment of the problem"
+        )
         self._axioms.append(axiom)
 
     def add_axioms(self, axioms: Iterable["up.model.axiom.Axiom"]):

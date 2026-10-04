@@ -234,9 +234,9 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
         oracle = old_problem.environment.free_vars_oracle
         dependencies = {}
         for variable, bounds in int_vars.items():
-            free_vars = oracle.get_free_variables(bounds[0]) | oracle.get_free_variables(
-                bounds[1]
-            )
+            free_vars = oracle.get_free_variables(
+                bounds[0]
+            ) | oracle.get_free_variables(bounds[1])
             unbound = free_vars.difference(int_vars, int_params)
             if unbound:
                 names = ", ".join(sorted(v.name for v in unbound))
@@ -347,9 +347,7 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
                     continue
                 expanded_args.append(transformed)
         if not has_instances:
-            return new_problem.environment.expression_manager.Bool(
-                node.is_forall()
-            )
+            return new_problem.environment.expression_manager.Bool(node.is_forall())
         if not expanded_args:
             return None
 
@@ -969,7 +967,6 @@ class IntParametersAndVariablesRemover(engines.engine.Engine, CompilerMixin):
                 new_problem.add_goal(transformed)
             elif not transformed.is_true():
                 new_problem.add_trajectory_constraint(transformed)
-
 
     @staticmethod
     def _map_back_action_instance(

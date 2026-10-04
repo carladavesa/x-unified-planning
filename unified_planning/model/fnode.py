@@ -195,7 +195,14 @@ class FNode(object):
         assert self.is_variable_exp()
         return self._content.payload
 
-    def variables(self) -> List[Union["unified_planning.model.variable.Variable", "unified_planning.model.int_variable.IntVariable"]]:
+    def variables(
+        self,
+    ) -> List[
+        Union[
+            "unified_planning.model.variable.Variable",
+            "unified_planning.model.int_variable.IntVariable",
+        ]
+    ]:
         """Return the `Variables` of the `Exists` or `Forall`."""
         assert self.is_exists() or self.is_forall()
         return list(self._content.payload)
@@ -601,7 +608,9 @@ _REPR_DISPATCH = {
         f"Sometime-After{n.get_nary_expression_string(', ', n.args)}"
     ),
     OperatorKind.AT_MOST_ONCE: lambda n: f"At-Most-Once({n.arg(0)})",
-    OperatorKind.COUNT: lambda n: f"Count({n.get_nary_expression_string(', ', n.args)})",
+    OperatorKind.COUNT: lambda n: (
+        f"Count({n.get_nary_expression_string(', ', n.args)})"
+    ),
     OperatorKind.PLUS: lambda n: n.get_nary_expression_string(" + ", n.args),
     OperatorKind.MINUS: lambda n: n.get_nary_expression_string(" - ", n.args),
     OperatorKind.TIMES: lambda n: n.get_nary_expression_string(" * ", n.args),

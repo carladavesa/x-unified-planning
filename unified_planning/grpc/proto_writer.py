@@ -172,7 +172,6 @@ class FNode2Protobuf(walkers.DagWalker):
     ) -> proto.Expression:
         return array_expression(expression.list_constant_value())
 
-
     def walk_param_exp(
         self, expression: model.FNode, args: List[proto.Expression]
     ) -> proto.Expression:

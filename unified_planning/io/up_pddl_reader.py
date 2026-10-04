@@ -416,7 +416,9 @@ class UPPDDLReader:
     def _parse_exp(
         self,
         problem: up.model.Problem,
-        act: typing.Optional[Union[up.model.Transition, up.model.Axiom, htn.Method, htn.TaskNetwork]],
+        act: typing.Optional[
+            Union[up.model.Transition, up.model.Axiom, htn.Method, htn.TaskNetwork]
+        ],
         types_map: TypesMap,
         var: Dict[str, up.model.Variable],
         exp: CustomParseResults,
@@ -1493,9 +1495,7 @@ class UPPDDLReader:
                     params[param_name] = param_type
             return params
 
-        derived_names = {
-            a["head"][0][0] for a in domain_res.get("axioms", [])
-        }
+        derived_names = {a["head"][0][0] for a in domain_res.get("axioms", [])}
         for p in domain_res.get("predicates", []):
             n = p[0]
             params = get_fluent_params(p)
@@ -1608,9 +1608,9 @@ class UPPDDLReader:
             problem.add_task(task)
         for axiom_entry in domain_res.get("axioms", []):
             # Each axiom should have only one predicate in the head
-            assert (
-                    len(axiom_entry["head"]) == 1
-            ), "Only one predicate in head of axiom allowed"
+            assert len(axiom_entry["head"]) == 1, (
+                "Only one predicate in head of axiom allowed"
+            )
 
             # Extract the fluent name from the axiom's head
             fluent_name = axiom_entry["head"][0][0]
@@ -1634,9 +1634,9 @@ class UPPDDLReader:
             axiom.set_head(effect)
 
             # Ensure there's only one condition in the body of the axiom
-            assert (
-                    len(axiom_entry["body"]) == 1
-            ), "Only one condition in body of axiom allowed"
+            assert len(axiom_entry["body"]) == 1, (
+                "Only one condition in body of axiom allowed"
+            )
 
             # Parse the condition and add it to the axiom's body
             body_condition = self._parse_exp(

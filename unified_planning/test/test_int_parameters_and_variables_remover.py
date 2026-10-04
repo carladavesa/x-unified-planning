@@ -67,9 +67,7 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
         result = self.compile_action(action)
         combinations = set()
         for compiled in result.problem.actions:
-            instance = ActionInstance(
-                compiled, (home, True, Fraction(3, 2))
-            )
+            instance = ActionInstance(compiled, (home, True, Fraction(3, 2)))
             lifted = result.map_back_action_instance(instance)
             n, site, flag, m, ratio = lifted.actual_parameters
             self.assertIs(lifted.action, action)

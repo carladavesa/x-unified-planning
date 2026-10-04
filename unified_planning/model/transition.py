@@ -273,7 +273,9 @@ class UntimedEffectMixin:
         fluent: Union["up.model.fnode.FNode", "up.model.fluent.Fluent"],
         value: "up.model.expression.Expression",
         condition: "up.model.expression.BoolExpression" = True,
-        forall: Iterable[Union["up.model.variable.Variable", "up.model.int_variable.IntVariable"]] = tuple(),
+        forall: Iterable[
+            Union["up.model.variable.Variable", "up.model.int_variable.IntVariable"]
+        ] = tuple(),
     ):
         """
         Adds the given `assignment` to the `action's effects`.
@@ -290,7 +292,11 @@ class UntimedEffectMixin:
             value_exp,
             condition_exp,
         ) = self._environment.expression_manager.auto_promote(fluent, value, condition)
-        if not fluent_exp.is_fluent_exp() and not fluent_exp.is_dot() and not fluent_exp.is_array_access():
+        if (
+            not fluent_exp.is_fluent_exp()
+            and not fluent_exp.is_dot()
+            and not fluent_exp.is_array_access()
+        ):
             raise UPUsageError(
                 "fluent field of add_effect must be a Fluent or a FluentExp or a Dot or an ArrayAccess."
             )
@@ -336,7 +342,11 @@ class UntimedEffectMixin:
             value,
             condition,
         )
-        if not fluent_exp.is_fluent_exp() and not fluent_exp.is_dot() and not fluent_exp.is_array_access():
+        if (
+            not fluent_exp.is_fluent_exp()
+            and not fluent_exp.is_dot()
+            and not fluent_exp.is_array_access()
+        ):
             raise UPUsageError(
                 "fluent field of add_increase_effect must be a Fluent or a FluentExp or a Dot or an ArrayAccess."
             )
@@ -380,7 +390,11 @@ class UntimedEffectMixin:
             value_exp,
             condition_exp,
         ) = self._environment.expression_manager.auto_promote(fluent, value, condition)
-        if not fluent_exp.is_fluent_exp() and not fluent_exp.is_dot() and not fluent_exp.is_array_access():
+        if (
+            not fluent_exp.is_fluent_exp()
+            and not fluent_exp.is_dot()
+            and not fluent_exp.is_array_access()
+        ):
             raise UPUsageError(
                 "fluent field of add_decrease_effect must be a Fluent or a FluentExp or a Dot or an ArrayAccess."
             )

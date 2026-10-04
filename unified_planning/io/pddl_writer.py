@@ -565,7 +565,7 @@ class PDDLWriter:
                             precond_str.extend(map(converter.convert, p.args))
                         else:
                             precond_str.append(converter.convert(p))
-            out.write(f'  (and {" ".join(precond_str)})\n')
+            out.write(f"  (and {' '.join(precond_str)})\n")
             out.write(" )\n")
 
         em = self.problem.environment.expression_manager
