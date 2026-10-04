@@ -26,46 +26,68 @@ ScrabbleInstance = tuple[int, int, list[tuple[str, ...]], list[str]]
 HAND_SIZE = 7
 
 
-def _chain_instance(board_size: int, dictionary: tuple[str, ...]) -> ScrabbleInstance:
+def _chain_instance(board_size: int, dictionary: tuple[str, ...], hand_size: int = HAND_SIZE, extra: tuple[str, ...] = ()) -> ScrabbleInstance:
     """Small English dictionaries with a reproducible chain of crossing words."""
     words = [tuple(word) for word in dictionary]
     if any(left[-1] != right[0] for left, right in zip(words, words[1:])):
         raise ValueError("Successive words must share their last/first letter.")
-    # First word consumes all its letters; later words overlap on their first
-    # letter, so only their remaining letters need to appear in the bag.
     bag = [*words[0], *(letter for word in words[1:] for letter in word[1:])]
-    return board_size, HAND_SIZE, words, bag
-
+    return board_size, hand_size, words + [tuple(word) for word in extra], bag
 
 # (board size, hand capacity, dictionary words, ordered bag)
 INSTANCES: Dict[str, ScrabbleInstance] = {
+    # S1: board size (same 2 words)
+    "s1_board05": _chain_instance(5, ("OPEN", "NAIL")),
+    "s1_board07": _chain_instance(7, ("OPEN", "NAIL")),
+    "s1_board09": _chain_instance(9, ("OPEN", "NAIL")),
+    "s1_board11": _chain_instance(11, ("OPEN", "NAIL")),
+    # S2: bag size (3-letter chain, one more word each time, board 9)
+    "s2_words1": _chain_instance(9, ("DOG",)),
+    "s2_words2": _chain_instance(9, ("DOG", "GUM")),
+    "s2_words3": _chain_instance(9, ("DOG", "GUM", "MAN")),
+    "s2_words4": _chain_instance(9, ("DOG", "GUM", "MAN", "NUT")),
+    "s2_words5": _chain_instance(9, ("DOG", "GUM", "MAN", "NUT", "TOP")),
+    "s2_words6": _chain_instance(9, ("DOG", "GUM", "MAN", "NUT", "TOP", "PIE")),
+    # S3: same bag size (13) as s2_words6, longer words
+    "s3_4x4": _chain_instance(9, ("TUBE", "ECHO", "OPEN", "NAIL")),
+    "s3_5x3": _chain_instance(9, ("LIGHT", "TIGER", "ROUND")),
+    # S4: hand size (same 3 words, board 7)
+    "s4_hand4": _chain_instance(7, ("BIRD", "DESK", "KING"), hand_size=4),
+    "s4_hand5": _chain_instance(7, ("BIRD", "DESK", "KING"), hand_size=5),
+    "s4_hand7": _chain_instance(7, ("BIRD", "DESK", "KING")),
+    "s4_hand9": _chain_instance(7, ("BIRD", "DESK", "KING"), hand_size=9),
+    # S5: repeated letters (3 four-letter words, board 7)
+    "s5_repeated0": _chain_instance(7, ("NAME", "EXIT", "TOUR")),
+    "s5_repeated2": _chain_instance(7, ("EARN", "NAME", "ECHO")),
+    "s5_repeated4": _chain_instance(7, ("ATOM", "MAMA", "AREA")),
+    # S6: extra dictionary words using only letters from the bag (compare with s4_hand7)
+    "s6_extra2": _chain_instance(7, ("BIRD", "DESK", "KING"), extra=("RED", "BED")),
+    "s6_extra4": _chain_instance(7, ("BIRD", "DESK", "KING"), extra=("RED", "BED", "DIG", "BIG")),
+
     # Smaller cases: same two words and seven bag tiles, larger boards.
-    "scr_small_01": _chain_instance(4, ("LAMP", "POND")),
-    "scr_small_02": _chain_instance(5, ("LAMP", "POND")),
-    "scr_small_03": _chain_instance(7, ("LAMP", "POND")),
-
-    # 3-letter words: same dictionary and bag, larger boards.
-    "scr_01": _chain_instance(5, ("CAT", "TOP", "PEN")),
-    "scr_02": _chain_instance(7, ("CAT", "TOP", "PEN")),
-    "scr_03": _chain_instance(9, ("CAT", "TOP", "PEN")),
-    "scr_04": _chain_instance(11, ("CAT", "TOP", "PEN")),
-    # Same 11x11 board, one more word each time (compare with scr_04).
-    "scr_05": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT")),
-    "scr_06": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT", "TUB")),
-    "scr_07": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT", "TUB", "BED")),
-
-    # 4-letter words: same dictionary and bag, larger boards.
-    "scr_08": _chain_instance(7, ("LAMP", "POND", "DESK")),
-    "scr_09": _chain_instance(9, ("LAMP", "POND", "DESK")),
-    "scr_10": _chain_instance(11, ("LAMP", "POND", "DESK")),
-    "scr_11": _chain_instance(13, ("LAMP", "POND", "DESK")),
-    # Same 13x13 board, one more word each time (compare with scr_11).
-    "scr_12": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE")),
-    "scr_13": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE", "ECHO")),
-    "scr_14": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE", "ECHO", "OVEN")),
-
-    # Same dimensions as scr_08, with more repeated letters.
-    "scr_repeated": _chain_instance(7, ("AREA", "ATOM", "MAMA")),
+    #"scr_small_01": _chain_instance(4, ("LAMP", "POND")),
+    #"scr_small_02": _chain_instance(5, ("LAMP", "POND")),
+    #"scr_small_03": _chain_instance(7, ("LAMP", "POND")),
+    ## 3-letter words: same dictionary and bag, larger boards.
+    #"scr_01": _chain_instance(5, ("CAT", "TOP", "PEN")),
+    #"scr_02": _chain_instance(7, ("CAT", "TOP", "PEN")),
+    #"scr_03": _chain_instance(9, ("CAT", "TOP", "PEN")),
+    #"scr_04": _chain_instance(11, ("CAT", "TOP", "PEN")),
+    ## Same 11x11 board, one more word each time (compare with scr_04).
+    #"scr_05": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT")),
+    #"scr_06": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT", "TUB")),
+    #"scr_07": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT", "TUB", "BED")),
+    ## 4-letter words: same dictionary and bag, larger boards.
+    #"scr_08": _chain_instance(7, ("LAMP", "POND", "DESK")),
+    #"scr_09": _chain_instance(9, ("LAMP", "POND", "DESK")),
+    #"scr_10": _chain_instance(11, ("LAMP", "POND", "DESK")),
+    #"scr_11": _chain_instance(13, ("LAMP", "POND", "DESK")),
+    ## Same 13x13 board, one more word each time (compare with scr_11).
+    #"scr_12": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE")),
+    #"scr_13": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE", "ECHO")),
+    #"scr_14": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE", "ECHO", "OVEN")),
+    ## Same dimensions as scr_08, with more repeated letters.
+    #"scr_repeated": _chain_instance(7, ("AREA", "ATOM", "MAMA")),
 }
 
 class ScrabbleDomain(Domain):
@@ -94,8 +116,6 @@ class ScrabbleDomain(Domain):
         scrabble_problem = Problem('scrabble_problem')
 
         board_size, n_hand, dictionary_symbols, bag_symbols = self.get_instance(instance)
-        if n_hand != HAND_SIZE:
-            raise ValueError("The Scrabble hand capacity must be 7.")
 
         Letter = UserType('Letter')
         none = Object('none', Letter)
