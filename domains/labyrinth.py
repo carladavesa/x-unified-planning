@@ -14,7 +14,7 @@ from unified_planning.shortcuts import (
     IntType,
     InstantaneousAction,
     MinimizeActionCosts,
-    Problem, UserType, Minus, Plus, LE, GE, Forall, Not, Implies, And,
+    Problem, UserType, Minus, Plus, LE, GE, Forall, Not, Implies, And, Exists,
 )
 
 from domains.base import Domain
@@ -172,7 +172,6 @@ class LabyrinthDomain(Domain):
         problem.add_objects([N, S, E, W])
         problem.add_objects([Object(f"card_{i}", Card) for i in range(n_cards)])
         card_0 = problem.object('card_0')
-        card_15 = problem.object('card_15')
 
         # which card is located in each position of the grid
         card_at = Fluent('card_at', ArrayType(n, ArrayType(n)), c=Card)
@@ -319,8 +318,9 @@ class LabyrinthDomain(Domain):
         rotate_row_right.add_effect(card_at(x)[r][0], False, condition=card_at(x)[r][0], forall=[x])
         problem.add_action(rotate_row_right)
 
+        g = Variable('g', Card)
         problem.add_goal(
-            And(robot_at(card_15), card_at(card_15)[n - 1][n - 1], connections(card_15, S))
+            Exists(And(robot_at(g), card_at(g)[n - 1][n - 1], connections(g, S)), g)
         )
 
         costs: Dict[Action, Expression] = {
