@@ -5,7 +5,7 @@ Example:
 """
 import math
 from typing import Dict, Optional
-from unified_planning.model import Action, Expression, Object, IntVariable
+from unified_planning.model import Action, Expression, Object, IntVariable, Variable
 from unified_planning.shortcuts import (
     ArrayType,
     Equals,
@@ -14,7 +14,7 @@ from unified_planning.shortcuts import (
     IntType,
     InstantaneousAction,
     MinimizeActionCosts,
-    Problem, UserType, Minus, Plus, LE, GE, Forall, Not,
+    Problem, UserType, Minus, Plus, LE, GE, Forall, Not, Implies, And,
 )
 
 from domains.base import Domain
@@ -163,108 +163,175 @@ class LabyrinthDomain(Domain):
         # --- Problem ---
         problem = Problem('labyrinth_problem')
 
-        Card = UserType('Card')
-        Direction = UserType('Direction')
-        N_dir = Object('N', Direction)
-        S_dir = Object('S', Direction)
-        E_dir = Object('E', Direction)
-        W_dir = Object('W', Direction)
-        direction_by_name = {'N': N_dir, 'S': S_dir, 'E': E_dir, 'W': W_dir}
-        problem.add_objects([N_dir, S_dir, E_dir, W_dir])
-        problem.add_objects([Object(f'card_{i}', Card) for i in range(n_cards)])
+        Card = UserType("Card")
+        Direction = UserType("Direction")
+        N = Object("N", Direction)
+        S = Object("S", Direction)
+        E = Object("E", Direction)
+        W = Object("W", Direction)
+        problem.add_objects([N, S, E, W])
+        problem.add_objects([Object(f"card_{i}", Card) for i in range(n_cards)])
         card_0 = problem.object('card_0')
+        card_15 = problem.object('card_15')
 
-        card_at     = Fluent('card_at', ArrayType(n, ArrayType(n, Card)))
-        robot_at    = Fluent('robot_at', Card)
+        # which card is located in each position of the grid
+        card_at = Fluent('card_at', ArrayType(n, ArrayType(n)), c=Card)
+        problem.add_fluent(card_at, default_initial_value=False)
+
+        # card where the robot is at
+        robot_at = Fluent('robot_at', c=Card)
+        problem.add_fluent(robot_at, default_initial_value=False)
+        problem.set_initial_value(robot_at(card_0), True)
+
+        # the direction paths connected from a card
         connections = Fluent('connections', c=Card, d=Direction)
-        problem.add_fluent(card_at,     default_initial_value=card_0)
-        problem.add_fluent(robot_at,    default_initial_value=card_0)
         problem.add_fluent(connections, default_initial_value=False)
-
         for r in range(n):
             for c in range(n):
-                card_obj = problem.object(f'card_{initial_cards[r][c]}')
-                problem.set_initial_value(card_at[r][c], card_obj)
-                for d in paths[r][c]:
-                    problem.set_initial_value(connections(card_obj, direction_by_name[d]), True)
+                card_object = problem.object(f'card_{str(initial_cards[r][c])}')
+                problem.set_initial_value(card_at(card_object)[r][c], True)
+                for i in paths[r][c]:
+                    problem.set_initial_value(connections(card_object, eval(i)), True)
 
-        # --- Actions ---
-        move_north = InstantaneousAction('move_north', r=IntType(0, n - 1), c=IntType(0, n - 1))
-        r, c = move_north.parameter('r'), move_north.parameter('c')
-        move_north.add_precondition(Equals(robot_at, card_at[r][c]))
-        move_north.add_precondition(connections(card_at[r][c], N_dir))
-        move_north.add_precondition(connections(card_at[r - 1][c], S_dir))
-        move_north.add_effect(robot_at, card_at[r - 1][c])
+        # ---------------------------------------- ACTIONS ----------------------------------------
 
-        move_south = InstantaneousAction('move_south', r=IntType(0, n - 1), c=IntType(0, n - 1))
-        r, c = move_south.parameter('r'), move_south.parameter('c')
-        move_south.add_precondition(Equals(robot_at, card_at[r][c]))
-        move_south.add_precondition(connections(card_at[r][c], S_dir))
-        move_south.add_precondition(connections(card_at[r + 1][c], N_dir))
-        move_south.add_effect(robot_at, card_at[r + 1][c])
+        # move robot upwards
+        move_north = InstantaneousAction('move_north', x1=Card, x2=Card, r=IntType(0, n - 1), c=IntType(0, n - 1))
+        x1 = move_north.parameter('x1')
+        x2 = move_north.parameter('x2')
+        r = move_north.parameter('r')
+        c = move_north.parameter('c')
+        move_north.add_precondition(robot_at(x1))
+        move_north.add_precondition(card_at(x1)[r][c])
+        move_north.add_precondition(connections(x1, N))
+        move_north.add_precondition(card_at(x2)[r - 1][c])
+        move_north.add_precondition(connections(x2, S))
+        move_north.add_effect(robot_at(x2), True)
+        move_north.add_effect(robot_at(x1), False)
+        problem.add_action(move_north)
 
-        move_east = InstantaneousAction('move_east', r=IntType(0, n - 1), c=IntType(0, n - 1))
-        r, c = move_east.parameter('r'), move_east.parameter('c')
-        move_east.add_precondition(Equals(robot_at, card_at[r][c]))
-        move_east.add_precondition(connections(card_at[r][c], E_dir))
-        move_east.add_precondition(connections(card_at[r][c + 1], W_dir))
-        move_east.add_effect(robot_at, card_at[r][c + 1])
+        # move robot downwards
+        move_south = InstantaneousAction('move_south', x1=Card, x2=Card, r=IntType(0, n - 1), c=IntType(0, n - 1))
+        x1 = move_south.parameter('x1')
+        x2 = move_south.parameter('x2')
+        r = move_south.parameter('r')
+        c = move_south.parameter('c')
+        move_south.add_precondition(robot_at(x1))
+        move_south.add_precondition(card_at(x1)[r][c])
+        move_south.add_precondition(connections(x1, S))
+        move_south.add_precondition(card_at(x2)[r + 1][c])
+        move_south.add_precondition(connections(x2, N))
+        move_south.add_effect(robot_at(x2), True)
+        move_south.add_effect(robot_at(x1), False)
+        problem.add_action(move_south)
 
-        move_west = InstantaneousAction('move_west', r=IntType(0, n - 1), c=IntType(0, n - 1))
-        r, c = move_west.parameter('r'), move_west.parameter('c')
-        move_west.add_precondition(Equals(robot_at, card_at[r][c]))
-        move_west.add_precondition(connections(card_at[r][c], W_dir))
-        move_west.add_precondition(connections(card_at[r][c - 1], E_dir))
-        move_west.add_effect(robot_at, card_at[r][c - 1])
+        # move robot to the right
+        move_east = InstantaneousAction('move_east', x1=Card, x2=Card, r=IntType(0, n - 1), c=IntType(0, n - 1))
+        x1 = move_east.parameter('x1')
+        x2 = move_east.parameter('x2')
+        r = move_east.parameter('r')
+        c = move_east.parameter('c')
+        move_east.add_precondition(robot_at(x1))
+        move_east.add_precondition(card_at(x1)[r][c])
+        move_east.add_precondition(connections(x1, E))
+        move_east.add_precondition(card_at(x2)[r][c + 1])
+        move_east.add_precondition(connections(x2, W))
+        move_east.add_effect(robot_at(x2), True)
+        move_east.add_effect(robot_at(x1), False)
+        problem.add_action(move_east)
+
+        # move robot to the left
+        move_west = InstantaneousAction('move_west', x1=Card, x2=Card, r=IntType(0, n - 1), c=IntType(0, n - 1))
+        x1 = move_west.parameter('x1')
+        x2 = move_west.parameter('x2')
+        r = move_west.parameter('r')
+        c = move_west.parameter('c')
+        move_west.add_precondition(robot_at(x1))
+        move_west.add_precondition(card_at(x1)[r][c])
+        move_west.add_precondition(connections(x1, W))
+        move_west.add_precondition(card_at(x2)[r][c - 1])
+        move_west.add_precondition(connections(x2, E))
+        move_west.add_effect(robot_at(x2), True)
+        move_west.add_effect(robot_at(x1), False)
+        problem.add_action(move_west)
 
         rotate_col_up = InstantaneousAction('rotate_col_up', c=IntType(0, n - 1))
         c = rotate_col_up.parameter('c')
+        # the robot is not on any row of the column being rotated
         all_rows = IntVariable('all_rows', 0, n - 1)
-        rotate_col_up.add_precondition(Forall(Not(Equals(robot_at, card_at[all_rows][c])), all_rows))
-        rotated_rows = IntVariable('rotated_rows', 1, n - 1)
-        rotate_col_up.add_effect(card_at[rotated_rows - 1][c], card_at[rotated_rows][c], forall=[rotated_rows])
-        rotate_col_up.add_effect(card_at[n - 1][c], card_at[0][c])
+        x = Variable('x', Card)
+        rotate_col_up.add_precondition(Forall(Implies(card_at(x)[all_rows][c], Not(robot_at(x))), all_rows, x))
+        # actual rotation of cells
+        rotated_rows = IntVariable("rotated_rows", 1, n - 1)
+        rotate_col_up.add_effect(card_at(x)[rotated_rows - 1][c], True, condition=card_at(x)[rotated_rows][c],
+                                 forall=[rotated_rows, x])
+        rotate_col_up.add_effect(card_at(x)[rotated_rows - 1][c], False, condition=card_at(x)[rotated_rows - 1][c],
+                                 forall=[rotated_rows, x])
+        rotate_col_up.add_effect(card_at(x)[n - 1][c], True, condition=card_at(x)[0][c], forall=[x])
+        rotate_col_up.add_effect(card_at(x)[n - 1][c], False, condition=card_at(x)[n - 1][c], forall=[x])
+        problem.add_action(rotate_col_up)
 
         rotate_col_down = InstantaneousAction('rotate_col_down', c=IntType(0, n - 1))
         c = rotate_col_down.parameter('c')
+        # the robot is not on any row of the column being rotated
         all_rows = IntVariable('all_rows', 0, n - 1)
-        rotate_col_down.add_precondition(Forall(Not(Equals(robot_at, card_at[all_rows][c])), all_rows))
-        rotated_rows = IntVariable('rotated_rows', 1, n - 1)
-        rotate_col_down.add_effect(card_at[rotated_rows][c], card_at[rotated_rows - 1][c], forall=[rotated_rows])
-        rotate_col_down.add_effect(card_at[0][c], card_at[n - 1][c])
+        x = Variable('x', Card)
+        rotate_col_down.add_precondition(Forall(Implies(card_at(x)[all_rows][c], Not(robot_at(x))), all_rows, x))
+        # actual rotation of cells
+        rotated_rows = IntVariable("rotated_rows", 1, n - 1)
+        rotate_col_down.add_effect(card_at(x)[rotated_rows][c], True, condition=card_at(x)[rotated_rows - 1][c],
+                                   forall=[rotated_rows, x])
+        rotate_col_down.add_effect(card_at(x)[rotated_rows][c], False, condition=card_at(x)[rotated_rows][c],
+                                   forall=[rotated_rows, x])
+        rotate_col_down.add_effect(card_at(x)[0][c], True, condition=card_at(x)[n - 1][c], forall=[x])
+        rotate_col_down.add_effect(card_at(x)[0][c], False, condition=card_at(x)[0][c], forall=[x])
+        problem.add_action(rotate_col_down)
 
         rotate_row_left = InstantaneousAction('rotate_row_left', r=IntType(0, n - 1))
         r = rotate_row_left.parameter('r')
-        all_cols = IntVariable('all_cols', 0, n - 1)
-        rotate_row_left.add_precondition(Forall(Not(Equals(robot_at, card_at[r][all_cols])), all_cols))
-        rotated_cols = IntVariable('rotated_cols', 0, n - 2)
-        rotate_row_left.add_effect(card_at[r][rotated_cols], card_at[r][rotated_cols + 1], forall=[rotated_cols])
-        rotate_row_left.add_effect(card_at[r][n - 1], card_at[r][0])
+        # the robot is not on any column of the row being rotated
+        all_cols = IntVariable("all_cols", 0, n - 1)
+        x = Variable('x', Card)
+        rotate_row_left.add_precondition(Forall(Implies(card_at(x)[r][all_cols], Not(robot_at(x))), all_cols, x))
+        # actual rotation of cells
+        rotated_cols = IntVariable("rotated_cols", 0, n - 2)
+        rotate_row_left.add_effect(card_at(x)[r][rotated_cols], True, condition=card_at(x)[r][rotated_cols + 1],
+                                   forall=[rotated_cols, x])
+        rotate_row_left.add_effect(card_at(x)[r][rotated_cols], False, condition=card_at(x)[r][rotated_cols],
+                                   forall=[rotated_cols, x])
+        rotate_row_left.add_effect(card_at(x)[r][n - 1], True, condition=card_at(x)[r][0], forall=[x])
+        rotate_row_left.add_effect(card_at(x)[r][n - 1], False, condition=card_at(x)[r][n - 1], forall=[x])
+        problem.add_action(rotate_row_left)
 
         rotate_row_right = InstantaneousAction('rotate_row_right', r=IntType(0, n - 1))
         r = rotate_row_right.parameter('r')
-        all_cols = IntVariable('all_cols', 0, n - 1)
-        rotate_row_right.add_precondition(Forall(Not(Equals(robot_at, card_at[r][all_cols])), all_cols))
-        rotated_cols = IntVariable('rotated_cols', 1, n - 1)
-        rotate_row_right.add_effect(card_at[r][rotated_cols], card_at[r][rotated_cols - 1], forall=[rotated_cols])
-        rotate_row_right.add_effect(card_at[r][0], card_at[r][n - 1])
+        # the robot is not on any column of the row being rotated
+        all_cols = IntVariable("all_cols", 0, n - 1)
+        x = Variable('x', Card)
+        rotate_row_right.add_precondition(Forall(Implies(card_at(x)[r][all_cols], Not(robot_at(x))), all_cols, x))
+        # actual rotation of cells
+        rotated_cols = IntVariable("rotated_cols", 1, n - 1)
+        rotate_row_right.add_effect(card_at(x)[r][rotated_cols], True, condition=card_at(x)[r][rotated_cols - 1],
+                                    forall=[rotated_cols, x])
+        rotate_row_right.add_effect(card_at(x)[r][rotated_cols], False, condition=card_at(x)[r][rotated_cols],
+                                    forall=[rotated_cols, x])
+        rotate_row_right.add_effect(card_at(x)[r][0], True, condition=card_at(x)[r][n - 1], forall=[x])
+        rotate_row_right.add_effect(card_at(x)[r][0], False, condition=card_at(x)[r][0], forall=[x])
+        problem.add_action(rotate_row_right)
 
-        problem.add_actions([
-            move_north, move_south, move_east, move_west,
-            rotate_col_up, rotate_col_down,
-            rotate_row_left, rotate_row_right,
-        ])
+        problem.add_goal(
+            And(robot_at(card_15), card_at(card_15)[n - 1][n - 1], connections(card_15, S))
+        )
 
-        # --- Goals ---
-        problem.add_goal(Equals(robot_at, card_at[n - 1][n - 1]))
-        problem.add_goal(connections(card_at[n - 1][n - 1], S_dir))
-
-        # --- Metric ---
         costs: Dict[Action, Expression] = {
-            move_north: Int(1), move_south: Int(1),
-            move_east:  Int(1), move_west:  Int(1),
-            rotate_col_up: Int(1), rotate_col_down: Int(1),
-            rotate_row_left: Int(1), rotate_row_right: Int(1),
+            move_west: Int(1),
+            move_north: Int(1),
+            move_south: Int(1),
+            move_east: Int(1),
+            rotate_col_up: Int(1),
+            rotate_col_down: Int(1),
+            rotate_row_left: Int(1),
+            rotate_row_right: Int(1),
         }
         problem.add_quality_metric(MinimizeActionCosts(costs))
 
