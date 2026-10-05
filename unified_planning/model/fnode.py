@@ -561,6 +561,8 @@ _REPR_DISPATCH = {
     OperatorKind.BOOL_CONSTANT: lambda n: "true" if n._content.payload else "false",
     OperatorKind.INT_CONSTANT: lambda n: str(n._content.payload),
     OperatorKind.REAL_CONSTANT: lambda n: str(n._content.payload),
+    OperatorKind.ARRAY_CONSTANT: lambda n: str(n.array_constant_value()),
+    OperatorKind.SET_CONSTANT: lambda n: str(n.set_constant_value()),
     OperatorKind.FLUENT_EXP: lambda n: (
         n._content.payload.name + n.get_nary_expression_string(", ", n.args)
     ),
