@@ -27,7 +27,12 @@ from unified_planning.engines.plan_validator import (
     TimeTriggeredPlanValidator,
 )
 from unified_planning.engines.results import ValidationResultStatus as Status
-from unified_planning.plans import ActionInstance, SequentialPlan, TimeTriggeredPlan
+from unified_planning.plans import (
+    ActionInstance,
+    SequentialPlan,
+    TimeTriggeredPlan,
+    Plan,
+)
 from unified_planning.test import unittest_TestCase
 
 
@@ -147,6 +152,7 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
                 p.add_goal(quantifier(marked(site, i), site, i).simplify())
                 self.assertTrue(p.kind.has_int_variables())
                 compiled = self.compiler.compile(p).problem
+                assert isinstance(compiled, Problem)
                 self.assertEqual(
                     compiled.goals,
                     [quantifier(combine(marked(site, 1), marked(site, 2)), site)],
@@ -172,6 +178,7 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
                     self.problem.clear_goals()
                     self.problem.add_goal(goal)
                     compiled = self.compiler.compile(self.problem).problem
+                    assert isinstance(compiled, Problem)
                     expected = [] if quantifier is Forall else [Bool(False)]
                     self.assertEqual(compiled.goals, expected)
         self.problem.clear_goals()
@@ -199,6 +206,7 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
                         self.compiler.compile(self.problem)
                 else:
                     compiled = self.compiler.compile(self.problem).problem
+                    assert isinstance(compiled, Problem)
                     self.assertEqual(
                         compiled.goals, [] if defined != negate else [Bool(False)]
                     )
@@ -228,6 +236,7 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
                         self.assertIn(str(interval), str(error.exception))
                 else:
                     compiled = self.compiler.compile(self.problem).problem
+                    assert isinstance(compiled, Problem)
                     goals = compiled.timed_goals[interval] if timed else compiled.goals
                     self.assertEqual(
                         goals, [Bool(False) if goal.is_false() else self.enabled()]
@@ -256,6 +265,7 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
         ):
             with self.subTest(action_type=action_type.__name__, invalid=invalid):
                 action = action_type("update", n=IntType(0, 2))
+                assert isinstance(action, (InstantaneousAction, DurativeAction))
                 n = action.parameter("n")
                 value = n if invalid == "bounds" else Div(1, n)
                 target = x if invalid == "bounds" else real_x
@@ -270,6 +280,8 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
                 compiled = self.integer_instances(result)[
                     (Int(2 if invalid == "bounds" else 0),)
                 ]
+                plan: Plan
+                validator: Union[TimeTriggeredPlanValidator, SequentialPlanValidator]
                 if isinstance(compiled, DurativeAction):
                     self.assertEqual(
                         compiled.conditions,
@@ -348,7 +360,9 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
                 action = InstantaneousAction("update", n=IntType(1, 2))
                 action.add_effect(x, action.parameter("n"))
                 p.add_action(action)
-                self.assertEqual(len(self.compiler.compile(p).problem.actions), 2)
+                compiled = self.compiler.compile(p).problem
+                assert isinstance(compiled, Problem)
+                self.assertEqual(len(compiled.actions), 2)
         x = Fluent("counter", IntType(0, 20))
         self.problem.add_fluent(x, default_initial_value=15)
         for method, kind in [
@@ -367,7 +381,7 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
         action = DurativeAction("mark", n=IntType(1, 2))
         n = action.parameter("n")
         i = IntVariable("i", 1, n)
-        action.set_fixed_duration(n)
+        action.set_fixed_duration(ParameterExp(n))
         interval = OpenTimeInterval(StartTiming(), EndTiming())
         action.add_condition(interval, Not(self.enabled))
         action.add_condition(StartTiming(), Forall(Not(self.marked(i)), i))
@@ -383,6 +397,7 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
         )
         plan = TimeTriggeredPlan([(Fraction(1), ActionInstance(compiled), Fraction(2))])
         lifted = plan.replace_action_instances(result.map_back_action_instance)
+        assert isinstance(lifted, TimeTriggeredPlan)
         self.assertEqual(lifted.timed_actions[0][1].actual_parameters, (Int(2),))
         self.assertEqual(lifted.timed_actions[0][2], Fraction(2))
         with TimeTriggeredPlanValidator() as validator:
@@ -431,6 +446,7 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
         self.problem.add_trajectory_constraint(Always(Forall(self.marked(i), i)))
         self.problem.add_timed_goal(GlobalStartTiming(4), Forall(self.marked(i), i))
         compiled = self.compiler.compile(self.problem).problem
+        assert isinstance(compiled, Problem)
         self.assertNotIn(interval, compiled.timed_goals)
         self.assertEqual([e.fluent for e in compiled.timed_effects[timing]], [x(1)])
         self.assertTrue(compiled.timed_effects[GlobalStartTiming(2)][0].is_increase())
@@ -482,7 +498,10 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
                     )
                     arguments = {compiled.parameter("site"): ObjectExp(home)}
                     self.assertEqual(
-                        effect.function(result.problem, None, arguments), [integer]
+                        effect.function(
+                            result.problem, UPState({}, result.problem), arguments
+                        ),
+                        [integer],
                     )
 
     def test_action_costs(self):
@@ -520,12 +539,19 @@ class TestIntParametersAndVariablesRemover(unittest_TestCase):
         interval = ClosedTimeInterval(GlobalStartTiming(1), GlobalStartTiming(2))
         for temporal in (False, True):
             key = (lambda g: (interval, g)) if temporal else (lambda g: g)
-            metric = TemporalOversubscription if temporal else Oversubscription
             self.problem.clear_quality_metrics()
-            self.problem.add_quality_metric(
-                metric({key(goal): 10, key(self.marked(1)): 5})
-            )
+            if temporal:
+                self.problem.add_quality_metric(
+                    TemporalOversubscription(
+                        {(interval, goal): 10, (interval, self.marked(1)): 5}
+                    )
+                )
+            else:
+                self.problem.add_quality_metric(
+                    Oversubscription({goal: 10, self.marked(1): 5})
+                )
             compiled = self.compiler.compile(self.problem).problem
-            self.assertEqual(
-                compiled.quality_metrics[0].goals, {key(self.marked(1)): 15}
-            )
+            assert isinstance(compiled, Problem)
+            metric = compiled.quality_metrics[0]
+            assert isinstance(metric, (Oversubscription, TemporalOversubscription))
+            self.assertEqual(metric.goals, {key(self.marked(1)): 15})

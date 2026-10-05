@@ -114,18 +114,23 @@ class TestIntVariable(unittest_TestCase):
                     p.add_fluent(pair, default_initial_value=False)
                     p.add_goal(quantifier(pair(self.i, j), *variables).simplify())
                     compiled = compiler.compile(p).problem
+                    assert isinstance(compiled, Problem)
                     self.assertEqual(compiled.goals, [combine(expected)])
                     p.clear_goals()
                     p.add_goal(quantifier(quantifier(pair(self.i, j), j), self.i))
-                    self.assertEqual(compiler.compile(p).problem.goals, compiled.goals)
+                    nested = compiler.compile(p).problem
+                    assert isinstance(nested, Problem)
+                    self.assertEqual(nested.goals, compiled.goals)
 
         k = IntVariable("k", 1, j + 0)
         triple = Fluent("triple", x=IntType(0, 2), y=IntType(0, 2), z=IntType(0, 2))
         p = Problem("three_dependent_variables")
         p.add_fluent(triple, default_initial_value=False)
         p.add_goal(Exists(triple(self.i, j, k), k, j, self.i))
+        compiled = compiler.compile(p).problem
+        assert isinstance(compiled, Problem)
         self.assertEqual(
-            compiler.compile(p).problem.goals,
+            compiled.goals,
             [Or(triple(1, 1, 1), triple(2, 1, 1), triple(2, 2, 1), triple(2, 2, 2))],
         )
 
@@ -139,20 +144,24 @@ class TestIntVariable(unittest_TestCase):
                 n = action.parameter("n")
                 i = IntVariable("i", 1, n)
                 j = IntVariable("j", i + 0, n)
-                if action_type is DurativeAction:
+                if isinstance(action, DurativeAction):
                     action.set_fixed_duration(1)
                     action.add_effect(StartTiming(), pair(i, j), True, forall=(j, i))
                 else:
                     action.add_effect(pair(i, j), True, forall=(j, i))
                 p.add_action(action)
                 result = IntParametersAndVariablesRemover().compile(p)
+                assert isinstance(result.problem, Problem)
+                assert result.map_back_action_instance is not None
                 self.assertEqual(len(result.problem.actions), 3)
                 for compiled in result.problem.actions:
+                    assert isinstance(compiled, (InstantaneousAction, DurativeAction))
                     original = result.map_back_action_instance(ActionInstance(compiled))
+                    assert original is not None
                     n_value = original.actual_parameters[0].int_constant_value()
                     effects = (
                         compiled.effects.get(StartTiming(), [])
-                        if action_type is DurativeAction
+                        if isinstance(compiled, DurativeAction)
                         else compiled.effects
                     )
                     self.assertEqual(
@@ -175,6 +184,7 @@ class TestIntVariable(unittest_TestCase):
                 p.add_goal(quantifier(pair(i, j), j, i).simplify())
                 p.add_fluent(pair, default_initial_value=False)
                 compiled = IntParametersAndVariablesRemover().compile(p).problem
+                assert isinstance(compiled, Problem)
                 self.assertEqual(
                     compiled.goals, [] if quantifier is Forall else [Bool(False)]
                 )
