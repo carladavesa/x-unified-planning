@@ -94,7 +94,9 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         # Object representation state
         self._number_objects: Dict[int, Object] = {}
         # Saves CP-SAT expansions of conditional-effect within one compilation
-        self._expanded_condition_cache = {}
+        self._expanded_condition_cache: Dict[
+            Tuple[FNode, Tuple[Tuple[str, int], ...], str], FNode
+        ] = {}
 
         # Binary representation state
         if representation == "binary":
@@ -1037,7 +1039,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         `solution` (which fixes some variables). Returns a disjunction of clauses,
         one per satisfying assignment of the remaining variables.
         """
-        variables = bidict({})
+        variables: bidict[FNode, cp_model.IntVar] = bidict({})
         cp_model_obj = cp_model.CpModel()
         result_var = add_cp_constraints(
             problem, condition, variables, cp_model_obj, self._object_to_index
@@ -1558,7 +1560,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             for idx, obj in enumerate(objects):
                 self._object_to_index[(ut, obj)] = idx
         self._index_to_object = {}
-        variables = bidict({})
+        variables: bidict[FNode, cp_model.IntVar] = bidict({})
         cp_model_obj = cp_model.CpModel()
 
         if cp_precs:
@@ -1592,7 +1594,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         # independent of the chosen integer representation: a direct binary
         # transformation does not need an empty solver call either.
         if not cp_precs and not dependent_effects:
-            solutions = [{}]
+            solutions: List[Dict[str, Union[int, frozenset[int]]]] = [{}]
         else:
             solutions = solve_with_cp_sat(
                 variables,
@@ -1882,7 +1884,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         self._transform_axioms(cleaned_problem, new_problem, new_to_old_cleaned)
 
         # Remap
-        new_to_old = {}
+        new_to_old: Dict[Action, Optional[Action]] = {}
         for new_action, cleaned_action in new_to_old_cleaned.items():
             original = name_to_original.get(cleaned_action.name, cleaned_action)
             new_to_old[new_action] = original

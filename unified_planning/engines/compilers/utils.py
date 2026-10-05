@@ -752,8 +752,8 @@ class CPSolutionCollector(cp_model.CpSolverSolutionCallback):
     def __init__(self, variables: list[cp_model.IntVar]):
         cp_model.CpSolverSolutionCallback.__init__(self)
         self.__variables = variables
-        self.__solutions = []
-        self.__seen = set()  # To detect duplicates
+        self.__solutions: list[dict[str, int]] = []
+        self.__seen: set[tuple[tuple[str, int], ...]] = set()  # To detect duplicates
 
     def on_solution_callback(self):
         solution = {str(v): self.Value(v) for v in self.__variables}
@@ -939,7 +939,7 @@ def compress_solutions(variables, solutions, problem):
         else:
             continue
 
-        groups = {}
+        groups: dict[tuple[tuple[str, int], ...], list[tuple[int, int]]] = {}
         for i, sol in enumerate(solutions):
             if i in used:
                 continue

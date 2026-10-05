@@ -21,11 +21,13 @@ from unified_planning.engines.compilers.utils import remove_write_only_fluents
 from typing import List, Tuple
 from unified_planning.model.expression import ListExpression
 from unified_planning.model.operators import OperatorKind
+from unified_planning.model.types import Type, _IntType
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
 from unified_planning.exceptions import UPProblemDefinitionError
 from unified_planning.model import (
     Problem,
+    Action,
     ProblemKind,
     Effect,
     EffectKind,
@@ -223,13 +225,23 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
     # NUMBER OBJECTS
     # ============================================================
 
+    @staticmethod
+    def _get_bounds(fluent_type: Type) -> Tuple[int, int]:
+        """Return the finite bounds required by the integer encodings."""
+        assert isinstance(fluent_type, _IntType)
+        lower, upper = fluent_type.lower_bound, fluent_type.upper_bound
+        assert lower is not None and upper is not None, (
+            "IntegerFluentsBasicRemover requires bounded integer fluents."
+        )
+        return lower, upper
+
     def _compute_needed_values(self, problem: Problem) -> set[int]:
         """Compute the set of integer values that need Number objects."""
         needed: set[int] = set()
         # Bounds of integer fluents
         for fluent in problem.fluents:
             if fluent.type.is_int_type():
-                lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
+                lb, ub = self._get_bounds(fluent.type)
                 needed.update(range(lb, ub + 1))
 
         # Integer constants in expressions
@@ -667,7 +679,8 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         fluent_type = fluent_ref.fluent().type
 
         # Value out of range
-        if value < fluent_type.lower_bound or value > fluent_type.upper_bound:
+        lb, ub = self._get_bounds(fluent_type)
+        if value < lb or value > ub:
             return FALSE()
 
         n_bits = self.n_bits[fluent_ref.fluent().name]
@@ -697,12 +710,14 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """
         f_type = f_ref.fluent().type
         g_type = g_ref.fluent().type
+        f_lb, _ = self._get_bounds(f_type)
+        g_lb, _ = self._get_bounds(g_type)
 
         # Check compatibility
-        if f_type.lower_bound != g_type.lower_bound:
+        if f_lb != g_lb:
             raise UPProblemDefinitionError(
                 f"Basic binary compiler requires the same offset for fluent equality: "
-                f"{f_ref} has lb={f_type.lower_bound}, {g_ref} has lb={g_type.lower_bound}. "
+                f"{f_ref} has lb={f_lb}, {g_ref} has lb={g_lb}. "
                 f"Use IntegerFluentsGeneralRemover instead."
             )
 
@@ -755,8 +770,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         Since c is constant, each c_j simplifies the disjunct.
         """
         fluent_type = fluent_ref.fluent().type
-        lb = fluent_type.lower_bound
-        ub = fluent_type.upper_bound
+        lb, ub = self._get_bounds(fluent_type)
 
         # Trivial cases
         if value <= lb:
@@ -811,11 +825,13 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """
         f_type = f_ref.fluent().type
         g_type = g_ref.fluent().type
+        f_lb, _ = self._get_bounds(f_type)
+        g_lb, _ = self._get_bounds(g_type)
 
-        if f_type.lower_bound != g_type.lower_bound:
+        if f_lb != g_lb:
             raise UPProblemDefinitionError(
                 f"Basic binary compiler requires the same offset for fluent comparison: "
-                f"{f_ref} has lb={f_type.lower_bound}, {g_ref} has lb={g_type.lower_bound}"
+                f"{f_ref} has lb={f_lb}, {g_ref} has lb={g_lb}"
             )
 
         f_bits = self._get_bit_fluents(f_ref, new_problem)
@@ -942,7 +958,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                 )
                 if default_value is not None:
                     default_obj = ObjectExp(
-                        self._number_objects[default_value.constant_value()]
+                        self._number_objects[default_value.int_constant_value()]
                     )
                     new_problem.add_fluent(
                         new_fluent, default_initial_value=default_obj
@@ -954,7 +970,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                     if f.fluent() == fluent:
                         new_problem.set_initial_value(
                             new_problem.fluent(fluent.name)(*f.args),
-                            ObjectExp(self._number_objects[v.constant_value()]),
+                            ObjectExp(self._number_objects[v.int_constant_value()]),
                         )
             else:
                 new_problem.add_fluent(fluent, default_initial_value=default_value)
@@ -966,7 +982,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """Transform integer fluents to bit fluents."""
         for fluent in problem.fluents:
             if fluent.type.is_int_type():
-                lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
+                lb, ub = self._get_bounds(fluent.type)
                 self.offsets[fluent.name] = lb
                 n_values = ub - lb + 1
                 n_bits = 1 if n_values <= 1 else math.ceil(math.log2(n_values))
@@ -975,7 +991,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                 default_value = problem.fluents_defaults.get(fluent)
                 if default_value is not None:
                     default_bits = self._to_bits(
-                        default_value.constant_value(), n_bits, lb
+                        default_value.int_constant_value(), n_bits, lb
                     )
                 else:
                     default_bits = [False] * n_bits
@@ -992,7 +1008,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
 
                 for f, v in problem.explicit_initial_values.items():
                     if f.fluent() == fluent:
-                        bits = self._to_bits(v.constant_value(), n_bits, lb)
+                        bits = self._to_bits(v.int_constant_value(), n_bits, lb)
                         for bit_idx in range(n_bits):
                             bit_f = new_problem.fluent(f"{fluent.name}_{bit_idx}")(
                                 *f.args
@@ -1081,19 +1097,13 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         ):
             f_type = effect.fluent.fluent().type
             g_type = effect.value.fluent().type
+            f_lb, f_ub = self._get_bounds(f_type)
+            g_lb, g_ub = self._get_bounds(g_type)
             constraints = []
-            if g_type.lower_bound < f_type.lower_bound:
-                constraints.append(
-                    self._emit_lower_bound_prec(
-                        new_value, f_type.lower_bound, g_type.upper_bound
-                    )
-                )
-            if g_type.upper_bound > f_type.upper_bound:
-                constraints.append(
-                    self._emit_upper_bound_prec(
-                        new_value, g_type.lower_bound, f_type.upper_bound
-                    )
-                )
+            if g_lb < f_lb:
+                constraints.append(self._emit_lower_bound_prec(new_value, f_lb, g_ub))
+            if g_ub > f_ub:
+                constraints.append(self._emit_upper_bound_prec(new_value, g_lb, f_ub))
             if len(constraints) == 1:
                 bound_prec = constraints[0]
             elif len(constraints) > 1:
@@ -1117,8 +1127,8 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
             - The list of conditional effects (one per valid starting value).
         """
         fluent = effect.fluent.fluent()
-        lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
-        delta = effect.value.constant_value()
+        lb, ub = self._get_bounds(fluent.type)
+        delta = effect.value.int_constant_value()
         new_fluent = new_problem.fluent(fluent.name)(*effect.fluent.args)
 
         if effect.is_increase():
@@ -1239,6 +1249,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                 )
             ]
 
+        f_lb, f_ub = self._get_bounds(f_type)
         f_name = f_ref.fluent().name
         f_nbits = self.n_bits[f_name]
         f_offset = self.offsets[f_name]
@@ -1251,7 +1262,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         # Case: f := constant
         if effect.value.is_int_constant():
             value = effect.value.int_constant_value()
-            if value < f_type.lower_bound or value > f_type.upper_bound:
+            if value < f_lb or value > f_ub:
                 # Out of range: this action is unsatisfiable
                 return FALSE(), []
 
@@ -1274,38 +1285,37 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         if effect.value.is_fluent_exp() and effect.value.fluent().type.is_int_type():
             g_ref = effect.value
             g_type = g_ref.fluent().type
+            g_lb, g_ub = self._get_bounds(g_type)
             g_name = g_ref.fluent().name
             g_nbits = self.n_bits[g_name]
 
             # Require same offset (as we did for equality)
-            if f_offset != g_type.lower_bound:
+            if f_offset != g_lb:
                 raise UPProblemDefinitionError(
                     f"Basic binary compiler requires the same offset for fluent assignment: "
-                    f"{f_ref} has lb={f_offset}, {g_ref} has lb={g_type.lower_bound}. "
+                    f"{f_ref} has lb={f_offset}, {g_ref} has lb={g_lb}. "
                     f"Use IntegerFluentsGeneralRemover instead."
                 )
 
             # Bound precondition if g can hold values outside f's range
             bound_prec = TRUE()
             constraints = []
-            if g_type.upper_bound > f_type.upper_bound:
+            if g_ub > f_ub:
                 # g <= f.upper_bound
                 constraints.append(
                     self._transform_le_binary(
                         g_ref,
-                        effect.environment.expression_manager.Int(f_type.upper_bound),
+                        effect.environment.expression_manager.Int(f_ub),
                         new_problem,
                     )
                 )
-            if g_type.lower_bound < f_type.lower_bound:
+            if g_lb < f_lb:
                 # g >= f.lower_bound
                 constraints.append(
                     Not(
                         self._transform_lt_binary(
                             g_ref,
-                            effect.environment.expression_manager.Int(
-                                f_type.lower_bound
-                            ),
+                            effect.environment.expression_manager.Int(f_lb),
                             new_problem,
                         )
                     )
@@ -1379,8 +1389,8 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         Returns (bound_precondition, list_of_effects).
         """
         fluent = effect.fluent.fluent()
-        lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
-        delta = effect.value.constant_value()
+        lb, ub = self._get_bounds(fluent.type)
+        delta = effect.value.int_constant_value()
         f_name = fluent.name
         f_nbits = self.n_bits[f_name]
         f_offset = self.offsets[f_name]
@@ -1617,7 +1627,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         self._transform_fluents(cleaned_problem, new_problem)
 
         # Step 5: transform actions
-        new_to_old = {}
+        new_to_old: Dict[Action, Optional[Action]] = {}
         for old_action in cleaned_problem.actions:
             new_action = self._transform_action(
                 cleaned_problem, new_problem, old_action
