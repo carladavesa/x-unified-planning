@@ -17,11 +17,12 @@ This module defines the IntVariable class.
 A IntVariable has a name and a type.
 """
 
-from typing import List, Optional, Union
+from typing import List, Optional, Union, cast
 
 from unified_planning.environment import Environment, get_environment
 from unified_planning.model import Parameter
 from unified_planning.model.fnode import FNode
+from unified_planning.model.types import _IntType
 import unified_planning
 
 
@@ -46,14 +47,16 @@ class IntVariable:
         self._initial = initial
         self._last = last
         self._env = get_environment(environment)
+        low: Optional[int]
+        high: Optional[int]
         if isinstance(initial, int):
             low = initial
         else:
-            low = initial.type.lower_bound
+            low = cast(_IntType, initial.type).lower_bound
         if isinstance(last, int):
             high = last
         else:
-            high = last.type.upper_bound
+            high = cast(_IntType, last.type).upper_bound
         self._type_int = self._env.type_manager.IntType(low, high)
 
     def __repr__(self) -> str:

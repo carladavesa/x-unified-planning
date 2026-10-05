@@ -39,7 +39,7 @@ from typing import IO, Any, Iterable, Union, Dict, Optional, Sequence, List
 from fractions import Fraction
 
 
-def Count(*args: Union[Expression, Iterable[Expression]]) -> FNode:
+def Count(*args: Union[BoolExpression, Iterable[BoolExpression]]) -> FNode:
     """
     | Creates an expression of the form:
 
