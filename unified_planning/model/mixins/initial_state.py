@@ -22,7 +22,7 @@ from unified_planning.exceptions import (
 )
 from unified_planning.model.fluent import get_all_fluent_exp
 from unified_planning.model.mixins import ObjectsSetMixin, FluentsSetMixin
-from unified_planning.model.types import domain_size
+from unified_planning.model.types import _ArrayType, domain_size
 
 
 class InitialStateMixin:
@@ -117,6 +117,7 @@ class InitialStateMixin:
                 this_fluent = fluent.type
                 dimensions = []
                 while this_fluent.is_array_type():
+                    assert isinstance(this_fluent, _ArrayType)
                     dimensions.append(this_fluent.size)
                     this_fluent = this_fluent.elements_type
                 new_default = self.create_multidimensional_array(

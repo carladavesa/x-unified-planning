@@ -22,6 +22,7 @@ import collections
 from unified_planning.environment import Environment
 from unified_planning.exceptions import UPProblemDefinitionError
 from unified_planning.model.operators import OperatorKind
+from unified_planning.model.types import _ArrayType
 from typing import Dict, List, Set, Union
 from fractions import Fraction
 
@@ -68,11 +69,11 @@ class FNode(object):
         return repr_fn(self)
 
     def __getitem__(self, index):
-        assert self.type.is_array_type(), "This expression has no array type"
+        assert isinstance(self.type, _ArrayType), "This expression has no array type"
         idx = self.environment.expression_manager.auto_promote(index)[0]
         simplified = idx.simplify()
         if simplified.is_int_constant():
-            i = simplified.constant_value()
+            i = simplified.int_constant_value()
             size = self.type.size
             if not (0 <= i < size):
                 raise UPProblemDefinitionError(

@@ -18,6 +18,7 @@ import unified_planning as up
 from unified_planning.environment import get_environment
 from unified_planning.model.expression import ConstantExpression
 from unified_planning.model.mixins.name_index import NameIndex
+from unified_planning.model.types import _ArrayType
 from unified_planning.exceptions import UPProblemDefinitionError, UPValueError
 from typing import Optional, List, Dict, Union, Iterable, Set
 
@@ -166,6 +167,7 @@ class FluentsSetMixin:
             if fluent.type.is_array_type():
                 this_fluent = fluent.type
                 while this_fluent.is_array_type():
+                    assert isinstance(this_fluent, _ArrayType)
                     this_fluent = this_fluent.elements_type
                 assert this_fluent.is_compatible(v_exp.type), (
                     f"Default initial value: {default_initial_value} does not match the type of the deepest elements "
