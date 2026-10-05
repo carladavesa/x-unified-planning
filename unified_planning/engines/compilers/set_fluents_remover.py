@@ -32,12 +32,13 @@ from unified_planning.model import (
     InstantaneousAction,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
+from unified_planning.model.types import _SetType, _UserType
 from unified_planning.engines.compilers.utils import (
     get_fresh_name,
     replace_action,
     updated_minimize_action_costs,
 )
-from typing import Dict, Optional, Union, List
+from typing import Dict, Iterable, Optional, Tuple, Union, List
 from functools import partial
 from unified_planning.shortcuts import (
     BoolType,
@@ -73,12 +74,12 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         engines.engine.Engine.__init__(self)
         CompilerMixin.__init__(self, CompilationKind.SET_FLUENTS_REMOVING)
         self.cardinality_encoding = cardinality_encoding
-        self._fluent_mapping = {}
-        self._cardinality_registry = {}
-        self._cardinality_deltas = {}
-        self._int_range_types = {}  # type_name → UserType
-        self._int_to_obj = {}  # type_name → {int → Object}
-        self._obj_to_int = {}  # type_name → {Object → int}
+        self._fluent_mapping: Dict[str, Fluent] = {}
+        self._cardinality_registry: Dict[str, FNode] = {}
+        self._cardinality_deltas: Dict[FNode, Dict[Tuple[FNode, int], FNode]] = {}
+        self._int_range_types: Dict[str, model.Type] = {}  # type_name → UserType
+        self._int_to_obj: Dict[str, Dict[int, model.Object]] = {}
+        self._obj_to_int: Dict[str, Dict[model.Object, int]] = {}
 
     @property
     def name(self):
@@ -517,17 +518,18 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             return new_fluent(elem_expr, *set_expr.args)
 
         if set_expr.is_set_constant():
-            elements_type = set_expr.type.elements_type
-            members = [
-                Equals(
-                    elem_expr,
-                    ObjectExp(
-                        self._to_element_object(new_problem, elements_type, value)
-                    ),
-                )
-                for value in set_expr.set_constant_value()
-            ]
-            return em.Or(*members).simplify() if members else em.FALSE()
+            # Compare integer values, not objects belonging to different ranges.
+            element = elem_expr
+            if elem_expr.is_object_exp():
+                obj = elem_expr.object()
+                obj_type = obj.type
+                assert isinstance(obj_type, _UserType)
+                int_values = self._obj_to_int.get(obj_type.name)
+                if int_values is not None:
+                    element = em.Int(int_values[obj])
+            return em.Or(
+                em.Equals(element, value) for value in set_expr.set_constant_value()
+            ).simplify()
 
         if set_expr.is_set_union():
             # elem in (A u B): elem in A OR elem in B
@@ -1166,7 +1168,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             or old_value.is_set_intersect()
             or old_value.is_set_difference()
         ):
-            elements_type = card_expr.type.elements_type
+            card_type = card_expr.type
+            assert isinstance(card_type, _SetType)
+            elements_type = card_type.elements_type
             memberships = [
                 self._get_element_membership_expr(
                     old_value, ObjectExp(element), new_problem
@@ -1219,11 +1223,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                         else card_expr.arg(0)
                     )
                     new_other_fluent = new_problem.fluent(other_fluent.fluent().name)
-                    all_elements = set(
-                        new_problem.objects(
-                            card_expr.arg(0).fluent().type.elements_type
-                        )
-                    )
+                    operand_type = card_expr.arg(0).fluent().type
+                    assert isinstance(operand_type, _SetType)
+                    assert operand_type.elements_type is not None
+                    all_elements = set(new_problem.objects(operand_type.elements_type))
                     constant_set = set(
                         o.object() for o in old_value.set_constant_value()
                     )
@@ -1378,7 +1381,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
 
         def disjoint(left, right):
             terms = literals(left) | literals(right)
-            values = {}
+            values: Dict[FNode, FNode] = {}
             for term in terms:
                 if term.is_false() or (term.is_not() and term.arg(0) in terms):
                     return True
@@ -1394,6 +1397,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
 
         for card, updates in self._cardinality_deltas.items():
             terms = [(delta, guard) for (_, delta), guard in updates.items()]
+            totals: Iterable[Tuple[int, FNode]]
             # Dynamic SetAdd/SetRemove can produce one exclusive case per
             # element. Preserve that linear encoding instead of enumerating it.
             if all(disjoint(a[1], b[1]) for a, b in itertools.combinations(terms, 2)):
@@ -1401,7 +1405,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             else:
                 totals_by_delta = {0: TRUE()}
                 for delta, condition in terms:
-                    next_totals = {}
+                    next_totals: Dict[int, FNode] = {}
                     for total, guard in totals_by_delta.items():
                         for change, branch in ((0, Not(condition)), (delta, condition)):
                             enabled = And(guard, branch).simplify()
@@ -1517,7 +1521,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
 
         self._fluent_mapping.clear()
         self._cardinality_registry.clear()
-        new_to_old: Dict[Action, Action] = {}
+        new_to_old: Dict[Action, Optional[Action]] = {}
 
         # Transform set fluents
         self._transform_fluents(problem, new_problem)
