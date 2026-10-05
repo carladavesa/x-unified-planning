@@ -36,6 +36,7 @@ from unified_planning.model import (
     Axiom,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
+from unified_planning.model.types import _ArrayType
 from unified_planning.engines.compilers.utils import (
     replace_action,
     updated_minimize_action_costs,
@@ -268,19 +269,19 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
 
     def _transform_quantifier(
         self, old_problem: Problem, new_problem: Problem, node: FNode
-    ) -> FNode:
+    ) -> Optional[FNode]:
         """Transform quantifier expression."""
         new_args = [
             self._transform_expression(old_problem, new_problem, arg)
             for arg in node.args
         ]
-        new_args = self._handle_none_args(node.node_type, new_args)
-        if new_args is None:
+        defined_args = self._handle_none_args(node.node_type, new_args)
+        if defined_args is None:
             return None
 
         em = old_problem.environment.expression_manager
         return em.create_node(
-            node.node_type, tuple(new_args), tuple(node.variables())
+            node.node_type, tuple(defined_args), tuple(node.variables())
         ).simplify()
 
     def _transform_array_access(self, old_problem, new_problem, node):
@@ -329,10 +330,10 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
             self._transform_expression(old_problem, new_problem, arg)
             for arg in node.args
         ]
-        new_args = self._handle_none_args(node.node_type, new_args)
-        if new_args is None or not new_args:
+        defined_args = self._handle_none_args(node.node_type, new_args)
+        if defined_args is None or not defined_args:
             return None
-        return em.create_node(node.node_type, tuple(new_args)).simplify()
+        return em.create_node(node.node_type, tuple(defined_args)).simplify()
 
     # ==================== ACTION TRANSFORMATION ====================
 
@@ -357,9 +358,9 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         self,
         action: InstantaneousAction,
         effect_type: str,
-        fluent: FNode,
-        value: FNode,
-        condition: FNode,
+        fluent: Optional[FNode],
+        value: Optional[FNode],
+        condition: Optional[FNode],
         original_condition: FNode,
         forall: Tuple,
     ) -> bool:
@@ -368,13 +369,15 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         if original_condition == TRUE():
             if fluent is None or value is None:
                 return False  # Invalid unconditional effect
+            assert condition is not None
             self._add_effect_to_action(
                 action, effect_type, fluent, value, condition, forall
             )
         # Handle conditional effects
         else:
             if (
-                condition not in (None, FALSE())
+                condition is not None
+                and condition != FALSE()
                 and fluent is not None
                 and value is not None
             ):
@@ -464,9 +467,9 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
 
     def _transform_actions(
         self, problem: Problem, new_problem: Problem
-    ) -> Dict[Action, Action]:
+    ) -> Dict[Action, Optional[Action]]:
         """Transform all actions by substituting array accesses."""
-        new_to_old = {}
+        new_to_old: Dict[Action, Optional[Action]] = {}
         for action in problem.actions:
             new_action = self._transform_action_arrays(problem, new_problem, action)
             if new_action is not None:
@@ -483,6 +486,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         dimensions = []
 
         while current_type.is_array_type():
+            assert isinstance(current_type, _ArrayType)
             dimensions.append(current_type.size)
             domain_ranges.append(range(current_type.size))
             current_type = current_type.elements_type
