@@ -305,6 +305,13 @@ def print_up_problem_size(problem: Problem) -> None:
     print(f"Characters: {len(problem_str)}")
     print(f"Lines: {len(problem_str.splitlines())}")
 
+def plan_cost(problem, plan):
+    """Cost del pla segons MinimizeActionCosts; si no n'hi ha, la llargada."""
+    from unified_planning.model.metrics import MinimizeActionCosts
+    for metric in problem.quality_metrics:
+        if isinstance(metric, MinimizeActionCosts):
+            return sum(metric.get_action_cost(ai.action).constant_value() for ai in plan.actions)
+    return len(plan.actions)
 
 def compile_problem(
     problem: Problem, compilation_pipeline: str, timeout: int = 0
@@ -439,26 +446,21 @@ def solve_problem(
                 # Stop the solving timer BEFORE validation/postprocessing
                 signal.alarm(0)
                 solving_time = time.time() - start_time
-                # Now process/validate solutions (not counted in solving time)
-                for idx, res in enumerate(all_results, start=1):
-                    print(f"\n--- Solution {idx} ---")
-                    plan = res.plan
+                if all_results:
+                    # Només es valida i es tradueix el millor pla trobat
+                    best = min(all_results, key=lambda r: plan_cost(problem, r.plan))
+                    plan = best.plan
                     from unified_planning.shortcuts import PlanValidator
                     try:
                         with PlanValidator(problem_kind=problem.kind) as validator:
-                            is_valid = validator.validate(problem, plan)
-                        if not is_valid:
-                            print("Plan is not valid!")
+                            if not validator.validate(problem, plan):
+                                print("Plan is not valid!")
                     except UPNoSuitableEngineAvailableException:
                         print("Plan cannot be validated!")
                     for comp_result in reversed(compilation_results):
-                        plan = plan.replace_action_instances(
-                            comp_result.map_back_action_instance
-                        )
+                        plan = plan.replace_action_instances(comp_result.map_back_action_instance)
                     print(plan)
                     print(f"\nActions: {len(plan.actions)}")
-
-                print(f"\nFound {solution_count} solution(s)")
                 return solving_time
 
         else:
