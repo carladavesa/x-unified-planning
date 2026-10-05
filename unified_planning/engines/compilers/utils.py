@@ -1331,7 +1331,7 @@ def evaluate_with_solution(
     problem,
     expr: FNode,
     solution: dict,
-) -> Optional[FNode]:
+) -> FNode:
     """Evaluate expression with a specific variable assignment.
     Returns TRUE/FALSE if fully evaluated, partially evaluated expression otherwise."""
     em = problem.environment.expression_manager
@@ -1363,16 +1363,17 @@ def evaluate_with_solution(
     if expr.is_plus():
         args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
         if all(a.is_int_constant() for a in args):
-            return em.Int(sum(a.constant_value() for a in args))
+            return em.Int(sum(a.int_constant_value() for a in args))
         return em.Plus(args)
 
     if expr.is_minus():
         args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
         if all(a.is_int_constant() for a in args):
             result = (
-                args[0].constant_value() - sum(a.constant_value() for a in args[1:])
+                args[0].int_constant_value()
+                - sum(a.int_constant_value() for a in args[1:])
                 if len(args) > 1
-                else -args[0].constant_value()
+                else -args[0].int_constant_value()
             )
             return em.Int(result)
         return (
@@ -1386,14 +1387,14 @@ def evaluate_with_solution(
         if all(a.is_int_constant() for a in args):
             result = 1
             for a in args:
-                result *= a.constant_value()
+                result *= a.int_constant_value()
             return em.Int(result)
         return em.Times(args)
 
     if expr.is_div():
         args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
-        if all(a.is_int_constant() for a in args) and args[1].constant_value() != 0:
-            return em.Int(args[0].constant_value() // args[1].constant_value())
+        if all(a.is_int_constant() for a in args) and args[1].int_constant_value() != 0:
+            return em.Int(args[0].int_constant_value() // args[1].int_constant_value())
         return em.Div(args[0], args[1])
 
     if expr.is_le():
@@ -1401,7 +1402,7 @@ def evaluate_with_solution(
         if all(a.is_int_constant() for a in args):
             return (
                 em.TRUE()
-                if args[0].constant_value() <= args[1].constant_value()
+                if args[0].int_constant_value() <= args[1].int_constant_value()
                 else em.FALSE()
             )
         return em.LE(args[0], args[1])
@@ -1411,7 +1412,7 @@ def evaluate_with_solution(
         if all(a.is_int_constant() for a in args):
             return (
                 em.TRUE()
-                if args[0].constant_value() < args[1].constant_value()
+                if args[0].int_constant_value() < args[1].int_constant_value()
                 else em.FALSE()
             )
         return em.LT(args[0], args[1])
@@ -1421,7 +1422,7 @@ def evaluate_with_solution(
         if all(a.is_int_constant() for a in args):
             return (
                 em.TRUE()
-                if args[0].constant_value() == args[1].constant_value()
+                if args[0].int_constant_value() == args[1].int_constant_value()
                 else em.FALSE()
             )
         return em.Equals(args[0], args[1])
