@@ -223,9 +223,9 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
     # NUMBER OBJECTS
     # ============================================================
 
-    def _compute_needed_values(self, problem: Problem) -> set:
+    def _compute_needed_values(self, problem: Problem) -> set[int]:
         """Compute the set of integer values that need Number objects."""
-        needed = set()
+        needed: set[int] = set()
         # Bounds of integer fluents
         for fluent in problem.fluents:
             if fluent.type.is_int_type():
@@ -235,7 +235,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         # Integer constants in expressions
         def scan(node):
             if node.is_int_constant():
-                needed.add(node.constant_value())
+                needed.add(node.int_constant_value())
             for arg in node.args:
                 scan(arg)
 
@@ -312,12 +312,12 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                 a, b = left.arg(0), left.arg(1)
                 # (a + c) op right  where c is int constant
                 if b.is_int_constant():
-                    c = b.constant_value()
+                    c = b.int_constant_value()
                     if is_le and c == 1:
                         # (a + 1) <= right  ->  a < right
                         return em.LT(a, right)
                 elif a.is_int_constant():
-                    c = a.constant_value()
+                    c = a.int_constant_value()
                     if is_le and c == 1:
                         # (1 + b) <= right  ->  b < right
                         return em.LT(b, right)
@@ -326,12 +326,12 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
             if right.is_plus() and len(right.args) == 2:
                 a, b = right.arg(0), right.arg(1)
                 if b.is_int_constant():
-                    c = b.constant_value()
+                    c = b.int_constant_value()
                     if not is_le and c == 1:
                         # left < (b + 1)  -> left <= b
                         return em.LE(left, a)
                 elif a.is_int_constant():
-                    c = a.constant_value()
+                    c = a.int_constant_value()
                     if not is_le and c == 1:
                         # left < (1 + b)  ->  left <= b
                         return em.LE(left, b)
@@ -340,7 +340,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
             if right.is_minus() and len(right.args) == 2:
                 a, b = right.arg(0), right.arg(1)
                 if b.is_int_constant():
-                    c = b.constant_value()
+                    c = b.int_constant_value()
                     if is_le and c == 1:
                         # left <= (b - 1)  ->  left < b
                         return em.LT(left, a)
@@ -357,7 +357,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """
         # Constants
         if expr.is_int_constant():
-            v = expr.constant_value()
+            v = expr.int_constant_value()
             if self.representation == "object":
                 return ObjectExp(self._number_objects[v])
             else:
@@ -453,7 +453,9 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         # Both constants: simplify
         if left.is_int_constant() and right.is_int_constant():
             return (
-                TRUE() if left.constant_value() == right.constant_value() else FALSE()
+                TRUE()
+                if left.int_constant_value() == right.int_constant_value()
+                else FALSE()
             )
 
         # Transform both sides and emit equality of new representations
@@ -468,11 +470,15 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """
         # Both constants
         if left.is_int_constant() and right.is_int_constant():
-            return TRUE() if left.constant_value() < right.constant_value() else FALSE()
+            return (
+                TRUE()
+                if left.int_constant_value() < right.int_constant_value()
+                else FALSE()
+            )
 
         # Case: fluent < constant  →  f = v for v in [lb, c-1]
         if left.is_fluent_exp() and right.is_int_constant():
-            c = right.constant_value()
+            c = right.int_constant_value()
             left_type = left.fluent().type
             lb = left_type.lower_bound
             ub = min(left_type.upper_bound, c - 1)
@@ -486,7 +492,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
 
         # Case: constant < fluent  →  f = v for v in [c+1, ub]
         if left.is_int_constant() and right.is_fluent_exp():
-            c = left.constant_value()
+            c = left.int_constant_value()
             right_type = right.fluent().type
             lb = max(right_type.lower_bound, c + 1)
             ub = right_type.upper_bound
@@ -540,12 +546,14 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         # Both constants
         if left.is_int_constant() and right.is_int_constant():
             return (
-                TRUE() if left.constant_value() <= right.constant_value() else FALSE()
+                TRUE()
+                if left.int_constant_value() <= right.int_constant_value()
+                else FALSE()
             )
 
         # Case: fluent <= constant  →  f = v for v in [lb, c]
         if left.is_fluent_exp() and right.is_int_constant():
-            c = right.constant_value()
+            c = right.int_constant_value()
             left_type = left.fluent().type
             lb = left_type.lower_bound
             ub = min(left_type.upper_bound, c)
@@ -559,7 +567,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
 
         # Case: constant <= fluent  →  f = v for v in [c, ub]
         if left.is_int_constant() and right.is_fluent_exp():
-            c = left.constant_value()
+            c = left.int_constant_value()
             right_type = right.fluent().type
             lb = max(right_type.lower_bound, c)
             ub = right_type.upper_bound
@@ -629,17 +637,19 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         # Both constants
         if left.is_int_constant() and right.is_int_constant():
             return (
-                TRUE() if left.constant_value() == right.constant_value() else FALSE()
+                TRUE()
+                if left.int_constant_value() == right.int_constant_value()
+                else FALSE()
             )
 
         # Fluent == constant
         if left.is_fluent_exp() and right.is_int_constant():
             return self._binary_equal_to_constant(
-                left, right.constant_value(), new_problem
+                left, right.int_constant_value(), new_problem
             )
         if right.is_fluent_exp() and left.is_int_constant():
             return self._binary_equal_to_constant(
-                right, left.constant_value(), new_problem
+                right, left.int_constant_value(), new_problem
             )
 
         # Both fluents
@@ -849,17 +859,25 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """Handle left < right for binary representation."""
         # Both constants
         if left.is_int_constant() and right.is_int_constant():
-            return TRUE() if left.constant_value() < right.constant_value() else FALSE()
+            return (
+                TRUE()
+                if left.int_constant_value() < right.int_constant_value()
+                else FALSE()
+            )
 
         # Fluent < constant
         if left.is_fluent_exp() and right.is_int_constant():
-            return self._binary_lt_constant(left, right.constant_value(), new_problem)
+            return self._binary_lt_constant(
+                left, right.int_constant_value(), new_problem
+            )
 
         # constant < fluent  ->  fluent > constant  ->  not(fluent <= constant)  ->  not(fluent < constant+1)
         if left.is_int_constant() and right.is_fluent_exp():
             # c < f <==> f > c <==> not (f <= c) <==> not (f < c + 1)
             return Not(
-                self._binary_lt_constant(right, left.constant_value() + 1, new_problem)
+                self._binary_lt_constant(
+                    right, left.int_constant_value() + 1, new_problem
+                )
             )
 
         # Fluent < fluent
@@ -876,18 +894,20 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """Handle left <= right for binary representation."""
         if left.is_int_constant() and right.is_int_constant():
             return (
-                TRUE() if left.constant_value() <= right.constant_value() else FALSE()
+                TRUE()
+                if left.int_constant_value() <= right.int_constant_value()
+                else FALSE()
             )
 
         if left.is_fluent_exp() and right.is_int_constant():
             return self._binary_lt_constant(
-                left, right.constant_value() + 1, new_problem
+                left, right.int_constant_value() + 1, new_problem
             )
 
         if left.is_int_constant() and right.is_fluent_exp():
             # c <= f == not (f < c)
             return Not(
-                self._binary_lt_constant(right, left.constant_value(), new_problem)
+                self._binary_lt_constant(right, left.int_constant_value(), new_problem)
             )
 
         if left.is_fluent_exp() and right.is_fluent_exp():
@@ -1230,7 +1250,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
 
         # Case: f := constant
         if effect.value.is_int_constant():
-            value = effect.value.constant_value()
+            value = effect.value.int_constant_value()
             if value < f_type.lower_bound or value > f_type.upper_bound:
                 # Out of range: this action is unsatisfiable
                 return FALSE(), []
