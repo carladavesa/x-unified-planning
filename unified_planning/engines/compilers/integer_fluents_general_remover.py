@@ -31,9 +31,10 @@ from unified_planning.engines.compilers.utils import (
     compress_solutions,
     get_scalar_solution_value,
 )
-from typing import Any, List, Iterable, Tuple
+from typing import List, Iterable, Sequence, Tuple
 from unified_planning.model.expression import ListExpression
 from unified_planning.model.operators import OperatorKind
+from unified_planning.model.types import _IntType
 from unified_planning.engines.mixins.compiler import CompilationKind, CompilerMixin
 from unified_planning.engines.results import CompilerResult
 from unified_planning.exceptions import UPProblemDefinitionError
@@ -49,7 +50,6 @@ from unified_planning.model import (
     Axiom,
     Fluent,
     MinimizeActionCosts,
-    AbstractProblem,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.engines.compilers.utils import (
@@ -232,13 +232,13 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             new_problem.fluent(f"{name}_{i}")(*fluent_exp.args) for i in range(n_bits)
         ]
 
-    def _get_fluent_domain(self, fluent: Fluent, save: bool = False) -> Iterable[int]:
+    def _get_fluent_domain(self, fluent: Fluent, save: bool = False) -> Iterable[str]:
         """Calculate and cache the number of bits required for an integer fluent."""
         if not fluent.type.is_int_type():
             return []
 
         inner_fluent = fluent.type
-        assert inner_fluent.is_int_type(), (
+        assert isinstance(inner_fluent, _IntType), (
             f"Fluent {fluent.name} must be integer type. Arrays should be removed beforehand."
         )
 
@@ -246,6 +246,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         if save:
             lb = inner_fluent.lower_bound
             ub = inner_fluent.upper_bound
+            assert lb is not None and ub is not None
             self.offsets[fluent.name] = lb
             n_values = ub - lb + 1
             if n_values <= 1:
@@ -275,13 +276,13 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
     def _transform_node_object(
         self, old_problem: Problem, new_problem: Problem, node: FNode
-    ) -> Union[Union[None, str, FNode], Any]:
+    ) -> FNode:
         """Transform expression node to use Number objects instead of integers."""
         em = new_problem.environment.expression_manager
 
         # Integer constants become Number objects
         if node.is_int_constant():
-            return self._get_number_object(new_problem, node.constant_value())
+            return self._get_number_object(new_problem, node.int_constant_value())
 
         # Integer fluents
         if node.is_fluent_exp():
@@ -309,8 +310,6 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         new_args = []
         for arg in node.args:
             transformed = self._transform_node_object(old_problem, new_problem, arg)
-            if transformed is None:
-                return None
             new_args.append(transformed)
 
         # Preserve payload (variables) for Exists/Forall nodes
@@ -338,7 +337,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
     def _get_new_fluent(
         self,
-        new_problem: "up.model.AbstractProblem",
+        new_problem: Problem,
         node: "up.model.fnode.FNode",
     ) -> List["up.model.fnode.FNode"]:
         """Return the bit-fluent expansion for an integer fluent expression."""
@@ -361,25 +360,26 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
     def _convert_fluent_and_value(
         self,
-        new_problem: AbstractProblem,
+        new_problem: Problem,
         fluent: FNode,
         value: FNode,
-    ) -> Tuple[List[FNode], List[FNode]]:
+    ) -> Tuple[List[FNode], Sequence[Union[FNode, bool]]]:
         """Convert a fluent/value pair into aligned bit-level representations."""
         n_bits = self.n_bits[fluent.fluent().name]
         new_fluents = self._get_new_fluent(new_problem, fluent)
+        new_values: Sequence[Union[FNode, bool]]
         if value.is_fluent_exp():
             new_values = self._get_new_fluent(new_problem, value)
         else:
             assert value.is_constant(), "Value must be a constant!"
             new_values = self._convert_value(
-                value.constant_value(),
+                value.int_constant_value(),
                 n_bits,
                 self.offsets.get(fluent.fluent().name, 0),
             )
         return new_fluents, new_values
 
-    def _get_new_expression(self, new_problem: AbstractProblem, node: FNode) -> FNode:
+    def _get_new_expression(self, new_problem: Problem, node: FNode) -> FNode:
         """
         Transform expressions over encoded fluents into equivalent Boolean formulas.
         """
@@ -764,11 +764,11 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     continue
 
                 if self.representation == "object":
-                    cond = self._create_precondition_from_variable(
+                    scalar_condition = self._create_precondition_from_variable(
                         fnode, value, new_problem
                     )
-                    if cond:
-                        object_solution_conds.append(cond)
+                    if scalar_condition:
+                        object_solution_conds.append(scalar_condition)
                 else:  # binary
                     self._add_binary_solution_preconditions(
                         new_action, fnode, value, new_problem
@@ -1740,12 +1740,14 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 new_fluent = Fluent(
                     fluent.name, number_ut, fluent.signature, new_problem.environment
                 )
-                lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
+                fluent_type = fluent.type
+                assert isinstance(fluent_type, _IntType)
+                lb, ub = fluent_type.lower_bound, fluent_type.upper_bound
                 assert lb is not None and ub is not None
 
                 if default_value is not None:
                     default_obj = self._get_number_object(
-                        new_problem, default_value.constant_value()
+                        new_problem, default_value.int_constant_value()
                     )
                     new_problem.add_fluent(
                         new_fluent, default_initial_value=default_obj
@@ -1757,7 +1759,9 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     if f.fluent() == fluent:
                         new_problem.set_initial_value(
                             new_problem.fluent(fluent.name)(*f.args),
-                            self._get_number_object(new_problem, v.constant_value()),
+                            self._get_number_object(
+                                new_problem, v.int_constant_value()
+                            ),
                         )
             else:
                 new_problem.add_fluent(fluent, default_initial_value=default_value)
@@ -1783,9 +1787,12 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 # Default initial values
                 default_value = problem.fluents_defaults.get(fluent)
                 if default_value is not None:
-                    dv = default_value.constant_value()
+                    dv = default_value.int_constant_value()
                     lb = self.offsets.get(fluent.name, 0)
-                    ub = fluent.type.upper_bound
+                    fluent_type = fluent.type
+                    assert isinstance(fluent_type, _IntType)
+                    ub = fluent_type.upper_bound
+                    assert ub is not None
                     if lb <= dv <= ub:
                         default_bits = self._convert_value(dv, n_bits, lb)
                     else:
@@ -1808,7 +1815,9 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 for k, v in problem.explicit_initial_values.items():
                     if k.fluent() == fluent:
                         new_value = self._convert_value(
-                            v.constant_value(), n_bits, self.offsets.get(fluent.name, 0)
+                            v.int_constant_value(),
+                            n_bits,
+                            self.offsets.get(fluent.name, 0),
                         )
                         self._set_fluent_bits(
                             new_problem, fluent, k.args, new_value, n_bits
@@ -1823,19 +1832,22 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
 
     def _compute_needed_values(self, problem: Problem) -> set[int]:
         """Compute the set of integer values that actually need Number objects."""
-        needed = set()
+        needed: set[int] = set()
 
         for fluent in problem.fluents:
             if not fluent.type.is_int_type():
                 continue
-            lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
+            fluent_type = fluent.type
+            assert isinstance(fluent_type, _IntType)
+            lb, ub = fluent_type.lower_bound, fluent_type.upper_bound
+            assert lb is not None and ub is not None
             needed.update(range(lb, ub + 1))
         return needed
 
     def _extract_int_constants(self, expr: FNode) -> set[int]:
         found = set()
         if expr.is_int_constant():
-            found.add(expr.constant_value())
+            found.add(expr.int_constant_value())
         for arg in expr.args:
             found.update(self._extract_int_constants(arg))
         return found
