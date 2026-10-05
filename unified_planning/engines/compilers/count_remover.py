@@ -792,11 +792,15 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         assert isinstance(problem, Problem)
 
         # Clone problem
-        new_problem = problem.clone()
+        if type(problem) is Problem:
+            new_problem = Problem(problem.name, problem.environment)
+            problem._clone_to_without_actions_and_metrics(new_problem)
+        else:
+            new_problem = problem.clone()
+            new_problem.clear_actions()
+            new_problem.clear_quality_metrics()
         new_problem.name = f"{self.name}_{problem.name}"
-        new_problem.clear_actions()
         new_problem.clear_goals()
-        new_problem.clear_quality_metrics()
 
         # Select target-specific transformations
         transform_goal: Callable[[Problem, FNode], FNode]

@@ -1610,14 +1610,18 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         name_to_original = {a.name: a for a in problem.actions}
 
         # Step 2: create empty new problem
-        new_problem = problem.clone()
+        if type(problem) is Problem:
+            new_problem = Problem(problem.name, problem.environment)
+            problem._clone_to_without_actions_and_metrics(new_problem)
+        else:
+            new_problem = problem.clone()
+            new_problem.clear_actions()
+            new_problem.clear_quality_metrics()
         new_problem.name = f"{self.name}_{problem.name}"
         new_problem.clear_fluents()
-        new_problem.clear_actions()
         new_problem.clear_goals()
         new_problem.clear_axioms()
         new_problem.explicit_initial_values.clear()
-        new_problem.clear_quality_metrics()
 
         # Step 3: setup representation-specific structures
         if self.representation == "object":
