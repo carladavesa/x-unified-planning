@@ -53,12 +53,15 @@ class Axiom(InstantaneousAction):
         fluent: Union["up.model.fnode.FNode", "up.model.fluent.Fluent"],
         value: "up.model.expression.Expression" = True,
         condition: "up.model.expression.BoolExpression" = True,
-        forall: Iterable["up.model.variable.Variable"] = tuple(),
+        forall: Iterable[
+            Union["up.model.variable.Variable", "up.model.int_variable.IntVariable"]
+        ] = tuple(),
     ):
         if value != True:
             raise UPUsageError("value can only be true for an axiom")
         if condition != True:
             raise UPUsageError("the effect of an axiom can not include a condition")
+        forall = tuple(forall)
         if len(forall) > 0:
             raise UPUsageError("the effect of an axiom can not a forall")
 
@@ -83,7 +86,7 @@ class Axiom(InstantaneousAction):
         )
 
     @property
-    def head(self) -> List["up.model.fluent.Fluent"]:
+    def head(self) -> "up.model.effect.Effect":
         """Returns the `head` of the `Axiom`."""
         return self._effects[0]
 
