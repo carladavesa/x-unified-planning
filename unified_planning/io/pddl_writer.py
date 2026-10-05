@@ -221,6 +221,12 @@ class ConverterToPDDLString(walkers.DagWalker):
         assert len(args) == 0
         return f"{self.get_mangled_name(expression.variable())}"
 
+    def walk_int_variable_exp(self, expression, args):
+        raise UPTypeError(
+            "PDDL does not support IntVariable. Compile integer variables with "
+            "INT_PARAMETERS_AND_VARIABLES_REMOVING before writing PDDL."
+        )
+
     def walk_and(self, expression, args):
         assert len(args) > 1
         return f"(and {' '.join(args)})"
@@ -553,15 +559,15 @@ class PDDLWriter:
                 else:
                     raise UPTypeError("PDDL supports only user type parameters")
             out.write(")\n")
-            precond_str: List[str] = []
+            axiom_precond_str: List[str] = []
             if len(a.preconditions) > 0:
                 for p in (c.simplify() for c in a.preconditions):
                     if not p.is_true():
                         if p.is_and():
-                            precond_str.extend(map(converter.convert, p.args))
+                            axiom_precond_str.extend(map(converter.convert, p.args))
                         else:
-                            precond_str.append(converter.convert(p))
-            out.write(f"  (and {' '.join(precond_str)})\n")
+                            axiom_precond_str.append(converter.convert(p))
+            out.write(f"  (and {' '.join(axiom_precond_str)})\n")
             out.write(" )\n")
 
         em = self.problem.environment.expression_manager
@@ -1161,12 +1167,15 @@ def _write_effect(
         )
     forall_str = ""
     if effect.is_forall():
-        mid_str = " ".join(
-            (
-                f"{get_mangled_name(v)} - {get_mangled_name(v.type)}"
-                for v in effect.forall
-            )
-        )
+        variables = []
+        for v in effect.forall:
+            if not isinstance(v, up.model.Variable):
+                raise UPTypeError(
+                    "PDDL does not support IntVariable. Compile integer variables with "
+                    "INT_PARAMETERS_AND_VARIABLES_REMOVING before writing PDDL."
+                )
+            variables.append(f"{get_mangled_name(v)} - {get_mangled_name(v.type)}")
+        mid_str = " ".join(variables)
         forall_str = f"(forall ({mid_str})"
     simplified_cond = effect.condition.simplify()
     if non_const_bool_ass:
