@@ -953,7 +953,7 @@ def compress_solutions(variables, solutions, problem):
                 used.add(idx)
 
             values_set = frozenset(v for _, v in indices_vals)
-            compact = dict(key)
+            compact: dict[str, int | frozenset[int]] = dict(key)
             if values_set != domain:
                 compact[var_name] = values_set
             compressed.append(compact)
