@@ -19,7 +19,7 @@ that defines the types of its parameters.
 """
 
 import unified_planning as up
-from unified_planning.model.types import domain_size, domain_item, _IntType
+from unified_planning.model.types import domain_size, domain_item, _IntType, _ArrayType
 from unified_planning.environment import get_environment, Environment
 from unified_planning.exceptions import UPTypeError, UPProblemDefinitionError
 from typing import List, OrderedDict, Optional, Union, Iterator, cast, Tuple
@@ -39,7 +39,7 @@ class Fluent:
             ]
         ] = None,
         environment: Optional[Environment] = None,
-        undefined_positions: Optional[List[Tuple[int]]] = None,
+        undefined_positions: Optional[List[Tuple[int, ...]]] = None,
         **kwargs: "up.model.types.Type",
     ):
         self._env = get_environment(environment)
@@ -51,9 +51,9 @@ class Fluent:
                 "type of parameter does not belong to the same environment of the fluent"
             )
             self._typename = typename
-        sizes = None
+        sizes: Optional[Union[int, Tuple[int, ...]]] = None
         if undefined_positions is not None:
-            assert typename.is_array_type(), (
+            assert self._typename.is_array_type(), (
                 "'undefined_positions' parameter is only allowed with ArrayType Fluents."
             )
             for position in undefined_positions:
@@ -62,10 +62,13 @@ class Fluent:
                 )
         self._undefined_positions = undefined_positions
         if self._typename.is_array_type():
-            sizes = typename.size
-            if typename.elements_type.is_array_type():
-                sizes = (sizes, typename.elements_type.size)
-        self._sizes: Optional[Tuple[int]] = sizes
+            assert isinstance(self._typename, _ArrayType)
+            sizes = self._typename.size
+            elements_type = self._typename.elements_type
+            if elements_type.is_array_type():
+                assert isinstance(elements_type, _ArrayType)
+                sizes = (sizes, elements_type.size)
+        self._sizes = sizes
         self._signature: List["up.model.parameter.Parameter"] = []
         if _signature is not None:
             assert len(kwargs) == 0
@@ -137,6 +140,7 @@ class Fluent:
         ],
     ):
         assert self.type.is_array_type(), "The Fluent has no array type"
+        assert isinstance(self.type, _ArrayType)
         idx = self.environment.expression_manager.auto_promote(index)[0]
         simplified = idx.simplify()
         if simplified.is_int_constant():
@@ -188,12 +192,12 @@ class Fluent:
         return self._typename
 
     @property
-    def undefined_positions(self) -> Optional[List[Tuple[int]]]:
+    def undefined_positions(self) -> Optional[List[Tuple[int, ...]]]:
         """Returns the `Fluent` `Type`."""
         return self._undefined_positions
 
     @property
-    def sizes(self) -> Optional[Tuple[int]]:
+    def sizes(self) -> Optional[Union[int, Tuple[int, ...]]]:
         """Returns the `Fluent` `Type`."""
         return self._sizes
 

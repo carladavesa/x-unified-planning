@@ -666,12 +666,12 @@ def RealType(
 
 
 def ArrayType(
-    size: int, elements_type: Type = None
+    size: int, elements_type: Optional[Type] = None
 ) -> unified_planning.model.types.Type:
     return get_environment().type_manager.ArrayType(size, elements_type)
 
 
-def SetType(elements_type: Type = None) -> unified_planning.model.types.Type:
+def SetType(elements_type: Optional[Type] = None) -> unified_planning.model.types.Type:
     return get_environment().type_manager.SetType(elements_type)
 
 

@@ -287,7 +287,7 @@ class _ArrayType(Type):
 class _SetType(Type):
     """Represents a set composed with a given type (elements_type)."""
 
-    def __init__(self, elements_type: Type):
+    def __init__(self, elements_type: Optional[Type]):
         Type.__init__(self)
         self._elements_type = elements_type
 
@@ -301,7 +301,7 @@ class _SetType(Type):
         return True
 
     @property
-    def elements_type(self) -> Type:
+    def elements_type(self) -> Optional[Type]:
         """Returns the type of elements in this set."""
         return self._elements_type
 

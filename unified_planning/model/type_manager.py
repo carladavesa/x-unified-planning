@@ -47,7 +47,7 @@ class TypeManager:
         self._ints: Dict[Tuple[Optional[int], Optional[int]], Type] = {}
         self._reals: Dict[Tuple[Optional[Fraction], Optional[Fraction]], Type] = {}
         self._arrays: Dict[Tuple[int, Type], Type] = {}
-        self._sets: Dict[Type, Type] = {}
+        self._sets: Dict[Optional[Type], Type] = {}
         self._user_types: Dict[Tuple[str, Optional[Type]], Type] = {}
         self._movable_types: Dict[Tuple[str, Optional[Type]], Type] = {}
         self._configuration_types: Dict[
@@ -152,7 +152,7 @@ class TypeManager:
             self._reals[k] = rt
             return rt
 
-    def ArrayType(self, size: int, elements_type: Type = None) -> Type:
+    def ArrayType(self, size: int, elements_type: Optional[Type] = None) -> Type:
         """Returns the array type with a specific element type."""
         # assert size > 1, "Size of ArrayType must be greater than 1."
         if elements_type is None:
@@ -165,7 +165,7 @@ class TypeManager:
             self._arrays[k] = at
             return at
 
-    def SetType(self, elements_type: Type = None) -> Type:
+    def SetType(self, elements_type: Optional[Type] = None) -> Type:
         """Returns the set type with a specific element type."""
         k = elements_type
         if k in self._sets:
