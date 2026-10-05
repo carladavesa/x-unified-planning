@@ -32,12 +32,13 @@ from unified_planning.model import (
     Effect,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
+from unified_planning.model.expression import Expression
 from unified_planning.engines.compilers.utils import (
     replace_action,
     get_fresh_name,
     updated_minimize_action_costs,
 )
-from typing import Dict, Optional, Tuple, List
+from typing import Callable, Dict, Optional, Tuple, List
 from functools import partial
 from unified_planning.shortcuts import Not, And, Or, FALSE, TRUE, Int, IntType, Equals
 
@@ -51,6 +52,8 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
 
     Both strategies are semantically equivalent; the choice affects the shape
     of the resulting problem.
+
+    Only problems with instantaneous actions are supported.
 
     This `Compiler` supports only the `COUNT_REMOVING` :class:`~unified_planning.engines.CompilationKind`.
     """
@@ -100,18 +103,6 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         supported_kind.set_effects_kind("FLUENTS_IN_NUMERIC_ASSIGNMENTS")
         supported_kind.set_effects_kind("FLUENTS_IN_OBJECT_ASSIGNMENTS")
         supported_kind.set_effects_kind("FORALL_EFFECTS")
-        supported_kind.set_time("CONTINUOUS_TIME")
-        supported_kind.set_time("DISCRETE_TIME")
-        supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
-        supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
-        supported_kind.set_time("TIMED_EFFECTS")
-        supported_kind.set_time("TIMED_GOALS")
-        supported_kind.set_time("DURATION_INEQUALITIES")
-        supported_kind.set_time("SELF_OVERLAPPING")
-        supported_kind.set_expression_duration("STATIC_FLUENTS_IN_DURATIONS")
-        supported_kind.set_expression_duration("FLUENTS_IN_DURATIONS")
-        supported_kind.set_expression_duration("INT_TYPE_DURATIONS")
-        supported_kind.set_expression_duration("REAL_TYPE_DURATIONS")
         supported_kind.set_simulated_entities("SIMULATED_EFFECTS")
         supported_kind.set_constraints_kind("STATE_INVARIANTS")
         supported_kind.set_constraints_kind("TRAJECTORY_CONSTRAINTS")
@@ -120,8 +111,6 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         supported_kind.set_actions_cost_kind("FLUENTS_IN_ACTIONS_COST")
         supported_kind.set_quality_metrics("PLAN_LENGTH")
         supported_kind.set_quality_metrics("OVERSUBSCRIPTION")
-        supported_kind.set_quality_metrics("TEMPORAL_OVERSUBSCRIPTION")
-        supported_kind.set_quality_metrics("MAKESPAN")
         supported_kind.set_quality_metrics("FINAL_VALUE")
         supported_kind.set_actions_cost_kind("INT_NUMBERS_IN_ACTIONS_COST")
         supported_kind.set_actions_cost_kind("REAL_NUMBERS_IN_ACTIONS_COST")
@@ -137,15 +126,23 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
     def supports_compilation(compilation_kind: CompilationKind) -> bool:
         return compilation_kind == CompilationKind.COUNT_REMOVING
 
+    @staticmethod
     def resulting_problem_kind(
-        self,
         problem_kind: ProblemKind,
         compilation_kind: Optional[CompilationKind] = None,
     ) -> ProblemKind:
         new_kind = problem_kind.clone()
-        new_kind.unset_conditions_kind("COUNTING")
-        if self.target == "int":
+        if problem_kind.has_counting():
+            new_kind.unset_conditions_kind("COUNTING")
+            # Include features introduced by either target encoding.
+            new_kind.set_conditions_kind("NEGATIVE_CONDITIONS")
+            new_kind.set_conditions_kind("DISJUNCTIVE_CONDITIONS")
+            new_kind.set_conditions_kind("EQUALITIES")
             new_kind.set_fluents_type("INT_FLUENTS")
+            new_kind.set_numbers("BOUNDED_TYPES")
+            new_kind.set_problem_type("SIMPLE_NUMERIC_PLANNING")
+            new_kind.set_problem_type("GENERAL_NUMERIC_PLANNING")
+            new_kind.set_effects_kind("CONDITIONAL_EFFECTS")
         return new_kind
 
     def _check_count_argument(self, expression: FNode) -> None:
@@ -236,9 +233,13 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
                     self._check_count_argument(arg)
 
         if left_is_count and right.is_int_constant():
-            return self._bool_expand_count_vs_constant(left, right.constant_value(), op)
+            return self._bool_expand_count_vs_constant(
+                left, right.int_constant_value(), op
+            )
         elif right_is_count and left.is_int_constant():
-            return self._bool_expand_constant_vs_count(left.constant_value(), right, op)
+            return self._bool_expand_constant_vs_count(
+                left.int_constant_value(), right, op
+            )
         elif left_is_count and right_is_count:
             return self._bool_expand_count_vs_count(left, right, op)
         else:
@@ -373,7 +374,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
             return FALSE()
 
         # Group k2 values by k1
-        k1_to_k2s = {}
+        k1_to_k2s: Dict[int, List[int]] = {}
         for k1, k2 in valid_pairs:
             k1_to_k2s.setdefault(k1, []).append(k2)
 
@@ -586,7 +587,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         problem.add_fluent(new_fluent)
 
         for values in self._int_get_param_combinations(problem, count_parameters):
-            subs_map = {
+            subs_map: Dict[Expression, Expression] = {
                 em.ParameterExp(p): em.ObjectExp(v)
                 for p, v in zip(count_parameters, values)
             }
@@ -626,13 +627,20 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
             return expression
         if expression.is_fluent_exp():
             if fluent_to_update is not None and fluent_to_update == expression:
+                assert new_value is not None
                 if effect_type == "increase":
                     return em.Plus(expression, new_value).simplify()
                 elif effect_type == "decrease":
                     return em.Minus(expression, new_value).simplify()
                 else:
                     return new_value
-            return problem.initial_value(expression)
+            initial_value = problem.initial_value(expression)
+            if initial_value is None:
+                raise UPProblemDefinitionError(
+                    f"Cannot initialize a Count helper: fluent {expression} "
+                    "has no initial value."
+                )
+            return initial_value
 
         new_args = [
             self._int_transform_expression(
@@ -791,6 +799,7 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
         new_problem.clear_quality_metrics()
 
         # Select target-specific transformations
+        transform_goal: Callable[[Problem, FNode], FNode]
         if self.target == "bool":
             transform_action = self._bool_transform_action
             transform_goal = self._bool_transform_expression
@@ -800,11 +809,14 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
             transform_goal = self._int_replace_count_with_fluents
             post_process = self._int_generate_count_effects
 
-        new_to_old: Dict[Action, Action] = {}
+        new_to_old: Dict[Action, Optional[Action]] = {}
 
         # Transform actions
         temp_actions = []
         for action in problem.actions:
+            assert isinstance(action, InstantaneousAction), (
+                "CountRemover supports only instantaneous actions."
+            )
             new_action = transform_action(new_problem, action)
             temp_actions.append((new_action, action))
 

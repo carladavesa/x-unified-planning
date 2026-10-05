@@ -230,15 +230,27 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             self._get_or_create_int_range_type(new_problem, int_type)
         return self._int_to_obj[type_name][value]
 
+    @staticmethod
     def resulting_problem_kind(
-        self,
         problem_kind: ProblemKind,
         compilation_kind: Optional[CompilationKind] = None,
     ) -> ProblemKind:
         new_kind = problem_kind.clone()
-        new_kind.unset_fluents_type("SET_FLUENTS")
-        if self.cardinality_encoding == "count":
+        if problem_kind.has_set_fluents():
+            new_kind.unset_fluents_type("SET_FLUENTS")
+            # Include features introduced by either cardinality encoding.
+            new_kind.set_fluents_type("INT_FLUENTS")
             new_kind.set_conditions_kind("COUNTING")
+            new_kind.set_conditions_kind("NEGATIVE_CONDITIONS")
+            new_kind.set_conditions_kind("DISJUNCTIVE_CONDITIONS")
+            new_kind.set_conditions_kind("EQUALITIES")
+            new_kind.set_typing("FLAT_TYPING")
+            new_kind.set_numbers("BOUNDED_TYPES")
+            new_kind.set_problem_type("SIMPLE_NUMERIC_PLANNING")
+            new_kind.set_problem_type("GENERAL_NUMERIC_PLANNING")
+            new_kind.set_effects_kind("CONDITIONAL_EFFECTS")
+            new_kind.set_effects_kind("INCREASE_EFFECTS")
+            new_kind.set_effects_kind("DECREASE_EFFECTS")
         return new_kind
 
     # ==================== FLUENT TRANSFORMATION ====================
