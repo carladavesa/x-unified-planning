@@ -27,6 +27,7 @@ from unified_planning.model.types import (
     _UserType,
     _IntType,
     _ArrayType,
+    _SetType,
 )
 from unified_planning.model.fnode import FNode
 from unified_planning.model.operators import OperatorKind
@@ -512,7 +513,8 @@ class TypeChecker(walkers.dag.DagWalker):
             ):
                 return None
             elif t.is_array_type():
-                if not x.is_array_type() or x.elements_type.is_bool_type():
+                assert isinstance(t, _ArrayType)
+                if not isinstance(x, _ArrayType) or x.elements_type.is_bool_type():
                     return None
                 if not t.is_compatible(x) and not x.is_compatible(t):
                     return self.walk_equals(
@@ -540,7 +542,7 @@ class TypeChecker(walkers.dag.DagWalker):
     ) -> Optional["unified_planning.model.types.Type"]:
         array_type = args[0]
         assert expression.is_array_access()
-        assert array_type.is_array_type()
+        assert isinstance(array_type, _ArrayType)
         return array_type.elements_type
 
     @walkers.handles(OperatorKind.SET_MEMBER)
@@ -552,15 +554,18 @@ class TypeChecker(walkers.dag.DagWalker):
 
         element_type = args[0]
         set_type = args[1]
-        if element_type is None:
+        if element_type is None or not isinstance(set_type, _SetType):
             return None
 
         elements_type = set_type.elements_type
+        if elements_type is None:
+            # The empty set has no element type to constrain membership.
+            return BOOL
         # Exact match (user-types, bool, etc.)
         if element_type == elements_type:
             return BOOL
         # Int subtype: element's range fits within the set's element range
-        if element_type.is_int_type() and elements_type.is_int_type():
+        if isinstance(element_type, _IntType) and isinstance(elements_type, _IntType):
             el_lb, el_ub = element_type.lower_bound, element_type.upper_bound
             set_lb, set_ub = elements_type.lower_bound, elements_type.upper_bound
             # None bounds mean unbounded — treat conservatively
@@ -583,6 +588,8 @@ class TypeChecker(walkers.dag.DagWalker):
         assert expression.is_set_subseteq()
         set1 = args[0]
         set2 = args[1]
+        if not isinstance(set1, _SetType) or not isinstance(set2, _SetType):
+            return None
         if set1.elements_type != set2.elements_type:
             return None
         return BOOL
@@ -595,6 +602,8 @@ class TypeChecker(walkers.dag.DagWalker):
         assert expression.is_set_disjoint()
         set1 = args[0]
         set2 = args[1]
+        if not isinstance(set1, _SetType) or not isinstance(set2, _SetType):
+            return None
         if set1.elements_type != set2.elements_type:
             return None
         # fer alguna altra comprovacio?
@@ -621,13 +630,13 @@ class TypeChecker(walkers.dag.DagWalker):
         set_type = args[0]
         element_type = args[1]
         # Validate compatibility (like walk_member does)
-        if element_type is None or not hasattr(set_type, "elements_type"):
+        if element_type is None or not isinstance(set_type, _SetType):
             return None
         elements_type = set_type.elements_type
         if element_type == elements_type:
             return set_type
         # Int subtype
-        if element_type.is_int_type() and elements_type.is_int_type():
+        if isinstance(element_type, _IntType) and isinstance(elements_type, _IntType):
             el_lb, el_ub = element_type.lower_bound, element_type.upper_bound
             set_lb, set_ub = elements_type.lower_bound, elements_type.upper_bound
             if (
@@ -653,7 +662,7 @@ class TypeChecker(walkers.dag.DagWalker):
         assert expression is not None
         set1 = args[0]
         set2 = args[1]
-        if not hasattr(set1, "elements_type") or not hasattr(set2, "elements_type"):
+        if not isinstance(set1, _SetType) or not isinstance(set2, _SetType):
             return None
         if set1.elements_type != set2.elements_type:
             return None
