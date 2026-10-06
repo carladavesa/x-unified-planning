@@ -33,7 +33,7 @@ from unified_planning.model import (
     InstantaneousAction,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
-from unified_planning.model.types import _SetType, _UserType
+from unified_planning.model.types import _IntType, _SetType, _UserType
 from unified_planning.engines.compilers.utils import (
     get_fresh_name,
     replace_action,
@@ -338,12 +338,18 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         """
         element = node.args[0]
         set_expr = node.args[1]
-        assert set_expr.type.is_set_type(), "Second arg must be a set"
+        set_type = set_expr.type
+        assert isinstance(set_type, _SetType), "Second arg must be a set"
         assert set_expr.is_fluent_exp() or set_expr.is_constant(), (
             "Set expression must be a fluent or a constant"
         )
 
-        elements_type = set_expr.type.elements_type
+        if set_expr.is_set_constant():
+            return self._get_element_membership_expr(set_expr, element, new_problem)
+
+        elements_type = set_type.elements_type
+        assert elements_type is not None
+        new_fluent = self._fluent_mapping[set_expr.fluent().name]
         # Case: element is a dynamic int expression (fluent or complex expression)
         # expand into a disjunction
         if (
@@ -351,47 +357,26 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             and not element.is_int_constant()
             and not element.is_parameter_exp()
         ):
-            if set_expr.is_fluent_exp():
-                new_fluent = self._fluent_mapping[set_expr.fluent().name]
-                disjuncts = []
-                for v in range(
-                    elements_type.lower_bound, elements_type.upper_bound + 1
-                ):
-                    elem_obj = self._to_element_object(new_problem, elements_type, v)
-                    guard = Equals(element, Int(v))
-                    membership = new_fluent(ObjectExp(elem_obj), *set_expr.args)
-                    disjuncts.append(And(guard, membership))
-                return Or(*disjuncts)
-            else:
-                # set is constant: check if any element in the constant set equals the dynamic value
-                or_expr = []
-                for element_set in list(set_expr.set_constant_value()):
-                    elem_obj = self._to_element_object(
-                        new_problem, elements_type, element_set
-                    )
-                    or_expr.append(Equals(element, ObjectExp(elem_obj)))
-                return Or(*or_expr) if or_expr else FALSE()
+            assert isinstance(elements_type, _IntType)
+            lower, upper = elements_type.lower_bound, elements_type.upper_bound
+            assert lower is not None and upper is not None
+            disjuncts = []
+            for v in range(lower, upper + 1):
+                elem_obj = self._to_element_object(new_problem, elements_type, v)
+                guard = Equals(element, Int(v))
+                membership = new_fluent(ObjectExp(elem_obj), *set_expr.args)
+                disjuncts.append(And(guard, membership))
+            return Or(*disjuncts)
 
-        if set_expr.is_fluent_exp():
-            new_fluent = self._fluent_mapping[set_expr.fluent().name]
-            # Wrap element if it's a raw int value (for int-set fluents)
-            if element.is_int_constant() and elements_type.is_int_type():
-                elem_obj = self._to_element_object(
-                    new_problem, elements_type, element.constant_value()
-                )
-                new_args = [ObjectExp(elem_obj)] + list(set_expr.args)
-            else:
-                new_args = [element] + list(set_expr.args)
-            return new_fluent(*new_args)
+        # Wrap element if it's a raw int value (for int-set fluents).
+        if element.is_int_constant() and elements_type.is_int_type():
+            elem_obj = self._to_element_object(
+                new_problem, elements_type, element.int_constant_value()
+            )
+            new_args = [ObjectExp(elem_obj)] + list(set_expr.args)
         else:
-            em = new_problem.environment.expression_manager
-            or_expr = []
-            for element_set in list(set_expr.set_constant_value()):
-                elem_obj = self._to_element_object(
-                    new_problem, elements_type, element_set
-                )
-                or_expr.append(Equals(element, ObjectExp(elem_obj)))
-            return Or(*or_expr)
+            new_args = [element] + list(set_expr.args)
+        return new_fluent(*new_args)
 
     def _transform_subseteq(self, new_problem: Problem, node: FNode) -> FNode:
         """
@@ -1498,6 +1483,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     problem, new_problem, precondition
                 )
                 if new_precondition in [FALSE(), None]:
+                    new_action.add_precondition(FALSE())
                     break
                 new_action.add_precondition(new_precondition)
             temp_actions.append(new_action)
