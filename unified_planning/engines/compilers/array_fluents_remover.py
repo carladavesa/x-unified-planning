@@ -61,6 +61,7 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
     undefinedness is propagated following the operator semantics.
 
     This `Compiler` supports only the `ARRAY_FLUENTS_REMOVING` :class:`~unified_planning.engines.CompilationKind`.
+    Only problems with instantaneous actions are supported.
     """
 
     def __init__(self, mode: str = "strict"):
@@ -109,18 +110,6 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         supported_kind.set_effects_kind("FLUENTS_IN_NUMERIC_ASSIGNMENTS")
         supported_kind.set_effects_kind("FLUENTS_IN_OBJECT_ASSIGNMENTS")
         supported_kind.set_effects_kind("FORALL_EFFECTS")
-        supported_kind.set_time("CONTINUOUS_TIME")
-        supported_kind.set_time("DISCRETE_TIME")
-        supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
-        supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
-        supported_kind.set_time("TIMED_EFFECTS")
-        supported_kind.set_time("TIMED_GOALS")
-        supported_kind.set_time("DURATION_INEQUALITIES")
-        supported_kind.set_time("SELF_OVERLAPPING")
-        supported_kind.set_expression_duration("STATIC_FLUENTS_IN_DURATIONS")
-        supported_kind.set_expression_duration("FLUENTS_IN_DURATIONS")
-        supported_kind.set_expression_duration("INT_TYPE_DURATIONS")
-        supported_kind.set_expression_duration("REAL_TYPE_DURATIONS")
         supported_kind.set_simulated_entities("SIMULATED_EFFECTS")
         supported_kind.set_constraints_kind("STATE_INVARIANTS")
         supported_kind.set_constraints_kind("TRAJECTORY_CONSTRAINTS")
@@ -129,8 +118,6 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         supported_kind.set_actions_cost_kind("FLUENTS_IN_ACTIONS_COST")
         supported_kind.set_quality_metrics("PLAN_LENGTH")
         supported_kind.set_quality_metrics("OVERSUBSCRIPTION")
-        supported_kind.set_quality_metrics("TEMPORAL_OVERSUBSCRIPTION")
-        supported_kind.set_quality_metrics("MAKESPAN")
         supported_kind.set_quality_metrics("FINAL_VALUE")
         supported_kind.set_actions_cost_kind("INT_NUMBERS_IN_ACTIONS_COST")
         supported_kind.set_actions_cost_kind("REAL_NUMBERS_IN_ACTIONS_COST")
@@ -471,6 +458,9 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         """Transform all actions by substituting array accesses."""
         new_to_old: Dict[Action, Optional[Action]] = {}
         for action in problem.actions:
+            assert isinstance(action, InstantaneousAction), (
+                "ArrayFluentsRemover supports only instantaneous actions."
+            )
             new_action = self._transform_action_arrays(problem, new_problem, action)
             if new_action is not None:
                 new_problem.add_action(new_action)

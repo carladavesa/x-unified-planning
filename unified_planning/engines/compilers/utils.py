@@ -1486,11 +1486,14 @@ def get_params_in_expression(node):
 def remove_write_only_fluents(problem: Problem) -> Problem:
     """
     Remove fluents that never appear in preconditions, goals, effect conditions,
-    effect values, or axioms.
+    effect values, or axioms. Only instantaneous actions are supported.
     """
     read_fluent_names = set()
 
     for action in problem.actions:
+        assert isinstance(action, InstantaneousAction), (
+            "Removing write-only fluents supports only instantaneous actions."
+        )
         # Preconditions
         for prec in action.preconditions:
             for f in get_fluent_exps_in_expression(prec):
@@ -1546,6 +1549,7 @@ def remove_write_only_fluents(problem: Problem) -> Problem:
             new_problem.set_initial_value(k, v)
 
     for action in problem.actions:
+        assert isinstance(action, InstantaneousAction)
         new_action = action.clone()
         effects_to_keep = [
             e

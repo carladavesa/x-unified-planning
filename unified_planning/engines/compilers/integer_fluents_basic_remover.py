@@ -71,6 +71,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
     Supports two representations of integer values:
     - 'object': integer values become objects of a Number user type.
     - 'binary': integer values become sequences of Boolean bit fluents.
+    Only problems with instantaneous actions are supported.
     """
 
     def __init__(self, representation: str = "object"):
@@ -128,18 +129,6 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         supported_kind.set_effects_kind("FLUENTS_IN_NUMERIC_ASSIGNMENTS")
         supported_kind.set_effects_kind("FLUENTS_IN_OBJECT_ASSIGNMENTS")
         supported_kind.set_effects_kind("FORALL_EFFECTS")
-        supported_kind.set_time("CONTINUOUS_TIME")
-        supported_kind.set_time("DISCRETE_TIME")
-        supported_kind.set_time("INTERMEDIATE_CONDITIONS_AND_EFFECTS")
-        supported_kind.set_time("EXTERNAL_CONDITIONS_AND_EFFECTS")
-        supported_kind.set_time("TIMED_EFFECTS")
-        supported_kind.set_time("TIMED_GOALS")
-        supported_kind.set_time("DURATION_INEQUALITIES")
-        supported_kind.set_time("SELF_OVERLAPPING")
-        supported_kind.set_expression_duration("STATIC_FLUENTS_IN_DURATIONS")
-        supported_kind.set_expression_duration("FLUENTS_IN_DURATIONS")
-        supported_kind.set_expression_duration("INT_TYPE_DURATIONS")
-        supported_kind.set_expression_duration("REAL_TYPE_DURATIONS")
         supported_kind.set_simulated_entities("SIMULATED_EFFECTS")
         supported_kind.set_constraints_kind("STATE_INVARIANTS")
         supported_kind.set_constraints_kind("TRAJECTORY_CONSTRAINTS")
@@ -148,8 +137,6 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         supported_kind.set_actions_cost_kind("FLUENTS_IN_ACTIONS_COST")
         supported_kind.set_quality_metrics("PLAN_LENGTH")
         supported_kind.set_quality_metrics("OVERSUBSCRIPTION")
-        supported_kind.set_quality_metrics("TEMPORAL_OVERSUBSCRIPTION")
-        supported_kind.set_quality_metrics("MAKESPAN")
         supported_kind.set_quality_metrics("FINAL_VALUE")
         supported_kind.set_actions_cost_kind("INT_NUMBERS_IN_ACTIONS_COST")
         supported_kind.set_actions_cost_kind("REAL_NUMBERS_IN_ACTIONS_COST")
@@ -252,6 +239,9 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
                 scan(arg)
 
         for action in problem.actions:
+            assert isinstance(action, InstantaneousAction), (
+                "IntegerFluentsBasicRemover supports only instantaneous actions."
+            )
             for prec in action.preconditions:
                 scan(prec)
             for effect in action.effects:
@@ -1531,6 +1521,9 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         - Arithmetic expressions on the RHS of assignments
         """
         for action in problem.actions:
+            assert isinstance(action, InstantaneousAction), (
+                "IntegerFluentsBasicRemover supports only instantaneous actions."
+            )
             for prec in action.preconditions:
                 self._check_expression_compatible(
                     prec, context=f"precondition of action '{action.name}'"
