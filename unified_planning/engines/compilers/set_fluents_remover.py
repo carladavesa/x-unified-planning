@@ -256,7 +256,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         Encode a set fluent as a Boolean fluent with an extra element parameter.
         Supports sets of user-type and int-type elements (int -> synthesized UserType)
         """
-        elements_type = fluent.type.elements_type
+        set_type = fluent.type
+        assert isinstance(set_type, _SetType)
+        elements_type = set_type.elements_type
+        assert elements_type is not None
         param_type = self._resolve_element_type(new_problem, elements_type)
         param_name = str(param_type)[0].lower() if elements_type.is_user_type() else "i"
         element_param = model.Parameter(param_name, param_type)
@@ -741,7 +744,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         set_expr = node.arg(0)
         assert set_expr.is_fluent_exp(), "Add/Remove only works on fluent sets"
 
-        elements_type = set_expr.type.elements_type
+        set_type = set_expr.type
+        assert isinstance(set_type, _SetType)
+        elements_type = set_type.elements_type
+        assert elements_type is not None
         new_fluent = self._fluent_mapping[set_expr.fluent().name]
 
         if (
@@ -801,7 +807,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         if set_fluent and constant_set:
             fluent_name = set_fluent.fluent().name
             fluent_args = set_fluent.args
-            elements_type = set_fluent.fluent().type.elements_type
+            set_type = set_fluent.fluent().type
+            assert isinstance(set_type, _SetType)
+            elements_type = set_type.elements_type
             constant_raw = list(constant_set.set_constant_value())
             constant_objects = [
                 self._to_element_object(new_problem, elements_type, e)
@@ -830,7 +838,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             fluent2_name = other_set_fluent.fluent().name
             fluent2_args = other_set_fluent.args
 
-            elements_type = set_fluent.fluent().type.elements_type
+            set_type = set_fluent.fluent().type
+            assert isinstance(set_type, _SetType)
+            elements_type = set_type.elements_type
             all_elements = self._enumerate_elements(new_problem, elements_type)
 
             clauses = []
@@ -947,14 +957,20 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         new_condition = self._transform_expression(
             old_problem, new_problem, effect.condition
         )
-        elements_type = set_expr.type.elements_type
+        set_type = set_expr.type
+        assert isinstance(set_type, _SetType)
+        elements_type = set_type.elements_type
+        assert elements_type is not None
         new_fluent = self._fluent_mapping[set_expr.fluent().name]
 
         # Case: element is a dynamic int expression (fluent or complex expression)
         # expand into one conditional effect per value in the int range
         if elements_type.is_int_type() and not element.is_int_constant():
+            assert isinstance(elements_type, _IntType)
+            lower, upper = elements_type.lower_bound, elements_type.upper_bound
+            assert lower is not None and upper is not None
             expanded_effects = []
-            for v in range(elements_type.lower_bound, elements_type.upper_bound + 1):
+            for v in range(lower, upper + 1):
                 elem_obj = self._to_element_object(new_problem, elements_type, v)
                 # Guard: only apply this effect when element == v
                 guard = Equals(element, Int(v))
@@ -1025,7 +1041,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
     ) -> List[Effect]:
         """Encode a complete assignment ``target_set := set_expression``."""
         assert effect.fluent.is_fluent_exp()
-        elements_type = effect.fluent.type.elements_type
+        set_type = effect.fluent.type
+        assert isinstance(set_type, _SetType)
+        elements_type = set_type.elements_type
         target = self._fluent_mapping[effect.fluent.fluent().name]
         condition = self._transform_expression(
             old_problem, new_problem, effect.condition
