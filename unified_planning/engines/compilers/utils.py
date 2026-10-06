@@ -47,6 +47,7 @@ from unified_planning.model import (
     NumericConstant,
     SimulatedEffect,
     Parameter,
+    Variable,
     DurationInterval,
     TimePointInterval,
     PlanQualityMetric,
@@ -59,6 +60,7 @@ from unified_planning.model import (
     OperatorKind,
 )
 from unified_planning.plans import ActionInstance
+from unified_planning.model.types import _IntType
 from typing import (
     Any,
     Callable,
@@ -985,9 +987,11 @@ def add_cp_constraints(
             return variables[node]
         fluent = node.fluent() if node.is_fluent_exp() else node.parameter()
         if fluent.type.is_int_type():
-            var = model.NewIntVar(
-                fluent.type.lower_bound, fluent.type.upper_bound, str(node)
-            )
+            fluent_type = fluent.type
+            assert isinstance(fluent_type, _IntType)
+            lower, upper = fluent_type.lower_bound, fluent_type.upper_bound
+            assert lower is not None and upper is not None
+            var = model.NewIntVar(lower, upper, str(node))
         elif fluent.type.is_user_type():
             objects = list(problem.objects(fluent.type))
             if not objects:
@@ -1026,11 +1030,11 @@ def add_cp_constraints(
             )
             if right_node.is_object_exp():
                 obj = right_node.object()
-                idx = object_to_index.get((left_node.type, obj))
-                if idx is not None:
+                object_index = object_to_index.get((left_node.type, obj))
+                if object_index is not None:
                     eq_var = model.NewBoolVar(f"eq_{id(node)}")
-                    model.Add(left_var == idx).OnlyEnforceIf(eq_var)
-                    model.Add(left_var != idx).OnlyEnforceIf(eq_var.Not())
+                    model.Add(left_var == object_index).OnlyEnforceIf(eq_var)
+                    model.Add(left_var != object_index).OnlyEnforceIf(eq_var.Not())
                     return eq_var
             else:
                 right_var = add_cp_constraints(
@@ -1190,15 +1194,23 @@ def add_cp_constraints(
 
         variables_list = list(node.variables())
         body = node.arg(0)
+        em = problem.environment.expression_manager
 
         # Compute all combinations of values for the quantifier variables
-        value_lists = []
-        for var in variables_list:
-            var_type = var.type
+        value_lists: List[List[FNode]] = []
+        for variable in variables_list:
+            assert isinstance(variable, Variable), (
+                "Compile IntVariable with INT_PARAMETERS_AND_VARIABLES_REMOVING "
+                "before translating quantifiers to CP-SAT."
+            )
+            var_type = variable.type
             if var_type.is_user_type():
-                values = list(problem.objects(var_type))
+                values = [em.ObjectExp(obj) for obj in problem.objects(var_type)]
             elif var_type.is_int_type():
-                values = list(range(var_type.lower_bound, var_type.upper_bound + 1))
+                assert isinstance(var_type, _IntType)
+                lower, upper = var_type.lower_bound, var_type.upper_bound
+                assert lower is not None and upper is not None
+                values = [em.Int(value) for value in range(lower, upper + 1)]
             else:
                 raise NotImplementedError(
                     f"Cannot expand quantifier over variable of type {var_type}"
@@ -1206,17 +1218,10 @@ def add_cp_constraints(
             value_lists.append(values)
 
         # For each combination, substitute variables in body and compile
-        em = problem.environment.expression_manager
         instantiations = []
         for combination in itertools.product(*value_lists):
             # Build substitution mapping
-            subs = {}
-            for var, val in zip(variables_list, combination):
-                if var.type.is_user_type():
-                    subs[em.VariableExp(var)] = em.ObjectExp(val)
-                else:  # int
-                    subs[em.VariableExp(var)] = em.Int(val)
-
+            subs: Dict[Expression, Expression] = dict(zip(variables_list, combination))
             substituted = body.substitute(subs).simplify()
             instantiations.append(substituted)
 
@@ -1274,7 +1279,9 @@ def add_effect_bounds_constraints(
         if not fluent.type.is_int_type():
             continue
 
-        lb, ub = fluent.type.lower_bound, fluent.type.upper_bound
+        fluent_type = fluent.type
+        assert isinstance(fluent_type, _IntType)
+        lb, ub = fluent_type.lower_bound, fluent_type.upper_bound
 
         if effect.is_increase() or effect.is_decrease():
             # Increments and decrements depend on the previous value of the
