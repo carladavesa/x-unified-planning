@@ -329,10 +329,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             self._transform_expression(old_problem, new_problem, arg)
             for arg in node.args
         ]
-        if new_problem.has_fluent(fluent.name):
-            return new_problem.fluent(fluent.name)(*new_args)
-        else:
-            return None
+        return new_problem.fluent(fluent.name)(*new_args)
 
     def _transform_member(self, new_problem: Problem, node: FNode) -> FNode:
         """
@@ -889,8 +886,6 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 self._transform_expression(old_problem, new_problem, arg)
                 for arg in node.args
             ]
-            if None in new_args:
-                return None
             if node.is_exists() or node.is_forall():
                 return em.create_node(
                     node.node_type, tuple(new_args), tuple(node.variables())
@@ -925,7 +920,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 old_problem, new_problem, effect.condition
             )
 
-            if new_condition is None or new_condition.is_false() or new_fluent is None:
+            if new_condition.is_false():
                 return None
 
             return Effect(
@@ -1500,7 +1495,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 new_precondition = self._transform_expression(
                     problem, new_problem, precondition
                 )
-                if new_precondition in [FALSE(), None]:
+                if new_precondition.is_false():
                     new_action.add_precondition(FALSE())
                     break
                 new_action.add_precondition(new_precondition)
@@ -1509,10 +1504,6 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         # Transform goals
         for goal in problem.goals:
             new_goal = self._transform_expression(problem, new_problem, goal)
-            if new_goal is None:
-                raise UPProblemDefinitionError(
-                    f"The Goal expression cannot be evaluated!"
-                )
             new_problem.add_goal(new_goal)
 
         # Add effects that affect fluents within cardinality expressions
