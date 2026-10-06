@@ -19,7 +19,7 @@ from unified_planning.model.mixins import (
     ActionsSetMixin,
     FluentsSetMixin,
 )
-from typing import Optional, List, Union, Iterable
+from typing import Optional, List, Union, Iterable, Tuple
 from unified_planning.model.expression import ConstantExpression
 from unified_planning.exceptions import UPUsageError
 
@@ -103,6 +103,7 @@ class Agent(
         typename: Optional["up.model.types.Type"] = None,
         *,
         default_initial_value: Optional["ConstantExpression"] = None,
+        undefined_positions: Optional[List[Tuple[int, ...]]] = None,
         **kwargs: "up.model.types.Type",
     ) -> "up.model.fluent.Fluent":
         """Adds the given `public fluent` to the `problem`.
@@ -112,6 +113,8 @@ class Agent(
         :param typename: If only the `name` of the `fluent` is given, this is the `fluent's type` (passed to the `Fluent` constructor).
         :param default_initial_value: If provided, defines the default value taken in initial state by
                                       a state variable of this `fluent` that has no explicit value.
+        :param undefined_positions: If only the `name` is given, array positions excluded from
+                                    the fluent (passed to the `Fluent` constructor).
         :param kwargs: If only the `name` of the `fluent` is given, these are the `fluent's parameters` (passed to the `Fluent` constructor).
         :return: The `fluent` passed or constructed.
         """
@@ -119,6 +122,7 @@ class Agent(
             fluent_or_name,
             typename,
             default_initial_value=default_initial_value,
+            undefined_positions=undefined_positions,
             **kwargs,
         )
         self._public_fluents.append(fluent)
@@ -130,6 +134,7 @@ class Agent(
         typename: Optional["up.model.types.Type"] = None,
         *,
         default_initial_value: Optional["ConstantExpression"] = None,
+        undefined_positions: Optional[List[Tuple[int, ...]]] = None,
         **kwargs: "up.model.types.Type",
     ) -> "up.model.fluent.Fluent":
         """Adds the given `private fluent` to the `problem`.
@@ -139,6 +144,8 @@ class Agent(
         :param typename: If only the `name` of the `fluent` is given, this is the `fluent's type` (passed to the `Fluent` constructor).
         :param default_initial_value: If provided, defines the default value taken in initial state by
                                       a state variable of this `fluent` that has no explicit value.
+        :param undefined_positions: If only the `name` is given, array positions excluded from
+                                    the fluent (passed to the `Fluent` constructor).
         :param kwargs: If only the `name` of the `fluent` is given, these are the `fluent's parameters` (passed to the `Fluent` constructor).
         :return: The `fluent` passed or constructed.
         """
@@ -146,6 +153,7 @@ class Agent(
             fluent_or_name,
             typename,
             default_initial_value=default_initial_value,
+            undefined_positions=undefined_positions,
             **kwargs,
         )
 

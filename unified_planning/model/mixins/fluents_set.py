@@ -20,7 +20,7 @@ from unified_planning.model.expression import ConstantExpression
 from unified_planning.model.mixins.name_index import NameIndex
 from unified_planning.model.types import _ArrayType
 from unified_planning.exceptions import UPProblemDefinitionError, UPValueError
-from typing import Optional, List, Dict, Union, Iterable, Set
+from typing import Optional, List, Dict, Union, Iterable, Set, Tuple
 
 
 class FluentsSetMixin:
@@ -102,6 +102,7 @@ class FluentsSetMixin:
         typename: Optional["up.model.types.Type"] = None,
         *,
         default_initial_value: Optional["ConstantExpression"] = None,
+        undefined_positions: Optional[List[Tuple[int, ...]]] = None,
         **kwargs: "up.model.types.Type",
     ) -> "up.model.fluent.Fluent":
         """Adds the given `fluent` to the `problem`.
@@ -115,6 +116,8 @@ class FluentsSetMixin:
                                       For array fluents, the default is applied to every position of the
                                       array; positions listed in `undefined_positions` are excluded, as
                                       they are removed during compilation.
+        :param undefined_positions: If only the `name` is given, array positions excluded from
+                                    the fluent (passed to the `Fluent` constructor).
         :param kwargs: If only the `name` of the `fluent` is given, these are the `fluent's parameters` (passed to the `Fluent` constructor).
         :return: The `fluent` passed or constructed.
 
@@ -131,14 +134,19 @@ class FluentsSetMixin:
         >>>
         """
         if isinstance(fluent_or_name, up.model.fluent.Fluent):
-            assert len(kwargs) == 0 and typename is None
+            assert len(kwargs) == 0 and typename is None and undefined_positions is None
             fluent = fluent_or_name
             assert fluent.environment == self._env, (
                 "Fluent does not have the same environment of the problem"
             )
         else:
             fluent = up.model.fluent.Fluent(
-                fluent_or_name, typename, None, environment=self.environment, **kwargs
+                fluent_or_name,
+                typename,
+                None,
+                environment=self.environment,
+                undefined_positions=undefined_positions,
+                **kwargs,
             )
         if self._has_name_method(fluent.name):
             msg = f"Name {fluent.name} already defined! Different elements of a problem can have the same name if the environment flag error_used_name is disabled."
