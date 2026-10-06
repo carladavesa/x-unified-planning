@@ -4,7 +4,7 @@ This module implements the scrabble benchmark as a `Domain`.
 It is intended to be executed via `run.py`.
 
 Example:
-  python run.py --domain scrabble --compilation up --solving fast-downward
+  python run.py --domain scrabble --compilation M1 --solving fast-downward
 """
 from itertools import product
 from typing import Dict, Optional
@@ -212,8 +212,8 @@ class ScrabbleDomain(Domain):
                 # if the position is empty we remove letter from hand and place it in the position
                 for l in range(n_letters):
                     place_word_h.add_effect(hand, SetRemove(hand, letter_indices[l]), Equals(board[r][c+l], none))
-                    place_word_h.add_effect(board[r][c + l], word[l], Equals(board[r][c + l], none))
-                place_word_h.add_effect(is_first_word, False, is_first_word)
+                    place_word_h.add_effect(board[r][c + l], word[l])
+                place_word_h.add_effect(is_first_word, False)
                 place_word_h.add_effect(hand_full, False)
 
                 scrabble_problem.add_action(place_word_h)
@@ -258,8 +258,8 @@ class ScrabbleDomain(Domain):
                 # if the position is empty we remove letter from hand and place it in the position
                 for l in range(n_letters):
                     place_word_v.add_effect(hand, SetRemove(hand, letter_indices[l]), Equals(board[r + l][c], none))
-                    place_word_v.add_effect(board[r + l][c], word[l], Equals(board[r + l][c], none))
-                place_word_v.add_effect(is_first_word, False, is_first_word)
+                    place_word_v.add_effect(board[r + l][c], word[l])
+                place_word_v.add_effect(is_first_word, False)
                 place_word_v.add_effect(hand_full, False)
 
 
