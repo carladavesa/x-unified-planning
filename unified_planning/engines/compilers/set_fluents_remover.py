@@ -593,7 +593,12 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             if card_parameters:
                 # New cardinality fluent contains a value from 0 to the number of objects of the type it contains in the problem
                 new_fluent = Fluent(
-                    fluent_name, IntType(0, len(elements)), card_parameters
+                    fluent_name,
+                    IntType(0, len(elements)),
+                    [
+                        model.Parameter(p.name, p.type, p.environment)
+                        for p in card_parameters
+                    ],
                 )
                 default_initial_value = len(
                     old_problem.fluents_defaults[old_fluent].set_constant_value()
@@ -1080,48 +1085,6 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             )
         return new_effects
 
-    def _evaluate_expression(
-        self,
-        problem: Problem,
-        expression: FNode,
-        fluent_to_update: Optional[FNode] = None,
-        new_value: Optional[FNode] = None,
-        effect_type: Optional[str] = None,
-    ) -> FNode:
-        """
-        Evaluate expression, used to compute initial values and to determine how effects change card fluents.
-        """
-        em = problem.environment.expression_manager
-        # Base cases
-        if (
-            expression.is_constant()
-            or expression.is_parameter_exp()
-            or expression.is_object_exp()
-        ):
-            return expression
-        # Fluent expression
-        if expression.is_fluent_exp():
-            # Check if this is the fluent being updated
-            if fluent_to_update is not None and fluent_to_update == expression:
-                if effect_type == "increase":
-                    return em.Plus(expression, new_value).simplify()
-                elif effect_type == "decrease":
-                    return em.Minus(expression, new_value).simplify()
-                else:
-                    return new_value
-
-            # Regular fluent evaluation
-            return problem.initial_value(expression)
-
-        # Recursive case
-        new_args = [
-            self._evaluate_expression(
-                problem, arg, fluent_to_update, new_value, effect_type
-            )
-            for arg in expression.args
-        ]
-        return em.create_node(expression.node_type, tuple(new_args)).simplify()
-
     def _find_affected_fluents(self, expression: FNode) -> List[FNode]:
         """Extract all fluent expressions from an expression tree."""
         if expression.is_fluent_exp():
@@ -1152,7 +1115,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         card: FNode,
         old_value: FNode,
         new_effects: List[Effect],
-        equality_conditions: List[FNode] = True,
+        equality_conditions: List[FNode],
         effect_condition: Optional[FNode] = None,
     ):
         """Add conditional effects to maintain cardinality helper fluents."""
