@@ -28,6 +28,7 @@ from unified_planning.model import (
     ProblemKind,
     Fluent,
     Effect,
+    Expression,
     FNode,
     InstantaneousAction,
 )
@@ -1122,6 +1123,18 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         if effect_condition is None:
             effect_condition = TRUE()
         card_expr = self._cardinality_registry[card.fluent().name]
+        if card_expr.is_fluent_exp():
+            # Quantified variables belong to the expression that reads the
+            # cardinality. Update the instance written by this action instead.
+            substitutions: Dict[Expression, Expression] = {}
+            for equality in equality_conditions:
+                if equality.arg(1).is_variable_exp():
+                    substitutions.setdefault(equality.arg(1), equality.arg(0))
+            card = card.substitute(substitutions)
+            equality_conditions = [
+                equality.substitute(substitutions).simplify()
+                for equality in equality_conditions
+            ]
         # A complete assignment to a tracked set replaces every membership
         # value.  Recompute its cardinality from the resulting expression,
         # rather than from the number of generated Boolean effects.
@@ -1140,25 +1153,11 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 )
                 for element in self._enumerate_elements(new_problem, elements_type)
             ]
-            card_args = list(card.args)
-            remaining_conditions = []
-            for equality in equality_conditions:
-                # A variable from a quantified cardinality expression must
-                # be replaced by the action parameter that writes the set;
-                # it cannot remain free in the generated effect.
-                if equality.arg(1).is_variable_exp():
-                    card_args = [
-                        equality.arg(0) if arg == equality.arg(1) else arg
-                        for arg in card_args
-                    ]
-                else:
-                    remaining_conditions.append(equality)
-            updated_card = card.fluent()(*card_args)
-            matching_condition = And(*remaining_conditions).simplify()
+            matching_condition = And(*equality_conditions).simplify()
             for cardinality in range(len(memberships) + 1):
                 exact_values = self._exactly_k_combinations(memberships, cardinality)
                 action.add_effect(
-                    updated_card,
+                    card,
                     cardinality,
                     And(
                         effect_condition,
@@ -1429,7 +1428,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     ):
                         if old_effect_arg == tracked_arg:
                             continue
-                        elif old_effect_arg.is_parameter_exp():
+                        elif (
+                            old_effect_arg.is_parameter_exp()
+                            or tracked_arg.is_variable_exp()
+                        ):
                             equality_conditions.append(
                                 Equals(old_effect_arg, tracked_arg)
                             )
