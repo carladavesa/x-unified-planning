@@ -120,8 +120,8 @@ class ExpressionManager(object):
         both as a list of arguments or as a tuple of arguments:
         e.g. And([a,b,c]) and And(a,b,c)
         are both valid, and they are converted into (a,b,c)
-        Sets are treated as single values (set constants), not expanded, since a
-        set is a value rather than an argument list.
+        Python ``set`` values are treated as set constants, not expanded.
+        Other iterables, including ``frozenset``, supply an argument list.
         """
         for a in args:
             # FNode has no __iter__, so this check also
@@ -129,9 +129,7 @@ class ExpressionManager(object):
             # the overwhelmingly common case of an already-promoted expression.
             if isinstance(a, up.model.fnode.FNode):
                 yield a
-            elif isinstance(a, ABCIterable) and not isinstance(
-                a, (str, set, frozenset)
-            ):
+            elif isinstance(a, ABCIterable) and not isinstance(a, (str, set)):
                 for p in a:
                     yield p
             else:
