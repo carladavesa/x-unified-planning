@@ -387,10 +387,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         set_expr_2 = node.args[1]
 
         def get_elements_type(set_expr: FNode):
-            if set_expr.is_fluent_exp():
-                return set_expr.fluent().type.elements_type
-            if set_expr.is_set_constant():
-                return set_expr.type.elements_type
+            if set_expr.is_fluent_exp() or set_expr.is_set_constant():
+                set_type = set_expr.type
+                assert isinstance(set_type, _SetType)
+                return set_type.elements_type
             if (
                 set_expr.is_set_union()
                 or set_expr.is_set_intersect()
@@ -421,7 +421,8 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         """
         set1 = node.args[0]
         set2 = node.args[1]
-        assert set1.type.is_set_type() and set2.type.is_set_type(), (
+        set_type1, set_type2 = set1.type, set2.type
+        assert isinstance(set_type1, _SetType) and isinstance(set_type2, _SetType), (
             "Both arguments must be sets"
         )
         assert set1.is_fluent_exp() or set1.is_constant(), (
@@ -432,7 +433,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         )
 
         elements_type = (
-            set1.type.elements_type if set1.is_fluent_exp() else set2.type.elements_type
+            set_type1.elements_type if set1.is_fluent_exp() else set_type2.elements_type
         )
         elements = self._enumerate_elements(new_problem, elements_type)
         and_expr = []
@@ -539,11 +540,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         Transform |set_expr| into an integer helper fluent representing the cardinality.
         """
         set_expr = node.args[0]
-        elements_type = (
-            set_expr.type.elements_type
-            if set_expr.is_fluent_exp()
-            else set_expr.args[0].type.elements_type
-        )
+        set_type = set_expr.type if set_expr.is_fluent_exp() else set_expr.arg(0).type
+        assert isinstance(set_type, _SetType)
+        elements_type = set_type.elements_type
         elements = self._enumerate_elements(new_problem, elements_type)
         # Count encoding
         if self.cardinality_encoding == "count":
