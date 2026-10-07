@@ -383,6 +383,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         Transform: S1 subseteq S2
         Into: for every element o, member(S1, o) -> member(S2, o)
         """
+        simplified = node.simplify()
+        if simplified.is_bool_constant():
+            return simplified
         set_expr_1 = node.args[0]
         set_expr_2 = node.args[1]
 
@@ -419,6 +422,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         Transform: set_1 ∩ set_2 == ∅
         Into: And([Not(And(fluent1(obj1, ...), fluent2(obj1, ...))), ...])
         """
+        simplified = node.simplify()
+        if simplified.is_bool_constant():
+            return simplified
         set1 = node.args[0]
         set2 = node.args[1]
         set_type1, set_type2 = set1.type, set2.type

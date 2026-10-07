@@ -340,7 +340,7 @@ class ExpressionManager(object):
 
             * ``set_expr1 ⊆ set_expr2``
 
-        | Restriction: ``set_expr1`` and ``set_expr1`` must be of ``set type`` and the elements have to be of the same type.
+        | Restriction: ``set_expr1`` and ``set_expr2`` must be of ``set type`` with the same element type, unless one of them is the empty set.
 
         :param set_expr1: The set expression to check if it is a subseteq of ``set_expr2``.
         :param set_expr2: The set expression (can be a fluent returning a set or a set constant).
@@ -359,7 +359,7 @@ class ExpressionManager(object):
 
             * ``set_expr1 ∩ set_expr2 == ∅``
 
-        | Restriction: ``set_expr1`` and ``set_expr1`` must be of ``set type`` and the elements have to be of the same type.
+        | Restriction: ``set_expr1`` and ``set_expr2`` must be of ``set type`` with the same element type, unless one of them is the empty set.
 
         :param set_expr1: The element to check if it is a member of ``set_expr``.
         :param set_expr2: The set expression (can be a fluent returning a set or a set constant).

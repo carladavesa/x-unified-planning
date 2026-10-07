@@ -590,6 +590,8 @@ class TypeChecker(walkers.dag.DagWalker):
         set2 = args[1]
         if not isinstance(set1, _SetType) or not isinstance(set2, _SetType):
             return None
+        if set1.elements_type is None or set2.elements_type is None:
+            return BOOL
         if set1.elements_type != set2.elements_type:
             return None
         return BOOL
@@ -604,6 +606,8 @@ class TypeChecker(walkers.dag.DagWalker):
         set2 = args[1]
         if not isinstance(set1, _SetType) or not isinstance(set2, _SetType):
             return None
+        if set1.elements_type is None or set2.elements_type is None:
+            return BOOL
         if set1.elements_type != set2.elements_type:
             return None
         # fer alguna altra comprovacio?
