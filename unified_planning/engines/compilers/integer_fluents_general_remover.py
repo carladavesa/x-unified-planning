@@ -1036,7 +1036,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         for fnode, var in list(variables.items()):
             val = get_scalar_solution_value(solution, str(fnode))
             if val is not None:
-                cp_model_obj.Add(var == val)
+                cp_model_obj.add(var == val)
 
         fixed_values = tuple(
             sorted(
@@ -1050,7 +1050,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         if cached is not None:
             return cached
 
-        cp_model_obj.Add(result_var == 1)
+        cp_model_obj.add(result_var == 1)
         true_solutions = solve_with_cp_sat(variables, cp_model_obj) or []
 
         unknown_vars = {
@@ -1554,7 +1554,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             result_var = add_cp_constraints(
                 problem, And(cp_precs), variables, cp_model_obj, self._object_to_index
             )
-            cp_model_obj.Add(result_var == 1)
+            cp_model_obj.add(result_var == 1)
 
         # Bounds constraints (object: only if dependent_effects; binary: always)
         if self.representation == "object":

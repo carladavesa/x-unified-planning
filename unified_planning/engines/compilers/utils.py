@@ -893,7 +893,7 @@ def solve_with_cp_sat(variables, cp_model_obj, projection_variables=None):
         )
         # Block this projection, while allowing CP-SAT to use any values for
         # non-projected witness variables in the next iteration.
-        cp_model_obj.AddForbiddenAssignments(projection_cp_vars, [values])
+        cp_model_obj.add_forbidden_assignments(projection_cp_vars, [values])
     return solutions or None
 
 
@@ -991,18 +991,18 @@ def add_cp_constraints(
             assert isinstance(fluent_type, _IntType)
             lower, upper = fluent_type.lower_bound, fluent_type.upper_bound
             assert lower is not None and upper is not None
-            var = model.NewIntVar(lower, upper, str(node))
+            var = model.new_int_var(lower, upper, str(node))
         elif fluent.type.is_user_type():
             objects = list(problem.objects(fluent.type))
             if not objects:
                 raise UPProblemDefinitionError(
                     f"User type {fluent.type} has no objects, cannot create variable for fluent {fluent}"
                 )
-            var = model.NewIntVar(0, len(objects) - 1, str(node))
+            var = model.new_int_var(0, len(objects) - 1, str(node))
             for idx, obj in enumerate(objects):
                 object_to_index[(fluent.type, obj)] = idx
         else:
-            var = model.NewBoolVar(str(node))
+            var = model.new_bool_var(str(node))
         variables[node] = var
         return var
 
@@ -1017,7 +1017,7 @@ def add_cp_constraints(
             raise UPProblemDefinitionError(
                 f"User type {param.type} has no objects, cannot create variable for parameter {param}"
             )
-        var = model.NewIntVar(0, len(objects) - 1, str(node))
+        var = model.new_int_var(0, len(objects) - 1, str(node))
         variables[node] = var
         return var
 
@@ -1032,17 +1032,17 @@ def add_cp_constraints(
                 obj = right_node.object()
                 object_index = object_to_index.get((left_node.type, obj))
                 if object_index is not None:
-                    eq_var = model.NewBoolVar(f"eq_{id(node)}")
-                    model.Add(left_var == object_index).OnlyEnforceIf(eq_var)
-                    model.Add(left_var != object_index).OnlyEnforceIf(eq_var.Not())
+                    eq_var = model.new_bool_var(f"eq_{id(node)}")
+                    model.add(left_var == object_index).OnlyEnforceIf(eq_var)
+                    model.add(left_var != object_index).OnlyEnforceIf(eq_var.Not())
                     return eq_var
             else:
                 right_var = add_cp_constraints(
                     problem, right_node, variables, model, object_to_index
                 )
-                eq_var = model.NewBoolVar(f"eq_{id(node)}")
-                model.Add(left_var == right_var).OnlyEnforceIf(eq_var)
-                model.Add(left_var != right_var).OnlyEnforceIf(eq_var.Not())
+                eq_var = model.new_bool_var(f"eq_{id(node)}")
+                model.add(left_var == right_var).OnlyEnforceIf(eq_var)
+                model.add(left_var != right_var).OnlyEnforceIf(eq_var.Not())
                 return eq_var
         else:
             left = add_cp_constraints(
@@ -1051,9 +1051,9 @@ def add_cp_constraints(
             right = add_cp_constraints(
                 problem, node.arg(1), variables, model, object_to_index
             )
-            eq_var = model.NewBoolVar(f"eq_{id(node)}")
-            model.Add(left == right).OnlyEnforceIf(eq_var)
-            model.Add(left != right).OnlyEnforceIf(eq_var.Not())
+            eq_var = model.new_bool_var(f"eq_{id(node)}")
+            model.add(left == right).OnlyEnforceIf(eq_var)
+            model.add(left != right).OnlyEnforceIf(eq_var.Not())
             return eq_var
 
     # -- AND --
@@ -1062,10 +1062,10 @@ def add_cp_constraints(
             add_cp_constraints(problem, a, variables, model, object_to_index)
             for a in node.args
         ]
-        and_var = model.NewBoolVar(f"and_{id(node)}")
-        model.AddBoolAnd(*children).OnlyEnforceIf(and_var)
+        and_var = model.new_bool_var(f"and_{id(node)}")
+        model.add_bool_and(*children).OnlyEnforceIf(and_var)
         for child in children:
-            model.AddImplication(and_var, child)
+            model.add_implication(and_var, child)
         return and_var
 
     # -- OR --
@@ -1074,10 +1074,10 @@ def add_cp_constraints(
             add_cp_constraints(problem, a, variables, model, object_to_index)
             for a in node.args
         ]
-        or_var = model.NewBoolVar(f"or_{id(node)}")
-        model.AddBoolOr(*children).OnlyEnforceIf(or_var)
+        or_var = model.new_bool_var(f"or_{id(node)}")
+        model.add_bool_or(*children).OnlyEnforceIf(or_var)
         for child in children:
-            model.AddImplication(child, or_var)
+            model.add_implication(child, or_var)
         return or_var
 
     # -- IMPLIES --
@@ -1088,10 +1088,10 @@ def add_cp_constraints(
         right = add_cp_constraints(
             problem, node.arg(1), variables, model, object_to_index
         )
-        impl_var = model.NewBoolVar(f"impl_{id(node)}")
-        model.AddBoolOr(left.Not(), right).OnlyEnforceIf(impl_var)
-        model.Add(left == 1).OnlyEnforceIf(impl_var.Not())
-        model.Add(right == 0).OnlyEnforceIf(impl_var.Not())
+        impl_var = model.new_bool_var(f"impl_{id(node)}")
+        model.add_bool_or(left.Not(), right).OnlyEnforceIf(impl_var)
+        model.add(left == 1).OnlyEnforceIf(impl_var.Not())
+        model.add(right == 0).OnlyEnforceIf(impl_var.Not())
         return impl_var
 
     # -- NOT --
@@ -1099,8 +1099,8 @@ def add_cp_constraints(
         inner = add_cp_constraints(
             problem, node.arg(0), variables, model, object_to_index
         )
-        not_var = model.NewBoolVar(f"not_{id(node)}")
-        model.Add(not_var == (1 - inner))
+        not_var = model.new_bool_var(f"not_{id(node)}")
+        model.add(not_var == (1 - inner))
         return not_var
 
     # -- LT --
@@ -1111,9 +1111,9 @@ def add_cp_constraints(
         right = add_cp_constraints(
             problem, node.arg(1), variables, model, object_to_index
         )
-        lt_var = model.NewBoolVar(f"lt_{id(node)}")
-        model.Add(left < right).OnlyEnforceIf(lt_var)
-        model.Add(left >= right).OnlyEnforceIf(lt_var.Not())
+        lt_var = model.new_bool_var(f"lt_{id(node)}")
+        model.add(left < right).OnlyEnforceIf(lt_var)
+        model.add(left >= right).OnlyEnforceIf(lt_var.Not())
         return lt_var
 
     # -- LE --
@@ -1124,9 +1124,9 @@ def add_cp_constraints(
         right = add_cp_constraints(
             problem, node.arg(1), variables, model, object_to_index
         )
-        le_var = model.NewBoolVar(f"le_{id(node)}")
-        model.Add(left <= right).OnlyEnforceIf(le_var)
-        model.Add(left > right).OnlyEnforceIf(le_var.Not())
+        le_var = model.new_bool_var(f"le_{id(node)}")
+        model.add(left <= right).OnlyEnforceIf(le_var)
+        model.add(left > right).OnlyEnforceIf(le_var.Not())
         return le_var
 
     # -- PLUS --
@@ -1171,8 +1171,8 @@ def add_cp_constraints(
                     result.Proto().domain[-1] * arg.Proto().domain[0],
                     result.Proto().domain[-1] * arg.Proto().domain[-1],
                 )
-                temp = model.NewIntVar(lb, ub, f"mult_{id(node)}")
-                model.AddMultiplicationEquality(temp, result, arg)
+                temp = model.new_int_var(lb, ub, f"mult_{id(node)}")
+                model.add_multiplication_equality(temp, result, arg)
                 result = temp
         return result
 
@@ -1184,8 +1184,8 @@ def add_cp_constraints(
             for a in node.args
         ]
         n = len(children)
-        count_var = model.NewIntVar(0, n, f"count_{id(node)}")
-        model.Add(count_var == sum(children))
+        count_var = model.new_int_var(0, n, f"count_{id(node)}")
+        model.add(count_var == sum(children))
         return count_var
 
     if node.is_forall() or node.is_exists():
@@ -1233,15 +1233,15 @@ def add_cp_constraints(
 
         # Combine: AND for forall, OR for exists
         if node.is_forall():
-            result_var = model.NewBoolVar(f"forall_{id(node)}")
-            model.AddBoolAnd(child_vars).OnlyEnforceIf(result_var)
-            model.AddBoolOr([v.Not() for v in child_vars]).OnlyEnforceIf(
+            result_var = model.new_bool_var(f"forall_{id(node)}")
+            model.add_bool_and(child_vars).OnlyEnforceIf(result_var)
+            model.add_bool_or([v.Not() for v in child_vars]).OnlyEnforceIf(
                 result_var.Not()
             )
         else:  # exists
-            result_var = model.NewBoolVar(f"exists_{id(node)}")
-            model.AddBoolOr(child_vars).OnlyEnforceIf(result_var)
-            model.AddBoolAnd([v.Not() for v in child_vars]).OnlyEnforceIf(
+            result_var = model.new_bool_var(f"exists_{id(node)}")
+            model.add_bool_or(child_vars).OnlyEnforceIf(result_var)
+            model.add_bool_and([v.Not() for v in child_vars]).OnlyEnforceIf(
                 result_var.Not()
             )
 
@@ -1308,11 +1308,11 @@ def add_effect_bounds_constraints(
                 cond_var = add_cp_constraints(
                     problem, effect.condition, variables, model, object_to_index
                 )
-                model.Add(result_expr >= lb).OnlyEnforceIf(cond_var)
-                model.Add(result_expr <= ub).OnlyEnforceIf(cond_var)
+                model.add(result_expr >= lb).OnlyEnforceIf(cond_var)
+                model.add(result_expr <= ub).OnlyEnforceIf(cond_var)
             else:
-                model.Add(result_expr >= lb)
-                model.Add(result_expr <= ub)
+                model.add(result_expr >= lb)
+                model.add(result_expr <= ub)
 
         else:
             # An assignment can copy a value from a wider integer fluent as
@@ -1327,11 +1327,11 @@ def add_effect_bounds_constraints(
                 cond_var = add_cp_constraints(
                     problem, effect.condition, variables, model, object_to_index
                 )
-                model.Add(expr >= lb).OnlyEnforceIf(cond_var)
-                model.Add(expr <= ub).OnlyEnforceIf(cond_var)
+                model.add(expr >= lb).OnlyEnforceIf(cond_var)
+                model.add(expr <= ub).OnlyEnforceIf(cond_var)
             else:
-                model.Add(expr >= lb)
-                model.Add(expr <= ub)
+                model.add(expr >= lb)
+                model.add(expr <= ub)
 
 
 def evaluate_with_solution(
