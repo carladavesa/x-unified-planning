@@ -26,6 +26,7 @@ from unified_planning.model.types import (
     TIME,
     _UserType,
     _IntType,
+    _RealType,
     _ArrayType,
     _SetType,
 )
@@ -38,17 +39,33 @@ import math
 
 def combine_types(
     types: List["unified_planning.model.types.Type"],
+    type_manager: "unified_planning.model.type_manager.TypeManager",
 ) -> "unified_planning.model.types.Type":
+    if not types:
+        raise UPTypeError("Cannot infer the element type of an empty array.")
     x = types[0]
-    if x.is_int_type():
-        assert isinstance(x, _IntType)
-        min_int, max_int = x.lower_bound, x.upper_bound
-        for t in types[1:]:
-            assert isinstance(t, _IntType)
-            lower, upper = t.lower_bound, t.upper_bound
-            min_int = None if min_int is None or lower is None else min(min_int, lower)
-            max_int = None if max_int is None or upper is None else max(max_int, upper)
-        return _IntType(min_int, max_int)
+    if all(isinstance(t, (_IntType, _RealType)) for t in types):
+        lower_bounds = []
+        upper_bounds = []
+        for t in types:
+            assert isinstance(t, (_IntType, _RealType))
+            lower_bounds.append(t.lower_bound)
+            upper_bounds.append(t.upper_bound)
+        lower = (
+            None
+            if None in lower_bounds
+            else min(b for b in lower_bounds if b is not None)
+        )
+        upper = (
+            None
+            if None in upper_bounds
+            else max(b for b in upper_bounds if b is not None)
+        )
+        if any(t.is_real_type() for t in types):
+            return type_manager.RealType(lower, upper)
+        assert lower is None or isinstance(lower, int)
+        assert upper is None or isinstance(upper, int)
+        return type_manager.IntType(lower, upper)
     elif x.is_array_type():
         assert isinstance(x, _ArrayType)
         all_types = []
@@ -57,7 +74,7 @@ def combine_types(
             assert isinstance(t, _ArrayType)
             assert t.size == size
             all_types.append(t.elements_type)
-        return _ArrayType(size, combine_types(all_types))
+        return type_manager.ArrayType(size, combine_types(all_types, type_manager))
     elif x.is_user_type():
         global_user_type = x
         for t in types:
@@ -82,6 +99,7 @@ def combine_types(
         for t in types:
             assert t.is_bool_type()
         return BOOL
+    raise UPTypeError(f"Cannot infer a common element type for {types}.")
 
 
 class TypeChecker(walkers.dag.DagWalker):
@@ -298,7 +316,7 @@ class TypeChecker(walkers.dag.DagWalker):
         all_types = []
         for e in expression.array_constant_value():
             all_types.append(e.type)
-        elements_type = combine_types(all_types)
+        elements_type = combine_types(all_types, self.environment.type_manager)
         return self.environment.type_manager.ArrayType(size, elements_type)
 
     @walkers.handles(OperatorKind.SET_CONSTANT)
@@ -312,7 +330,7 @@ class TypeChecker(walkers.dag.DagWalker):
         if len(all_types) == 0:
             return self.environment.type_manager.SetType(None)
 
-        elements_type = combine_types(all_types)
+        elements_type = combine_types(all_types, self.environment.type_manager)
         return self.environment.type_manager.SetType(elements_type)
 
     @walkers.handles(OperatorKind.INT_CONSTANT)

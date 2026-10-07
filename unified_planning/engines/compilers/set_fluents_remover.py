@@ -78,6 +78,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         self.cardinality_encoding = cardinality_encoding
         self._fluent_mapping: Dict[str, Fluent] = {}
         self._cardinality_registry: Dict[str, FNode] = {}
+        self._union_cardinalities: Dict[FNode, FNode] = {}
         self._cardinality_deltas: Dict[FNode, Dict[Tuple[FNode, int], FNode]] = {}
         self._int_range_types: Dict[str, model.Type] = {}  # type_name → UserType
         self._int_to_obj: Dict[str, Dict[int, model.Object]] = {}
@@ -638,105 +639,135 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 return new_fluent()
 
         elif set_expr.is_set_union():
-            # Create an integer helper fluent for cardinality of a union expression.
-            set1, set2 = set_expr.args
-            parameters1 = [p.parameter() for p in set1.args if p.is_parameter_exp()]
-            parameters2 = [p.parameter() for p in set2.args if p.is_parameter_exp()]
-            old_fluent1 = set1.fluent()
-            old_fluent2 = set2.fluent()
-
-            fluent_name = f"card_{set1.fluent().name}_u_{set2.fluent().name}"
-
-            if new_problem.has_fluent(fluent_name):
-                return new_problem.fluent(fluent_name)(*set_expr.args)
-
-            # Both set operands are parameterized in this branch
-            if parameters1 and parameters2:
-                new_fluent = Fluent(
-                    fluent_name, IntType(0, len(elements)), parameters1 + parameters2
-                )
-
-                default_value = len(
-                    set(
-                        old_problem.fluents_defaults[old_fluent1].set_constant_value()
-                        + old_problem.fluents_defaults[old_fluent2].set_constant_value()
-                    )
-                )
-                default_initial_value = default_value
-
-                self._cardinality_registry[fluent_name] = set_expr
-                new_problem.add_fluent(
-                    new_fluent, default_initial_value=default_initial_value
-                )
-
-                card_parameters = [
-                    a.parameter() if a.is_parameter_exp() else a.variable()
-                    for a in set_expr.args
-                    if a.is_parameter_exp() or a.is_variable_exp()
-                ]
-                parameter_values = self._get_param_combinations(
-                    new_problem, card_parameters
-                )
-                for p in parameter_values:
-                    try:
-                        initial_value1 = old_problem.explicit_initial_values[
-                            old_fluent1(*p)
-                        ].set_constant_value()
-                        initial_value2 = old_problem.explicit_initial_values[
-                            old_fluent2(*p)
-                        ].set_constant_value()
-                        new_problem.set_initial_value(
-                            new_fluent(*p), len(initial_value1 | initial_value2)
-                        )
-                    except:
-                        pass
-                return new_fluent(*set_expr.args)
-
-            # Only one operand is parameterized.
-            elif parameters1 or parameters2:
-                raise NotImplementedError(
-                    f"Cardinality of {set_expr.node_type} with only one expression "
-                    f"containing action parameters not supported yet"
-                )
-
-            else:
-                fluent_name = f"card_{set1.fluent().name}_{str(*set1.args)}_u_{str(set2.fluent().name)}_{str(*set2.args)}"
-
-                if new_problem.has_fluent(fluent_name):
-                    return new_problem.fluent(fluent_name)(*set_expr.args)
-
-                new_fluent = Fluent(fluent_name, IntType(0, len(elements)))
-                default_value = len(
-                    set(
-                        old_problem.fluents_defaults[old_fluent1].set_constant_value()
-                        | old_problem.fluents_defaults[old_fluent2].set_constant_value()
-                    )
-                )
-                default_initial_value = default_value
-                new_problem.add_fluent(
-                    new_fluent, default_initial_value=default_initial_value
-                )
-
-                # Initialize with arguments parameters (if so)
-                try:
-                    initial_value1 = old_problem.explicit_initial_values[
-                        old_fluent1(*set1.args)
-                    ].set_constant_value()
-                    initial_value2 = old_problem.explicit_initial_values[
-                        old_fluent1(*set2.args)
-                    ].set_constant_value()
-                    new_problem.set_initial_value(
-                        new_fluent(*set_expr.args), len(initial_value1 | initial_value2)
-                    )
-                except:
-                    pass
-
-                self._cardinality_registry[fluent_name] = set_expr
-                return new_fluent()
+            return self._transform_union_cardinality(old_problem, new_problem, set_expr)
 
         raise NotImplementedError(
             f"Cardinality of {set_expr.node_type} not supported yet."
         )
+
+    def _initial_set_value(self, problem: Problem, expression: FNode) -> set[FNode]:
+        """Evaluate a ground set expression in the original initial state."""
+        if expression.is_fluent_exp():
+            value = problem.initial_value(expression)
+            assert value is not None
+            return set(value.set_constant_value())
+        if expression.is_set_constant():
+            return set(expression.set_constant_value())
+        left = self._initial_set_value(problem, expression.arg(0))
+        right = self._initial_set_value(problem, expression.arg(1))
+        if expression.is_set_union():
+            return left | right
+        if expression.is_set_intersect():
+            return left & right
+        if expression.is_set_difference():
+            return left - right
+        raise NotImplementedError(f"Initial value of {expression} is not supported.")
+
+    def _transform_union_cardinality(
+        self, old_problem: Problem, new_problem: Problem, expression: FNode
+    ) -> FNode:
+        if expression in self._union_cardinalities:
+            return self._union_cardinalities[expression]
+        em = new_problem.environment.expression_manager
+        parameters: List[FNode] = []
+
+        def collect_parameters(node: FNode):
+            if node.is_parameter_exp() or node.is_variable_exp():
+                if node not in parameters:
+                    parameters.append(node)
+            for arg in node.args:
+                collect_parameters(arg)
+
+        collect_parameters(expression)
+        set_type = expression.type
+        assert isinstance(set_type, _SetType)
+        elements = self._enumerate_elements(new_problem, set_type.elements_type)
+        helper = Fluent(
+            get_fresh_name(new_problem, "card_union"),
+            new_problem.environment.type_manager.IntType(0, len(elements)),
+            [
+                model.Parameter(f"p{i}", p.type, new_problem.environment)
+                for i, p in enumerate(parameters)
+            ],
+            environment=new_problem.environment,
+        )
+        new_problem.add_fluent(helper, default_initial_value=0)
+        for values in self._get_param_combinations(new_problem, helper.signature):
+            substitutions: Dict[Expression, Expression] = dict(zip(parameters, values))
+            ground_expression = expression.substitute(substitutions)
+            new_problem.set_initial_value(
+                helper(*values),
+                len(self._initial_set_value(old_problem, ground_expression)),
+            )
+        result = em.FluentExp(helper, parameters)
+        self._union_cardinalities[expression] = result
+        return result
+
+    def _add_union_cardinality_effects(
+        self, new_problem: Problem, action: InstantaneousAction
+    ):
+        """Count changes to union membership after all simultaneous set effects."""
+        if not self._union_cardinalities:
+            return
+        em = new_problem.environment.expression_manager
+        effects = [
+            ground
+            for effect in action.effects
+            for ground in effect.expand_effect(new_problem)
+            if ground.fluent.type.is_bool_type()
+        ]
+        for expression, card in self._union_cardinalities.items():
+            set_type = expression.type
+            assert isinstance(set_type, _SetType)
+            elements = self._enumerate_elements(new_problem, set_type.elements_type)
+            for values in self._get_param_combinations(
+                new_problem, card.fluent().signature
+            ):
+                substitutions: Dict[Expression, Expression] = dict(
+                    zip(card.args, values)
+                )
+                ground_expression = expression.substitute(substitutions)
+                ground_card = card.fluent()(*values)
+                for element in elements:
+                    before = self._get_element_membership_expr(
+                        ground_expression, em.ObjectExp(element), new_problem
+                    ).simplify()
+                    updates: Dict[Expression, Expression] = {}
+                    for membership in self._find_affected_fluents(before):
+                        enabled_true = []
+                        enabled_false = []
+                        for effect in effects:
+                            if effect.fluent.fluent() != membership.fluent():
+                                continue
+                            matches = em.And(
+                                [
+                                    em.Equals(a, b)
+                                    for a, b in zip(effect.fluent.args, membership.args)
+                                ]
+                            )
+                            condition = em.And(effect.condition, matches).simplify()
+                            if condition.is_false():
+                                continue
+                            enabled_true.append(em.And(condition, effect.value))
+                            enabled_false.append(
+                                em.And(condition, em.Not(effect.value))
+                            )
+                        updates[membership] = em.Or(
+                            em.Or(enabled_true),
+                            em.And(membership, em.Not(em.Or(enabled_false))),
+                        ).simplify()
+                    after = before.substitute(updates).simplify()
+                    if after == before:
+                        continue
+                    self._record_cardinality_delta(
+                        ground_card, before, 1, em.And(em.Not(before), after).simplify()
+                    )
+                    self._record_cardinality_delta(
+                        ground_card,
+                        before,
+                        -1,
+                        em.And(before, em.Not(after)).simplify(),
+                    )
 
     def _transform_add_remove(self, new_problem: Problem, node: FNode) -> FNode:
         """
@@ -1157,164 +1188,23 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 )
             return
 
-        # Assumes effects are unconditional in this branch.
-        if old_value.is_constant():
-            if card_expr.is_fluent_exp():
-                # effect condition + equality conditions
-                n_elements = len(old_value.set_constant_value())
-                action.add_effect(card, n_elements, And(equality_conditions).simplify())
-                return
+        if old_value.is_set_add() or old_value.is_set_remove():
+            for new_effect in new_effects:
+                membership = new_effect.fluent
+                adding = old_value.is_set_add()
+                condition = And(
+                    new_effect.condition,
+                    equality_conditions,
+                    Not(membership) if adding else membership,
+                ).simplify()
+                self._record_cardinality_delta(
+                    card, membership, 1 if adding else -1, condition
+                )
+            return
 
-            elif card_expr.is_set_union():
-                # Enumerate combinations to compute updated union cardinality.
-                for equality in equality_conditions:
-                    # Identify the other union operand for this equality branch.
-                    other_fluent = (
-                        card_expr.arg(1)
-                        if card_expr.arg(0).arg(0) == equality.arg(1)
-                        else card_expr.arg(0)
-                    )
-                    new_other_fluent = new_problem.fluent(other_fluent.fluent().name)
-                    operand_type = card_expr.arg(0).fluent().type
-                    assert isinstance(operand_type, _SetType)
-                    assert operand_type.elements_type is not None
-                    all_elements = set(new_problem.objects(operand_type.elements_type))
-                    constant_set = set(
-                        o.object() for o in old_value.set_constant_value()
-                    )
-                    constant_len = len(constant_set)
-                    remaining_elements = all_elements - constant_set
-                    new_other_fluents = [
-                        new_other_fluent(e, *other_fluent.args)
-                        for e in remaining_elements
-                    ]
-
-                    # Enumerate possible counts from remaining elements.
-                    # Elements already in the constant set are always counted.
-                    if remaining_elements:
-                        for i in range(constant_len, len(remaining_elements) + 1):
-                            combinations = self._exactly_k_combinations(
-                                new_other_fluents, i
-                            )
-
-                            new_condition = And(equality, Or(*combinations)).simplify()
-                            action.add_effect(card, i + constant_len, new_condition)
-                    else:
-                        new_condition = And(equality).simplify()
-                        action.add_effect(card, constant_len, new_condition)
-
-                return
-
-        elif old_value.is_set_add():
-            if card_expr.is_fluent_exp():
-                # Handle both single-effect (constant/user-type) and
-                # multi-effect (int dynamic → expanded to one effect per value)
-                for new_effect in new_effects:
-                    new_condition = And(
-                        new_effect.condition,
-                        equality_conditions,
-                        Not(new_effect.fluent),
-                    ).simplify()
-                    self._record_cardinality_delta(
-                        card, new_effect.fluent, 1, new_condition
-                    )
-                return
-
-            elif card_expr.is_set_union():
-                if equality_conditions:
-                    for new_effect in new_effects:
-                        for equality in equality_conditions:
-                            other_fluent = (
-                                card_expr.arg(1)
-                                if card_expr.arg(0).arg(0) == equality.arg(1)
-                                else card_expr.arg(0)
-                            )
-                            new_other_fluent = new_problem.fluent(
-                                other_fluent.fluent().name
-                            )
-                            element = old_value.arg(1)
-
-                            new_condition = And(
-                                equality,
-                                new_effect.condition,
-                                Not(new_effect.fluent),
-                                Not(new_other_fluent(element, *other_fluent.args)),
-                            ).simplify()
-                            self._record_cardinality_delta(
-                                card, new_effect.fluent, 1, new_condition
-                            )
-                return
-
-        elif old_value.is_set_remove():
-            if card_expr.is_fluent_exp():
-                # Handle both single-effect (constant/user-type) and
-                # multi-effect (int dynamic -> expanded to one effect per value)
-                for new_effect in new_effects:
-                    # Only decrement if the element WAS in the set (fluent was true before)
-                    new_condition = And(
-                        new_effect.condition,
-                        equality_conditions,
-                        new_effect.fluent,  # the element WAS in the set
-                    ).simplify()
-                    self._record_cardinality_delta(
-                        card, new_effect.fluent, -1, new_condition
-                    )
-                return
-
-            elif card_expr.is_set_union():
-                if equality_conditions:
-                    for new_effect in new_effects:
-                        for equality in equality_conditions:
-                            other_fluent = (
-                                card_expr.arg(1)
-                                if card_expr.arg(0).arg(0) == equality.arg(1)
-                                else card_expr.arg(0)
-                            )
-                            new_other_fluent = new_problem.fluent(
-                                other_fluent.fluent().name
-                            )
-                            element = old_value.arg(0)
-
-                            # Only decrement if element was in this set and NOT in the other set
-                            # (removing from union only reduces cardinality when unique to this set)
-                            new_condition = And(
-                                equality,
-                                new_effect.condition,
-                                new_effect.fluent,  # was in this set
-                                Not(
-                                    new_other_fluent(element, *other_fluent.args)
-                                ),  # not in other set
-                            ).simplify()
-                            self._record_cardinality_delta(
-                                card, new_effect.fluent, -1, new_condition
-                            )
-                return
-
-        elif old_value.is_set_union():
-            if card_expr.is_fluent_exp():
-                # Find all combinations per possible number of objects
-                for equality in equality_conditions:
-                    condition_effects = [effect.condition for effect in new_effects]
-
-                    for i in range(0, len(condition_effects) + 1):
-                        combinations = self._exactly_k_combinations(
-                            condition_effects, i
-                        )
-                        new_condition = And(
-                            equality if not equality.arg(1).is_variable_exp() else True,
-                            Or(*combinations),
-                        ).simplify()
-                        # Replace the variable for the parameter
-                        new_args = []
-                        for arg in card.args:
-                            if arg.is_variable_exp() and arg == equality.arg(1):
-                                arg = equality.arg(0)
-                            new_args.append(arg)
-
-                        action.add_effect(card.fluent()(*new_args), i, new_condition)
-                return
-
-        raise NotImplementedError(f"Not implemented yet")
+        raise NotImplementedError(
+            f"Cardinality update for {old_value} is not supported."
+        )
 
     def _record_cardinality_delta(self, card, membership, delta, condition):
         # Removing the same element under two active conditions changes the
@@ -1380,23 +1270,17 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 add(card, abs(delta), condition)
 
     def _generate_card_effects(
-        self, old_problem: Problem, new_problem: Problem, action: InstantaneousAction
+        self,
+        old_problem: Problem,
+        new_problem: Problem,
+        action: InstantaneousAction,
+        transformed: List[Tuple[Effect, Union[Effect, List[Effect], None]]],
     ) -> InstantaneousAction:
-        """
-        Generate effects for cardinality fluents based on action effects.
-        Two-pass: first fills _cardinality_registry, then generates card effects.
-        """
+        """Generate cardinality updates once all helper fluents have been registered."""
         new_action = action.clone()
         new_action.clear_effects()
         self._cardinality_deltas.clear()
 
-        # PRIMERA PASSADA: transformar tots els effects per omplir el registry
-        transformed = []
-        for old_effect in action.effects:
-            new_effects = self._transform_effect(old_problem, new_problem, old_effect)
-            transformed.append((old_effect, new_effects))
-
-        # SEGONA PASSADA: aplicar els effects i generar card_effects amb el registry ja complet
         for old_effect, new_effects in transformed:
             if new_effects is None:
                 continue
@@ -1454,6 +1338,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     ),
                 )
 
+        self._add_union_cardinality_effects(new_problem, new_action)
         self._add_combined_cardinality_effects(new_action)
         return new_action
 
@@ -1480,6 +1365,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
 
         self._fluent_mapping.clear()
         self._cardinality_registry.clear()
+        self._union_cardinalities.clear()
         new_to_old: Dict[Action, Optional[Action]] = {}
 
         # Transform set fluents
@@ -1511,11 +1397,20 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             new_goal = self._transform_expression(problem, new_problem, goal)
             new_problem.add_goal(new_goal)
 
-        # Add effects that affect fluents within cardinality expressions
+        # Register cardinalities used in every action before generating updates.
+        transformed_effects = [
+            [
+                (effect, self._transform_effect(problem, new_problem, effect))
+                for effect in action.effects
+            ]
+            for action in temp_actions
+        ]
         final_actions = []
-        for temp_action, old_action in zip(temp_actions, problem.actions):
+        for temp_action, old_action, effects in zip(
+            temp_actions, problem.actions, transformed_effects
+        ):
             final_action = self._generate_card_effects(
-                problem, new_problem, temp_action
+                problem, new_problem, temp_action, effects
             )
             final_actions.append(final_action)
             new_problem.add_action(final_action)
