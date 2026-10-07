@@ -41,22 +41,20 @@ def combine_types(
 ) -> "unified_planning.model.types.Type":
     x = types[0]
     if x.is_int_type():
-        min_int = None
-        max_int = None
-        for t in types:
-            assert t.is_int_type()
-            max_int = (
-                t.upper_bound if max_int is None or t.upper_bound > max_int else max_int
-            )
-            min_int = (
-                t.lower_bound if min_int is None or t.lower_bound < min_int else min_int
-            )
+        assert isinstance(x, _IntType)
+        min_int, max_int = x.lower_bound, x.upper_bound
+        for t in types[1:]:
+            assert isinstance(t, _IntType)
+            lower, upper = t.lower_bound, t.upper_bound
+            min_int = None if min_int is None or lower is None else min(min_int, lower)
+            max_int = None if max_int is None or upper is None else max(max_int, upper)
         return _IntType(min_int, max_int)
     elif x.is_array_type():
+        assert isinstance(x, _ArrayType)
         all_types = []
         size = x.size
         for t in types:
-            assert t.is_array_type()
+            assert isinstance(t, _ArrayType)
             assert t.size == size
             all_types.append(t.elements_type)
         return _ArrayType(size, combine_types(all_types))
