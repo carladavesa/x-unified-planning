@@ -29,6 +29,8 @@ dependencies = [
     "z3-solver>=4.13.0",
     "bidict>=0.23.1",
     "ortools>=9.14.6206",
+    # OR-Tools imports pandas; older wheels are incompatible with NumPy 2.
+    "pandas>=2.2.2",
 ]
 
 [project.urls]
@@ -70,10 +72,9 @@ engines = [
 plot = [
     "plotly>=6.1",
     "kaleido>=1.0",
-    "matplotlib>=3.6",
+    "matplotlib>=3.8.4",
     "pygraphviz>=1.11",
     "graphviz>=0.20",
-    "pandas>=1.5",
 ]
 
 [dependency-groups]
@@ -119,6 +120,8 @@ source = "vcs"
 # last release. The fallback covers a tree with neither git nor a PKG-INFO.
 [tool.hatch.version.raw-options]
 fallback_version = "0.0.0"
+# Experiment tags (e.g. CASPER26) are not package versions.
+git_describe_command = "git describe --dirty --tags --long --match v[0-9]*"
 
 [tool.hatch.build.targets.wheel]
 packages = ["unified_planning", "up_test_cases"]

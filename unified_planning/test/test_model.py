@@ -617,7 +617,7 @@ class TestModel(unittest_TestCase):
             test_exceptions.add_effect(l1, l2)
         self.assertEqual(
             str(usage_error.exception),
-            "fluent field of add_effect must be a Fluent or a FluentExp or a Dot.",
+            "fluent field of add_effect must be a Fluent or a FluentExp or a Dot or an ArrayAccess.",
         )
         with self.assertRaises(UPTypeError) as type_error:
             test_exceptions.add_effect(is_at(l1), l2, l1)
@@ -645,7 +645,7 @@ class TestModel(unittest_TestCase):
             test_exceptions.add_increase_effect(l1, l2)
         self.assertEqual(
             str(usage_error.exception),
-            "fluent field of add_increase_effect must be a Fluent or a FluentExp or a Dot.",
+            "fluent field of add_increase_effect must be a Fluent or a FluentExp or a Dot or an ArrayAccess.",
         )
         with self.assertRaises(UPTypeError) as type_error:
             test_exceptions.add_increase_effect(is_at(l1), l2, l1)
@@ -686,7 +686,7 @@ class TestModel(unittest_TestCase):
             test_exceptions.add_decrease_effect(l1, l2)
         self.assertEqual(
             str(usage_error.exception),
-            "fluent field of add_decrease_effect must be a Fluent or a FluentExp or a Dot.",
+            "fluent field of add_decrease_effect must be a Fluent or a FluentExp or a Dot or an ArrayAccess.",
         )
         with self.assertRaises(UPTypeError) as type_error:
             test_exceptions.add_decrease_effect(is_at(l1), l2, l1)
