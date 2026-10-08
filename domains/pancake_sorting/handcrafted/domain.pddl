@@ -1,5 +1,5 @@
 (define (domain pancake-sorting)
-    (:requirements :typing)
+    (:requirements :typing :adl :action-costs)
     (:types tile position)
     (:predicates
         (at ?t - tile ?p - position)
@@ -16,11 +16,15 @@
         :precondition ()
         :effect (and
             (forall (?p ?pnext - position ?t ?tnext - tile)
-                (when (and (lte ?p ?pala) (at ?t ?p) (flipat ?pala ?p ?pnext) (at ?tnext ?pnext))
-                    (and (not (at ?t ?p)) (at ?tnext ?p)
-                    )
-                )
-            )
+                (when (and
+                    (lte ?p ?pala)
+                    (not (= ?p ?pnext))
+                    (at ?t ?p)
+                    (flipat ?pala ?p ?pnext)
+                    (at ?tnext ?pnext))
+                    (and
+                        (not (at ?t ?p))
+                        (at ?tnext ?p))))
             (increase (total-cost) 1)   
         )
     )
