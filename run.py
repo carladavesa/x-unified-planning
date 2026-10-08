@@ -119,6 +119,7 @@ COMPILATION_PIPELINES = {
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        CompilationKind.BOUNDED_TYPES_REMOVING,
     ],
     "C3": [ # Count -> integer sum -> object encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
@@ -158,6 +159,7 @@ COMPILATION_PIPELINES = {
     "S1": [ # Sets -> integer cardinality, numeric planner
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        CompilationKind.BOUNDED_TYPES_REMOVING,
     ],
     "S2": [ # Sets -> Count cardinality -> DNF, classical output
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
@@ -174,6 +176,7 @@ COMPILATION_PIPELINES = {
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        CompilationKind.BOUNDED_TYPES_REMOVING,
     ],
     "S4": [ # Sets -> Count -> int -> object, classical output
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
@@ -194,6 +197,7 @@ COMPILATION_PIPELINES = {
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "integer"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        CompilationKind.BOUNDED_TYPES_REMOVING,
     ],
     "M2": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
@@ -231,6 +235,7 @@ COMPILATION_PIPELINES = {
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        CompilationKind.BOUNDED_TYPES_REMOVING,
     ],
     "M7": [
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
