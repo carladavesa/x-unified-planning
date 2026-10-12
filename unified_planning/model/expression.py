@@ -319,7 +319,7 @@ class ExpressionManager(object):
             * ``element ∈ set_expr``
 
         | Restriction: ``set_expr`` must be of ``set type`` and ``element`` must be of the same type as the elements
-        of the set.
+          of the set.
 
         :param element: The element to check if it is a member of ``set_expr``.
         :param set_expr: The set expression (can be a fluent returning a set or a set constant).
