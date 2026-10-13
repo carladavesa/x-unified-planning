@@ -42,6 +42,7 @@ from unified_planning.engines.compilers.utils import (
     get_fresh_name,
     replace_action,
     updated_minimize_action_costs,
+    check_problem_no_division,
 )
 from typing import Optional, OrderedDict
 from functools import partial
@@ -72,6 +73,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
     - 'object': integer values become objects of a Number user type.
     - 'binary': integer values become sequences of Boolean bit fluents.
     Only problems with instantaneous actions are supported.
+    Division is rejected before any simplification or transformation.
     """
 
     def __init__(self, representation: str = "object"):
@@ -165,7 +167,6 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
     ARITHMETIC_OPS = {
         OperatorKind.PLUS: "plus",
         OperatorKind.MINUS: "minus",
-        OperatorKind.DIV: "div",
         OperatorKind.TIMES: "mult",
     }
 
@@ -1515,7 +1516,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """Raise error if the problem uses expressions the basic compiler cannot handle.
 
         The basic compiler does not support:
-        - Arithmetic operations (+, -, *, /) in preconditions or effects that don't
+        - Arithmetic operations (+, -, *) in preconditions or effects that don't
           match one of the recognised simplifiable patterns (a+1<=b, succ, etc.)
         - Non-constant deltas in increase/decrease effects
         - Arithmetic expressions on the RHS of assignments
@@ -1539,7 +1540,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         """Raise error if the problem uses expressions the basic compiler cannot handle.
 
         The basic compiler does not support:
-        - Arithmetic operations (+, -, *, /) in preconditions or effects that don't
+        - Arithmetic operations (+, -, *) in preconditions or effects that don't
           match one of the recognised simplifiable patterns (a+1<=b, etc.)
         - Non-constant deltas in increase/decrease effects
         - Arithmetic expressions on the RHS of assignments
@@ -1594,6 +1595,7 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
     ) -> CompilerResult:
         """Main compilation"""
         assert isinstance(problem, Problem)
+        check_problem_no_division(problem)
 
         # Step 0: check compatibility
         self._check_problem_compatible(problem)

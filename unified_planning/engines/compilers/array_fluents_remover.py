@@ -139,6 +139,11 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
     ) -> ProblemKind:
         new_kind = problem_kind.clone()
         new_kind.unset_fluents_type("ARRAY_FLUENTS")
+        if problem_kind.has_conditional_effects():
+            # Invalid conditional assignments introduce guards on the action.
+            new_kind.set_conditions_kind("NEGATIVE_CONDITIONS")
+            if problem_kind.has_forall_effects():
+                new_kind.set_conditions_kind("UNIVERSAL_CONDITIONS")
         return new_kind
 
     # ==================== UTILITY METHODS ====================
@@ -348,29 +353,27 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         fluent: Optional[FNode],
         value: Optional[FNode],
         condition: Optional[FNode],
-        original_condition: FNode,
         forall: Tuple,
     ) -> bool:
         """Add single effect to action. Returns False if action should be pruned."""
-        # Handle unconditional effects
-        if original_condition == TRUE():
-            if fluent is None or value is None:
-                return False  # Invalid unconditional effect
-            assert condition is not None
-            self._add_effect_to_action(
-                action, effect_type, fluent, value, condition, forall
-            )
-        # Handle conditional effects
-        else:
-            if (
-                condition is not None
-                and condition != FALSE()
-                and fluent is not None
-                and value is not None
-            ):
-                self._add_effect_to_action(
-                    action, effect_type, fluent, value, condition, forall
-                )
+        if condition is None or condition.is_false():
+            return True  # This effect never fires.
+        if fluent is None or value is None:
+            # The assignment is invalid only when its condition holds. Remove
+            # the effect and prevent it from firing, as in IPAVR.
+            em = action.environment.expression_manager
+            guard = em.Not(condition)
+            if forall:
+                guard = em.Forall(guard, *forall)
+            guard = guard.simplify()
+            if guard.is_false():
+                return False
+            if not guard.is_true():
+                action.add_precondition(guard)
+            return True
+        self._add_effect_to_action(
+            action, effect_type, fluent, value, condition, forall
+        )
         return True
 
     def _add_instantiated_effect(
@@ -381,6 +384,13 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         new_action: InstantaneousAction,
     ) -> bool:
         """Add single effect to action. Returns False if action should be pruned."""
+        # A universal effect over an empty object domain has no instances.
+        if any(
+            variable.type.is_user_type()
+            and not any(problem.objects(variable.type))
+            for variable in effect.forall
+        ):
+            return True
         # Determine effect type
         if effect.is_increase():
             effect_type = "increase"
@@ -401,7 +411,6 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
             new_fluent,
             new_value,
             new_condition,
-            effect.condition,
             effect.forall,
         )
 

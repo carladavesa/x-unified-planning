@@ -30,6 +30,7 @@ from unified_planning.engines.compilers.utils import (
     requires_csp,
     compress_solutions,
     get_scalar_solution_value,
+    check_problem_no_division,
 )
 from typing import List, Iterable, Sequence, Tuple
 from unified_planning.model.expression import ListExpression
@@ -81,6 +82,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
     Converts integer fluents to object-typed fluents where objects represent numeric values (n0, n1, n2, ...).
     Integer arithmetic and comparisons are handled by enumerating possible value combinations.
     Only problems with instantaneous actions are supported.
+    Division is rejected before any simplification or CP-SAT translation.
     """
 
     def __init__(self, representation: str = "object"):
@@ -179,7 +181,6 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
     ARITHMETIC_OPS = {
         OperatorKind.PLUS: "plus",
         OperatorKind.MINUS: "minus",
-        OperatorKind.DIV: "div",
         OperatorKind.TIMES: "mult",
     }
 
@@ -1846,6 +1847,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
     ) -> CompilerResult:
         """Main compilation"""
         assert isinstance(problem, Problem)
+        check_problem_no_division(problem)
 
         original_problem = problem
         self._expanded_condition_cache.clear()

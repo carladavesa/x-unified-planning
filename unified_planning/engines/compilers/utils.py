@@ -966,6 +966,96 @@ def compress_solutions(variables, solutions, problem):
     return compressed
 
 
+def check_no_division(expression: FNode, context: str) -> None:
+    """Reject division before simplification or finite-domain translation."""
+    pending = [expression]
+    seen = set()
+    while pending:
+        node = pending.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        if node.is_div():
+            raise UPProblemDefinitionError(
+                f"Division is not supported by the integer compilation framework "
+                f"(found '{node}' in {context}). UP division may return a "
+                "non-integer value; reformulate the expression without division."
+            )
+        pending.extend(node.args)
+        if node.is_array_constant():
+            pending.extend(node.array_constant_value())
+        elif node.is_set_constant():
+            pending.extend(node.set_constant_value())
+        variables = node.variables() if node.is_forall() or node.is_exists() else ()
+        if node.is_int_variable_exp():
+            variables = (node.int_variable(),)
+        for variable in variables:
+            if isinstance(variable, up.model.IntVariable):
+                pending.extend((variable.initial, variable.last))
+
+
+def check_problem_no_division(problem: Problem) -> None:
+    """Check input expressions before any integer compiler can simplify them."""
+
+    def check_effect(effect: Effect, context: str) -> None:
+        for expression in (effect.fluent, effect.value, effect.condition):
+            check_no_division(expression, context)
+        for variable in effect.forall:
+            if isinstance(variable, up.model.IntVariable):
+                check_no_division(variable.initial, context)
+                check_no_division(variable.last, context)
+
+    for action in list(problem.actions) + list(problem.axioms):
+        context = f"action or axiom '{action.name}'"
+        if isinstance(action, InstantaneousAction):
+            for expression in action.preconditions:
+                check_no_division(expression, context)
+            effects = action.effects
+        elif isinstance(action, DurativeAction):
+            check_no_division(action.duration.lower, context)
+            check_no_division(action.duration.upper, context)
+            for conditions in action.conditions.values():
+                for expression in conditions:
+                    check_no_division(expression, context)
+            effects = [effect for group in action.effects.values() for effect in group]
+        else:
+            continue  # Unsupported action classes are checked by the compiler.
+        for effect in effects:
+            check_effect(effect, context)
+    for expression in problem.goals:
+        check_no_division(expression, "goal")
+    for expression in problem.trajectory_constraints:
+        check_no_division(expression, "trajectory constraint")
+    for goals in problem.timed_goals.values():
+        for expression in goals:
+            check_no_division(expression, "timed goal")
+    for effects in problem.timed_effects.values():
+        for effect in effects:
+            check_effect(effect, "timed effect")
+    for fluent, value in problem.explicit_initial_values.items():
+        check_no_division(fluent, "initial state")
+        check_no_division(value, "initial state")
+    for value in problem.fluents_defaults.values():
+        check_no_division(value, "default initial value")
+    for metric in problem.quality_metrics:
+        if metric.is_minimize_action_costs():
+            for value in metric.costs.values():
+                check_no_division(value, "action cost")
+            if metric.default is not None:
+                check_no_division(metric.default, "default action cost")
+        elif (
+            metric.is_minimize_expression_on_final_state()
+            or metric.is_maximize_expression_on_final_state()
+        ):
+            check_no_division(metric.expression, "final-state metric")
+        elif metric.is_oversubscription():
+            for goal in metric.goals:
+                check_no_division(goal, "oversubscription goal")
+        elif metric.is_temporal_oversubscription():
+            for _, goal in metric.goals:
+                check_no_division(goal, "temporal oversubscription goal")
+
+
 def add_cp_constraints(
     problem: Problem,
     node: FNode,
@@ -973,6 +1063,8 @@ def add_cp_constraints(
     model: cp_model.CpModel,
     object_to_index: dict,
 ) -> Any:
+    if node.is_div():
+        check_no_division(node, "CP-SAT translation")
     # -- Constants --
     if node.is_array_constant():
         return node.array_constant_value()
@@ -1399,10 +1491,7 @@ def evaluate_with_solution(
         return em.Times(args)
 
     if expr.is_div():
-        args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
-        if all(a.is_int_constant() for a in args) and args[1].int_constant_value() != 0:
-            return em.Int(args[0].int_constant_value() // args[1].int_constant_value())
-        return em.Div(args[0], args[1])
+        check_no_division(expr, "integer expression evaluation")
 
     if expr.is_le():
         args = [evaluate_with_solution(problem, arg, solution) for arg in expr.args]
