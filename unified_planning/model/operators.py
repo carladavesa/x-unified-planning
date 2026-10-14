@@ -81,6 +81,7 @@ BOOL_OPERATORS = frozenset(
         OperatorKind.FORALL,
         OperatorKind.SET_MEMBER,
         OperatorKind.SET_SUBSETEQ,
+        OperatorKind.SET_DISJOINT,
     ]
 )
 
