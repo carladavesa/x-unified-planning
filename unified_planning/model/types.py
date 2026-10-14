@@ -407,7 +407,7 @@ def is_compatible_type(
         else:
             return False
     if t_left.is_set_type() or t_right.is_set_type():
-        if t_right.is_set_type() and t_right.is_set_type():
+        if t_left.is_set_type() and t_right.is_set_type():
             assert isinstance(t_left, _SetType) and isinstance(t_right, _SetType)
             if t_left.elements_type is None or t_right.elements_type is None:
                 return True
