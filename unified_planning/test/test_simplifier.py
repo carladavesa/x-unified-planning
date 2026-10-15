@@ -18,6 +18,7 @@ from unified_planning.shortcuts import *
 from unified_planning.test import unittest_TestCase, main
 from unified_planning.model.walkers import Simplifier, Substituter
 from unified_planning.environment import get_environment
+from unified_planning.exceptions import UPTypeError
 from fractions import Fraction
 from typing import List
 
@@ -25,6 +26,41 @@ from typing import List
 class TestBoolOperators(unittest_TestCase):
     def setUp(self):
         unittest_TestCase.setUp(self)
+
+    def test_set_member_argument_order(self):
+        item_type = UserType("Item")
+        item = Object("item", item_type)
+        other = Object("other", item_type)
+        items = Fluent("items", SetType(item_type))
+        expression = SetMember(items, item)
+        self.assertEqual(expression.args, (items(), ObjectExp(item)))
+        self.assertEqual(expression, items().SetMember(item))
+        self.assertEqual(expression, SetMember(set_expr=items, element=item))
+        self.assertEqual(str(expression), "item ∈ items")
+        self.assertEqual(expression.simplify(), expression)
+        self.assertEqual(expression.substitute({item: other}), SetMember(items, other))
+        self.assertTrue(expression.substitute({items(): {item}}).simplify().is_true())
+
+    def test_set_member_constants(self):
+        item_type = UserType("Item")
+        item = Object("item", item_type)
+        other = Object("other", item_type)
+        for elements, element, expected in (
+            ({item}, item, True),
+            ({item}, other, False),
+            ({1, 2, 3}, 2, True),
+            ({1, 3}, 2, False),
+            ({True}, False, False),
+            (set(), item, False),
+            (set(), Fluent("number", IntType()), False),
+        ):
+            with self.subTest(elements=elements, element=element):
+                self.assertEqual(SetMember(elements, element).simplify(), Bool(expected))
+
+    def test_set_member_rejects_reversed_arguments(self):
+        items = Fluent("items", SetType(IntType(0, 5)))
+        with self.assertRaises(UPTypeError):
+            SetMember(1, items)
 
     def test_and_constant(self):
         s = Simplifier(get_environment())

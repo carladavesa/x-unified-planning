@@ -311,7 +311,7 @@ class ExpressionManager(object):
         )
 
     def SetMember(
-        self, element: Expression, set_expr: SetExpression
+        self, set_expr: SetExpression, element: Expression
     ) -> "up.model.fnode.FNode":
         """
         | Creates an expression of the form:
@@ -321,13 +321,13 @@ class ExpressionManager(object):
         | Restriction: ``set_expr`` must be of ``set type`` and ``element`` must be of the same type as the elements
           of the set.
 
-        :param element: The element to check if it is a member of ``set_expr``.
         :param set_expr: The set expression (can be a fluent returning a set or a set constant).
+        :param element: The element to check if it is a member of ``set_expr``.
         :return: The ``MEMBER`` expression created.
         """
-        element, set_expr = self.auto_promote(element, set_expr)
+        set_expr, element = self.auto_promote(set_expr, element)
         return self.create_node(
-            node_type=OperatorKind.SET_MEMBER, args=(element, set_expr)
+            node_type=OperatorKind.SET_MEMBER, args=(set_expr, element)
         )
 
     def SetSubseteq(

@@ -566,14 +566,14 @@ class Simplifier(walkers.dag.DagWalker):
 
     def walk_set_member(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2
-        element, set_expr = args[0], args[1]
+        set_expr, element = args[0], args[1]
         if set_expr == self.manager.EMPTY_SET():
             return self.manager.FALSE()
         if element.is_constant() and set_expr.is_constant():
             if element in set_expr.set_constant_value():
                 return self.manager.TRUE()
             return self.manager.FALSE()
-        return self.manager.SetMember(element, set_expr)
+        return self.manager.SetMember(set_expr, element)
 
     def walk_set_subseteq(self, expression: FNode, args: List[FNode]) -> FNode:
         assert len(args) == 2

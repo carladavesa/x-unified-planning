@@ -541,7 +541,7 @@ class FNode(object):
         return self._env.expression_manager.Iff(self, right)
 
     def SetMember(self, element):
-        return self._env.expression_manager.SetMember(element, self)
+        return self._env.expression_manager.SetMember(self, element)
 
     def SetSubseteq(self, element):
         return self._env.expression_manager.SetSubseteq(element, self)
@@ -571,7 +571,7 @@ _REPR_DISPATCH = {
         n._content.payload.name + n.get_nary_expression_string(", ", n.args)
     ),
     OperatorKind.ARRAY_ACCESS: lambda n: f"{n.arg(0)}[{n.arg(1)}]",
-    OperatorKind.SET_MEMBER: lambda n: f"{n.arg(0)} ∈ {n.arg(1)}",
+    OperatorKind.SET_MEMBER: lambda n: f"{n.arg(1)} ∈ {n.arg(0)}",
     OperatorKind.SET_SUBSETEQ: lambda n: f"{n.arg(0)} ⊆ {n.arg(1)}",
     OperatorKind.SET_DISJOINT: lambda n: f"{n.arg(0)} ∩ {n.arg(1)} == ∅",
     OperatorKind.SET_CARDINALITY: lambda n: f"|{n.arg(0)}|",

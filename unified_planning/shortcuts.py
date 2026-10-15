@@ -521,16 +521,16 @@ def Dot(
     return get_environment().expression_manager.Dot(agent, fluent_exp)
 
 
-def SetMember(element: Expression, set_expr: SetExpression) -> FNode:
+def SetMember(set_expr: SetExpression, element: Expression) -> FNode:
     """
     Creates an expression of the form:
         ``element in set_expr``.
 
-    :param element: The element to check if it is a member of ``set_expr``.
     :param set_expr: The set expression (can be a fluent returning a set or a set constant).
+    :param element: The element to check if it is a member of ``set_expr``.
     :return: The created ``SetMember`` expression.
     """
-    return get_environment().expression_manager.SetMember(element, set_expr)
+    return get_environment().expression_manager.SetMember(set_expr, element)
 
 
 def SetSubseteq(set_expr1: SetExpression, set_expr2: SetExpression) -> FNode:

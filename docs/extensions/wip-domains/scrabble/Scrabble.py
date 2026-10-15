@@ -81,7 +81,7 @@ l = put_alphabet_in_board.parameter('l')
 # the position in the grid is empty
 put_alphabet_in_board.add_precondition(Equals(board[x][y], none))
 # one of the letters of the chosen ones
-put_alphabet_in_board.add_precondition(SetMember(l, chosen))
+put_alphabet_in_board.add_precondition(SetMember(chosen, l))
 # put the letter in a position of the grid
 put_alphabet_in_board.add_effect(board[x][y], l)
 # remove the letter from the ones chosen

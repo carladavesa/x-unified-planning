@@ -337,10 +337,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         Transform: element in set_fluent(params)
         Into: set_fluent(element, params)
         """
-        element = node.args[0]
-        set_expr = node.args[1]
+        set_expr = node.args[0]
+        element = node.args[1]
         set_type = set_expr.type
-        assert isinstance(set_type, _SetType), "Second arg must be a set"
+        assert isinstance(set_type, _SetType), "First arg must be a set"
         assert set_expr.is_fluent_exp() or set_expr.is_constant(), (
             "Set expression must be a fluent or a constant"
         )

@@ -568,8 +568,8 @@ class TypeChecker(walkers.dag.DagWalker):
         assert expression is not None
         assert expression.is_set_member()
 
-        element_type = args[0]
-        set_type = args[1]
+        set_type = args[0]
+        element_type = args[1]
         if element_type is None or not isinstance(set_type, _SetType):
             return None
 

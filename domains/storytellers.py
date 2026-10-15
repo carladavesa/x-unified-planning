@@ -178,7 +178,7 @@ class StorytellersDomain(Domain):
             # All stories have been heard by at least one audience.
             a_stories = Variable('a_stories', Stories)
             storytellers_problem.add_goal(Forall(
-                Or(SetMember(a_stories, heard(a1)), SetMember(a_stories, heard(a2))),
+                Or(SetMember(heard(a1), a_stories), SetMember(heard(a2), a_stories)),
                 a_stories
             ))
         else:

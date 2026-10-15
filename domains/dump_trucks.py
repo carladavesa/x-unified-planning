@@ -107,7 +107,7 @@ class DumpTrucksDomain(Domain):
         t = move_truck.parameter('t')
         lfrom = move_truck.parameter('lfrom')
         lto = move_truck.parameter('lto')
-        move_truck.add_precondition(SetMember(lto, connects(lfrom)))
+        move_truck.add_precondition(SetMember(connects(lfrom), lto))
         move_truck.add_precondition(Equals(loc_of_truck(t), lfrom))
         move_truck.add_effect(loc_of_truck(t), lto)
 
@@ -116,7 +116,7 @@ class DumpTrucksDomain(Domain):
         t = load_truck.parameter('t')
         l = load_truck.parameter('l')
         load_truck.add_precondition(Equals(l, loc_of_truck(t)))
-        load_truck.add_precondition(SetMember(p, pat(l)))
+        load_truck.add_precondition(SetMember(pat(l), p))
         load_truck.add_precondition(LT(SetCardinality(pin(t)), 6))
         load_truck.add_effect(pat(l), SetRemove(pat(l), p))
         load_truck.add_effect(pin(t), SetAdd(pin(t), p))

@@ -63,7 +63,7 @@ problem.add_action(paint_rows)
 # Goal: use at least 2 different colors (count over set membership)
 problem.add_goal(
     GE(
-        Count([SetMember(blue, colors_used), SetMember(red, colors_used), SetMember(green, colors_used)]),
+        Count([SetMember(colors_used, blue), SetMember(colors_used, red), SetMember(colors_used, green)]),
         2
     )
 )

@@ -196,7 +196,7 @@ class ScrabbleDomain(Domain):
                                 Equals(board[r][c+l], none),
                                 Or(Equals(r, 0), Equals(board[r - 1][c + l], none)),
                                 Or(Equals(r, board_size - 1), Equals(board[r + 1][c + l], none)),
-                                SetMember(letter_indices[l], hand)
+                                SetMember(hand, letter_indices[l])
                             )
                         )
                     )
@@ -245,7 +245,7 @@ class ScrabbleDomain(Domain):
                                 Equals(board[r + l][c], none),
                                 Or(Equals(c, 0), Equals(board[r + l][c - 1], none)),
                                 Or(Equals(c, board_size - 1), Equals(board[r + l][c + 1], none)),
-                                SetMember(letter_indices[l], hand)
+                                SetMember(hand, letter_indices[l])
                             )
                         )
                     )
