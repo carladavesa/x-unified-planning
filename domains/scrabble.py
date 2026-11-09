@@ -34,60 +34,38 @@ def _chain_instance(board_size: int, dictionary: tuple[str, ...], hand_size: int
     bag = [*words[0], *(letter for word in words[1:] for letter in word[1:])]
     return board_size, hand_size, words + [tuple(word) for word in extra], bag
 
-# (board size, hand capacity, dictionary words, ordered bag)
-INSTANCES: Dict[str, ScrabbleInstance] = {
-    # S1: board size (same 2 words)
-    "s1_board05": _chain_instance(5, ("OPEN", "NAIL")),
-    "s1_board07": _chain_instance(7, ("OPEN", "NAIL")),
-    "s1_board09": _chain_instance(9, ("OPEN", "NAIL")),
-    "s1_board11": _chain_instance(11, ("OPEN", "NAIL")),
-    # S2: bag size (3-letter chain, one more word each time, board 9)
-    "s2_words1": _chain_instance(9, ("DOG",)),
-    "s2_words2": _chain_instance(9, ("DOG", "GUM")),
-    "s2_words3": _chain_instance(9, ("DOG", "GUM", "MAN")),
-    "s2_words4": _chain_instance(9, ("DOG", "GUM", "MAN", "NUT")),
-    "s2_words5": _chain_instance(9, ("DOG", "GUM", "MAN", "NUT", "TOP")),
-    "s2_words6": _chain_instance(9, ("DOG", "GUM", "MAN", "NUT", "TOP", "PIE")),
-    # S3: same bag size (13) as s2_words6, longer words
-    "s3_4x4": _chain_instance(9, ("TUBE", "ECHO", "OPEN", "NAIL")),
-    "s3_5x3": _chain_instance(9, ("LIGHT", "TIGER", "ROUND")),
-    # S4: hand size (same 3 words, board 7)
-    "s4_hand4": _chain_instance(7, ("BIRD", "DESK", "KING"), hand_size=4),
-    "s4_hand5": _chain_instance(7, ("BIRD", "DESK", "KING"), hand_size=5),
-    "s4_hand7": _chain_instance(7, ("BIRD", "DESK", "KING")),
-    "s4_hand9": _chain_instance(7, ("BIRD", "DESK", "KING"), hand_size=9),
-    # S5: repeated letters (3 four-letter words, board 7)
-    "s5_repeated0": _chain_instance(7, ("NAME", "EXIT", "TOUR")),
-    "s5_repeated2": _chain_instance(7, ("EARN", "NAME", "ECHO")),
-    "s5_repeated4": _chain_instance(7, ("ATOM", "MAMA", "AREA")),
-    # S6: extra dictionary words using only letters from the bag (compare with s4_hand7)
-    "s6_extra2": _chain_instance(7, ("BIRD", "DESK", "KING"), extra=("RED", "BED")),
-    "s6_extra4": _chain_instance(7, ("BIRD", "DESK", "KING"), extra=("RED", "BED", "DIG", "BIG")),
+def _instance(board_size: int, hand_size: int, words: tuple[str, ...], bag: str) -> ScrabbleInstance:
+    """Bag given as a string, in drawing order."""
+    return board_size, hand_size, [tuple(word) for word in words], list(bag)
 
-    # Smaller cases: same two words and seven bag tiles, larger boards.
-    #"scr_small_01": _chain_instance(4, ("LAMP", "POND")),
-    #"scr_small_02": _chain_instance(5, ("LAMP", "POND")),
-    #"scr_small_03": _chain_instance(7, ("LAMP", "POND")),
-    ## 3-letter words: same dictionary and bag, larger boards.
-    #"scr_01": _chain_instance(5, ("CAT", "TOP", "PEN")),
-    #"scr_02": _chain_instance(7, ("CAT", "TOP", "PEN")),
-    #"scr_03": _chain_instance(9, ("CAT", "TOP", "PEN")),
-    #"scr_04": _chain_instance(11, ("CAT", "TOP", "PEN")),
-    ## Same 11x11 board, one more word each time (compare with scr_04).
-    #"scr_05": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT")),
-    #"scr_06": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT", "TUB")),
-    #"scr_07": _chain_instance(11, ("CAT", "TOP", "PEN", "NUT", "TUB", "BED")),
-    ## 4-letter words: same dictionary and bag, larger boards.
-    #"scr_08": _chain_instance(7, ("LAMP", "POND", "DESK")),
-    #"scr_09": _chain_instance(9, ("LAMP", "POND", "DESK")),
-    #"scr_10": _chain_instance(11, ("LAMP", "POND", "DESK")),
-    #"scr_11": _chain_instance(13, ("LAMP", "POND", "DESK")),
-    ## Same 13x13 board, one more word each time (compare with scr_11).
-    #"scr_12": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE")),
-    #"scr_13": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE", "ECHO")),
-    #"scr_14": _chain_instance(13, ("LAMP", "POND", "DESK", "KITE", "ECHO", "OVEN")),
-    ## Same dimensions as scr_08, with more repeated letters.
-    #"scr_repeated": _chain_instance(7, ("AREA", "ATOM", "MAMA")),
+# (board size, hand capacity, dictionary words, shuffled bag); every instance verified solvable
+INSTANCES: Dict[str, ScrabbleInstance] = {
+    # W: number of words (board 11, hand 7)
+    "w2": _instance(11, 7, ('HIM', 'DIRT'), "TIHRMD"),  # bag 6, k 2, cost 2
+    "w3": _instance(11, 7, ('HIM', 'DIRT', 'GET'), "HIDRGMET"),  # bag 8, k 3, cost 3
+    "w4": _instance(11, 7, ('HIM', 'DIRT', 'GET', 'EDGE'), "EDEGGDIHMRT"),  # bag 11, k 15, cost 4
+    "w5": _instance(11, 7, ('HIM', 'DIRT', 'GET', 'EDGE', 'PEAR'), "IAPDRETDGHGMER"),  # bag 14, k 21, cost 5
+    "w6": _instance(11, 7, ('HIM', 'DIRT', 'GET', 'EDGE', 'PEAR', 'NOR'), "HOGTREERDIGMPDNA"),  # bag 16, k 23, cost 6
+    "w7": _instance(11, 7, ('HIM', 'DIRT', 'GET', 'EDGE', 'PEAR', 'NOR', 'OVEN'), "NOEVHNIEGDTDRAGMPER"),  # bag 19, k 51, cost 7
+    "w8": _instance(11, 7, ('JAM', 'MAIL', 'MIX', 'IDEA', 'PINE', 'MEN', 'NAP', 'SNOW'), "INENXPMMSEDAAIAJLWMON"),  # bag 21, k 87, cost 8
+    # B: board size (same 5 words and bag, hand 7)
+    "b07": _instance(7, 7, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE'), "HAVNEEOILIMAP"),  # bag 13, k 12, cost 5
+    "b09": _instance(9, 7, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE'), "HAVNEEOILIMAP"),  # bag 13, k 12, cost 5
+    "b11": _instance(11, 7, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE'), "HAVNEEOILIMAP"),  # bag 13, k 12, cost 5
+    "b13": _instance(13, 7, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE'), "HAVNEEOILIMAP"),  # bag 13, k 12, cost 5
+    # H: hand size (same words and bag as b07, board 7; b07 is hand 7)
+    "h4": _instance(7, 4, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE'), "HAVNEEOILIMAP"),  # bag 13, k 12, cost 5
+    "h5": _instance(7, 5, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE'), "HAVNEEOILIMAP"),  # bag 13, k 12, cost 5
+    "h9": _instance(7, 9, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE'), "HAVNEEOILIMAP"),  # bag 13, k 12, cost 5
+    # X: extra dictionary words (same words and bag as b07)
+    "x3": _instance(7, 7, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE', 'PLAN', 'MAN', 'NAIL'), "HAVNEEOILIMAP"),  # bag 13, k 20, cost 5
+    "x6": _instance(7, 7, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE', 'PLAN', 'MAN', 'NAIL', 'ONE', 'NAP', 'PINE'), "HAVNEEOILIMAP"),  # bag 13, k 28, cost 5
+    "x9": _instance(7, 7, ('HIM', 'HEN', 'VAN', 'MAP', 'OLIVE', 'PLAN', 'MAN', 'NAIL', 'ONE', 'NAP', 'PINE', 'AIM', 'PALM', 'OIL'), "HAVNEEOILIMAP"),  # bag 13, k 36, cost 5
+    # Q: alternative solutions with different costs (board 9, hand 7)
+    "q1": _instance(9, 7, ('BAT', 'ARM', 'LOT', 'LIP', 'PIE', 'MEAL', 'BEAR', 'TABLE', 'TILE', 'ATOM', 'ROPE'), "TAPEIBMLORI"),  # bag 11, k 14, cost 4-5
+    "q2": _instance(9, 7, ('WIN', 'COW', 'OWN', 'INK', 'SKI', 'SOCK', 'SNOW', 'COIN'), "OOIWNNIWSCK"),  # bag 11, k 44, cost 4-5
+    "q3": _instance(9, 7, ('FUN', 'RAN', 'ARC', 'FIN', 'BIN', 'BARN', 'CABIN', 'RAIN'), "FINNAUIBACR"),  # bag 11, k 36, cost 4-5
+    "q4": _instance(9, 7, ('MEN', 'END', 'RAM', 'EGG', 'BIG', 'EDGE', 'EARN', 'BARN', 'DEAR', 'BAND', 'BIRD'), "RGDNMEIEGAB"),  # bag 11, k 22, cost 4-5
 }
 
 class ScrabbleDomain(Domain):
@@ -196,7 +174,7 @@ class ScrabbleDomain(Domain):
                                 Equals(board[r][c+l], none),
                                 Or(Equals(r, 0), Equals(board[r - 1][c + l], none)),
                                 Or(Equals(r, board_size - 1), Equals(board[r + 1][c + l], none)),
-                                SetMember(hand, letter_indices[l])
+                                SetMember(letter_indices[l], hand)
                             )
                         )
                     )
@@ -245,7 +223,7 @@ class ScrabbleDomain(Domain):
                                 Equals(board[r + l][c], none),
                                 Or(Equals(c, 0), Equals(board[r + l][c - 1], none)),
                                 Or(Equals(c, board_size - 1), Equals(board[r + l][c + 1], none)),
-                                SetMember(hand, letter_indices[l])
+                                SetMember(letter_indices[l], hand)
                             )
                         )
                     )
