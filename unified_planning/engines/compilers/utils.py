@@ -1186,6 +1186,19 @@ def add_cp_constraints(
         model.add(right == 0).OnlyEnforceIf(impl_var.Not())
         return impl_var
 
+    # -- IFF --
+    if node.is_iff():
+        left = add_cp_constraints(
+            problem, node.arg(0), variables, model, object_to_index
+        )
+        right = add_cp_constraints(
+            problem, node.arg(1), variables, model, object_to_index
+        )
+        iff_var = model.new_bool_var(f"iff_{id(node)}")
+        model.add(left == right).OnlyEnforceIf(iff_var)
+        model.add(left != right).OnlyEnforceIf(iff_var.Not())
+        return iff_var
+
     # -- NOT --
     if node.is_not():
         inner = add_cp_constraints(
