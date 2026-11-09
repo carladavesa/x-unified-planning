@@ -41,6 +41,9 @@ from unified_planning.shortcuts import (
 # Each key maps a short alias to an ordered list of compilation steps.
 # Pipelines marked "numeric" keep integer fluents.
 COMPILATION_PIPELINES = {
+    "CE": [
+        CompilationKind.CONDITIONAL_EFFECTS_REMOVING,
+    ],
     # -------- Baselines --------
     # For problems already in classical form (booleans + user types)
     "B1": [
@@ -62,11 +65,13 @@ COMPILATION_PIPELINES = {
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        CompilationKind.CONDITIONAL_EFFECTS_REMOVING
     ],
     "I2": [ # binary encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_BASIC_REMOVING, {"representation": "binary"}),
+        CompilationKind.CONDITIONAL_EFFECTS_REMOVING,
         # CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
 
@@ -77,6 +82,7 @@ COMPILATION_PIPELINES = {
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        #CompilationKind.CONDITIONAL_EFFECTS_REMOVING,
     ],
     "I3+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
@@ -90,6 +96,7 @@ COMPILATION_PIPELINES = {
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        #CompilationKind.CONDITIONAL_EFFECTS_REMOVING,
     ],
     "I4+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
@@ -106,6 +113,7 @@ COMPILATION_PIPELINES = {
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.COUNT_REMOVING, {"target": "bool"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        #CompilationKind.CONDITIONAL_EFFECTS_REMOVING,
     ],
     "C1+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
@@ -127,6 +135,7 @@ COMPILATION_PIPELINES = {
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        #CompilationKind.CONDITIONAL_EFFECTS_REMOVING,
     ],
     "C3+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
@@ -142,6 +151,7 @@ COMPILATION_PIPELINES = {
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
+        #CompilationKind.CONDITIONAL_EFFECTS_REMOVING,
     ],
     "C4+A": [ # + axioms
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
@@ -163,6 +173,7 @@ COMPILATION_PIPELINES = {
     ],
     "S2": [ # Sets -> Count cardinality -> DNF, classical output
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        CompilationKind.QUANTIFIERS_REMOVING,
         (CompilationKind.COUNT_REMOVING, {"target": "bool"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
@@ -174,17 +185,24 @@ COMPILATION_PIPELINES = {
     ],
     "S3": [ # Sets -> Count -> integer sum, numeric planner
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        CompilationKind.QUANTIFIERS_REMOVING,
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
         CompilationKind.BOUNDED_TYPES_REMOVING,
     ],
     "S4": [ # Sets -> Count -> int -> object, classical output
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        CompilationKind.QUANTIFIERS_REMOVING,
         (CompilationKind.COUNT_REMOVING, {"target": "int"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
     ],
-    "S5": [ # Sets -> Count -> int -> binary, classical output
+    "S5": [ # Sets -> int (count) -> object, classical output
+        (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
+        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
+        CompilationKind.USERTYPE_FLUENTS_REMOVING,
+    ],
+    "S6": [ # Sets -> int (count) -> binary, classical output
         (CompilationKind.SET_FLUENTS_REMOVING, {"cardinality_encoding": "count"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
@@ -434,7 +452,7 @@ def solve_problem(
     try:
         if mode == "anytime":
             with AnytimePlanner(name=resolved_name, params=params) as planner:
-                _check_support(planner, problem)
+                #_check_support(planner, problem)
                 solution_count = 0
                 anytime_kwargs = {"timeout": timeout} if timeout > 0 else {}
 
@@ -528,9 +546,7 @@ def compile_and_solve(
     solve_time = 0
 
     try:
-        print(problem)
         compiled_problem, comp_results, comp_time = compile_problem(problem, compilation, timeout)
-        print(compiled_problem)
         print_up_problem_size(compiled_problem)
         remaining_timeout = 0 if timeout == 0 else max(1, timeout - int(comp_time))
         solve_time = solve_problem(
@@ -645,6 +661,8 @@ def main(argv: Optional[list[str]] = None) -> None:
             os.path.isfile(args.instance) and os.access(args.instance, os.R_OK):
         reader = PDDLReader()
         problem = reader.parse_problem(args.domain, args.instance)
+        if args.compilation == "none" and args.solving == "fast-downward" and args.mode == "optimal":
+            args.compilation = "CE"
         #solve_with_fd_direct(args.domain, args.instance, timeout=args.timeout)
     else:
         dom = DOMAINS.get(args.domain)
