@@ -402,6 +402,19 @@ class SimulatedEffect:
         """
         return self._function
 
+def _is_set_element_update(effect: Effect) -> bool:
+    """
+    True for S := add(S, e) and S := remove(S, e).
+    These effects write a single element of the set, which behaves as a Boolean location, so they are checked
+    as Boolean effects are.
+    """
+    value = effect.value
+    return (
+        effect.fluent.type.is_set_type()
+        and (value.is_set_add() or value.is_set_remove())
+        and value.arg(0) == effect.fluent
+    )
+
 
 def check_conflicting_effects(
     effect: Effect,
@@ -429,6 +442,8 @@ def check_conflicting_effects(
     :param name: string used for better error indexing.
     :raises: UPConflictingException if the given effect is in conflict with the data structure around it.
     """
+    if _is_set_element_update(effect):
+        return
     assigned_value = fluents_assigned.get(effect.fluent, None)
     if not effect.is_conditional() and not effect.fluent.type.is_bool_type():
         if effect.is_assignment():
