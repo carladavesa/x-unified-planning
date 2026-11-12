@@ -443,6 +443,18 @@ def check_conflicting_effects(
     :raises: UPConflictingException if the given effect is in conflict with the data structure around it.
     """
     if _is_set_element_update(effect):
+        # An add or remove writes a single element, so it never conflicts with another add or remove:
+        # if the same element is added and removed (first removed then added, as for Boolean effects).
+        # It conflicts with an assignment of the whole set, whatever its value
+        if not effect.is_conditional():
+            if effect.fluent in fluents_assigned:
+                if timing is None:
+                    msg = f"The effect {effect} is in conflict with the assignment of the whole set already in the {name}."
+                else:
+                    msg = f"The effect {effect} at timing {timing} is in conflict with the assignment of the whole set already in the {name}."
+                raise UPConflictingEffectsException(msg)
+            # Recorded under its own value, so that a later assignment of the whole set can find it
+            fluents_assigned.setdefault(effect.value, effect.value)
         return
     assigned_value = fluents_assigned.get(effect.fluent, None)
     if not effect.is_conditional() and not effect.fluent.type.is_bool_type():
@@ -463,6 +475,17 @@ def check_conflicting_effects(
                     msg = f"The effect {effect} is in conflict with the simulated effects already in the {name}."
                 else:
                     msg = f"The effect {effect} at timing {timing} is in conflict with the simulated effects already in the {name}."
+                raise UPConflictingEffectsException(msg)
+            # the whole set is assigned in an action that also adds or removes one of its elements
+            elif effect.fluent.type.is_set_type() and any(
+                (key.is_set_add() or key.is_set_remove())
+                and key.arg(0) == effect.fluent
+                for key in fluents_assigned
+            ):
+                if timing is None:
+                    msg = f"The effect {effect} is in conflict with the add or remove effects already in the {name}."
+                else:
+                    msg = f"The effect {effect} at timing {timing} is in conflict with the add or remove effects already in the {name}."
                 raise UPConflictingEffectsException(msg)
             # the same fluent is involved in another assign
             elif assigned_value is not None:
