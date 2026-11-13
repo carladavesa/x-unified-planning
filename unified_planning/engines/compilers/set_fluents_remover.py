@@ -736,7 +736,9 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     updates: Dict[Expression, Expression] = {}
                     for membership in self._find_affected_fluents(before):
                         enabled_true, enabled_false = membership_writes(
-                            membership, effects
+                            new_problem.environment.expression_manager,
+                            membership,
+                            effects,
                         )
                         updates[membership] = Or(
                             Or(enabled_true),
