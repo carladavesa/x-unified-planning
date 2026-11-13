@@ -34,6 +34,9 @@ from unified_planning.model import (
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
 from unified_planning.model.expression import Expression
 from unified_planning.engines.compilers.utils import (
+    conditions_may_hold_together,
+    combine_increments,
+    membership_writes,
     replace_action,
     get_fresh_name,
     updated_minimize_action_costs,
@@ -713,15 +716,19 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
     ) -> InstantaneousAction:
         """
         Generate effects for helper count fluents based on action effects.
-        For each registered count term, if an action effect may modify a fluent used in that term,
-        synthesize corresponding conditional effects on the helper fluent.
+        For each registered count term that the action may modify, the helper
+        fluent takes the value of the term after the action, computed from all
+        the effects of the action together, using the values before the action.
         """
+        em = problem.environment.expression_manager
         for count_name, count_expr in self._count_registry.items():
-            affected_fluents = self._int_find_affected_fluents(count_expr)
-            # Find which fluents in count_expr are affected by action
-            # Process each effect
+            affected_fluents = list(
+                dict.fromkeys(self._int_find_affected_fluents(count_expr))
+            )
+            # For each fluent of the term, the effects that may write it, with
+            # their condition and the value the fluent takes.
+            writers: Dict[FNode, List[Tuple[Effect, Optional[FNode], FNode]]] = {}
             for effect in action.effects:
-                # Check if this effect can affect any tracked fluent
                 for tracked_fluent in affected_fluents:
                     # Must be same fluent name
                     if effect.fluent.fluent().name != tracked_fluent.fluent().name:
@@ -745,23 +752,6 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
                             break
                     if not all_match:
                         continue
-                    # This effect can modify the tracked fluent. Compute updated expression value
-                    effect_type = (
-                        "increase"
-                        if effect.is_increase()
-                        else "decrease"
-                        if effect.is_decrease()
-                        else None
-                    )
-
-                    new_expr = self._int_transform_expression(
-                        problem, count_expr, tracked_fluent, effect.value, effect_type
-                    )
-                    count_parameters = [
-                        Parameter(str(a), a.type)
-                        for a in count_expr.args
-                        if a.is_parameter_exp()
-                    ]
 
                     # Combine effect condition with argument-matching equalities
                     condition = None
@@ -771,12 +761,118 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
                         condition = (
                             And(condition, eq_cond).simplify() if condition else eq_cond
                         )
-
-                    # Add helper-fluent update effect
-                    count_fluent = problem.fluent(count_name)(*count_parameters)
-                    self._int_add_count_effect_to_action(
-                        action, count_fluent, new_expr, condition
+                    if effect.is_increase():
+                        value = em.Plus(tracked_fluent, effect.value).simplify()
+                    elif effect.is_decrease():
+                        value = em.Minus(tracked_fluent, effect.value).simplify()
+                    else:
+                        value = effect.value
+                    writers.setdefault(tracked_fluent, []).append(
+                        (effect, condition, value)
                     )
+            if not writers:
+                continue
+
+            count_parameters = [
+                Parameter(str(a), a.type)
+                for a in count_expr.args
+                if a.is_parameter_exp()
+            ]
+            count_fluent = problem.fluent(count_name)(*count_parameters)
+
+            all_writers = [w for fluent_writers in writers.values() for w in fluent_writers]
+            if all(
+                not conditions_may_hold_together(
+                    problem,
+                    TRUE() if c1 is None else c1,
+                    TRUE() if c2 is None else c2,
+                )
+                for (_, c1, _), (_, c2, _) in itertools.combinations(all_writers, 2)
+            ):
+                # At most one effect writes the term: it takes the value of
+                # that effect, and the other fluents keep their value.
+                for tracked_fluent, fluent_writers in writers.items():
+                    for _, condition, value in fluent_writers:
+                        new_expr = count_expr.substitute(
+                            {tracked_fluent: value}
+                        ).simplify()
+                        self._int_add_count_effect_to_action(
+                            action, count_fluent, new_expr, condition
+                        )
+                continue
+
+            # Several effects may write the term together. For each fluent,
+            # list the mutually exclusive ways it can change, as
+            # (condition, value).
+            changes: Dict[FNode, List[Tuple[FNode, FNode]]] = {}
+            for tracked_fluent, fluent_writers in writers.items():
+                if tracked_fluent.type.is_bool_type() and len(fluent_writers) > 1:
+                    # Delete before add, as for any Boolean fluent.
+                    enabled_true, enabled_false = membership_writes(
+                        em, tracked_fluent, [w[0] for w in fluent_writers]
+                    )
+                    after = Or(
+                        Or(enabled_true),
+                        And(tracked_fluent, Not(Or(enabled_false))),
+                    ).simplify()
+                    changes[tracked_fluent] = [
+                        (Or(enabled_true + enabled_false).simplify(), after)
+                    ]
+                elif all(w[0].is_increase() or w[0].is_decrease() for w in fluent_writers):
+                    # Increments of the same fluent are summed.
+                    terms = []
+                    for effect, condition, _ in fluent_writers:
+                        delta = effect.value.simplify()
+                        if not delta.is_int_constant():
+                            raise UPProblemDefinitionError(
+                                f"Increases and decreases of {tracked_fluent} in "
+                                f"action {action.name} must have constant amounts."
+                            )
+                        delta = delta.int_constant_value()
+                        terms.append(
+                            (
+                                delta if effect.is_increase() else -delta,
+                                condition if condition is not None else TRUE(),
+                            )
+                        )
+                    changes[tracked_fluent] = [
+                        (guard, em.Plus(tracked_fluent, total).simplify())
+                        for total, guard in combine_increments(em, terms)
+                        if total != 0
+                    ]
+                else:
+                    changes[tracked_fluent] = [
+                        (condition if condition is not None else TRUE(), value)
+                        for _, condition, value in fluent_writers
+                    ]
+
+            # The term after the action, for each combination of changes.
+            fluents = list(changes)
+            options = [
+                [(Not(Or([g for g, _ in changes[f]])), None)] + changes[f]
+                for f in fluents
+            ]
+            touched = Or([g for f in fluents for g, _ in changes[f]]).simplify()
+            cases = []
+            for combination in itertools.product(*options):
+                if all(value is None for _, value in combination):
+                    continue
+                guard = And([g for g, _ in combination]).simplify()
+                if guard.is_false():
+                    continue
+                substitution: Dict[Expression, Expression] = {
+                    f: value
+                    for f, (_, value) in zip(fluents, combination)
+                    if value is not None
+                }
+                cases.append(And(guard, count_expr.substitute(substitution)))
+            new_expr = Or(cases).simplify()
+            self._int_add_count_effect_to_action(
+                action,
+                count_fluent,
+                new_expr,
+                None if touched.is_true() else touched,
+            )
         return action
 
     # ============================================================

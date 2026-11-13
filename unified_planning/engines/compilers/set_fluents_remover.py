@@ -39,6 +39,7 @@ from unified_planning.engines.compilers.utils import (
     replace_action,
     updated_minimize_action_costs,
     combine_increments,
+    membership_writes,
 )
 from typing import Dict, Iterable, Optional, Tuple, Union, List
 from functools import partial
@@ -704,24 +705,6 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         self._union_cardinalities[expression] = result
         return result
 
-    def _membership_writes(self, membership, effects):
-        """Return the conditions under which the effects set membership to true
-        and to false, as two lists."""
-        enabled_true = []
-        enabled_false = []
-        for effect in effects:
-            if effect.fluent.fluent() != membership.fluent():
-                continue
-            matches = And(
-                [Equals(a, b) for a, b in zip(effect.fluent.args, membership.args)]
-            )
-            condition = And(effect.condition, matches).simplify()
-            if condition.is_false():
-                continue
-            enabled_true.append(And(condition, effect.value))
-            enabled_false.append(And(condition, Not(effect.value)))
-        return enabled_true, enabled_false
-
     def _add_union_cardinality_effects(
         self, new_problem: Problem, action: InstantaneousAction
     ):
@@ -752,7 +735,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     ).simplify()
                     updates: Dict[Expression, Expression] = {}
                     for membership in self._find_affected_fluents(before):
-                        enabled_true, enabled_false = self._membership_writes(
+                        enabled_true, enabled_false = membership_writes(
                             membership, effects
                         )
                         updates[membership] = Or(
@@ -1204,7 +1187,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     guard = Not(membership)
                 else:
                     # If the action also adds this element, it is removed first and then added, so it stays in the set.
-                    added, _ = self._membership_writes(
+                    added, _ = membership_writes(
                         new_problem.environment.expression_manager,
                         membership,
                         action_effects or [],

@@ -1705,8 +1705,29 @@ def combine_increments(
         totals = next_totals
     return list(totals.items())
 
+def membership_writes(
+    em: "up.model.ExpressionManager", fluent: FNode, effects: List[Effect]
+) -> Tuple[List[FNode], List[FNode]]:
+    """
+    Return the conditions under which the effects set a Boolean fluent expression to true and to false, as two lists.
+    An effect on the same fluent with other arguments writes ``fluent`` when their arguments are equal.
+    """
+    enabled_true = []
+    enabled_false = []
+    for effect in effects:
+        if effect.fluent.fluent() != fluent.fluent():
+            continue
+        matches = em.And(
+            [em.Equals(a, b) for a, b in zip(effect.fluent.args, fluent.args)]
+        )
+        condition = em.And(effect.condition, matches).simplify()
+        if condition.is_false():
+            continue
+        enabled_true.append(em.And(condition, effect.value))
+        enabled_false.append(em.And(condition, em.Not(effect.value)))
+    return enabled_true, enabled_false
 
-def _conditions_may_hold_together(
+def conditions_may_hold_together(
     problem: Problem, first: FNode, second: FNode
 ) -> bool:
     """Return whether some state satisfies both conditions (True when unsure)."""
@@ -1746,7 +1767,7 @@ def merge_increments(
         fluent: effects
         for fluent, effects in groups.items()
         if any(
-            _conditions_may_hold_together(problem, a.condition, b.condition)
+            conditions_may_hold_together(problem, a.condition, b.condition)
             for a, b in itertools.combinations(effects, 2)
         )
     }
