@@ -894,6 +894,8 @@ class Problem(  # type: ignore[misc]
             elif isinstance(qm, MinimizeActionCosts):
                 for c in qm.costs.values():
                     domain_constants.update(extractor.get(c))
+                if qm.default is not None:
+                    domain_constants.update(extractor.get(qm.default))
 
         for ax in self.axioms:
             for p in ax.preconditions:
