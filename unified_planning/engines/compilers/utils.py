@@ -16,6 +16,7 @@
 """This module defines different utility functions for the compilers."""
 
 import bidict
+import itertools
 from ortools.sat.python import cp_model
 
 import warnings
@@ -1675,3 +1676,110 @@ def get_scalar_solution_value(solution, key):
     if val is None or isinstance(val, (frozenset, set)):
         return None
     return val
+
+# --- INCREMENTS UTILS ---
+
+
+def combine_increments(
+    em: "up.model.ExpressionManager", terms: List[Tuple[int, FNode]]
+) -> List[Tuple[int, FNode]]:
+    """Sum the increments (delta, condition) of one fluent in one action.
+
+    In UP, the increments of the same fluent in one action are summed. This
+    returns one (total, condition) pair per possible total, with mutually
+    exclusive conditions. For example, (1, c1) and (2, c2) give
+    (0, not c1 and not c2), (1, c1 and not c2), (2, not c1 and c2) and
+    (3, c1 and c2).
+    """
+    totals: Dict[int, FNode] = {0: em.TRUE()}
+    for delta, condition in terms:
+        next_totals: Dict[int, FNode] = {}
+        for total, guard in totals.items():
+            for change, branch in ((0, em.Not(condition)), (delta, condition)):
+                enabled = em.And(guard, branch).simplify()
+                if enabled.is_false():
+                    continue
+                next_totals[total + change] = em.Or(
+                    next_totals.get(total + change, em.FALSE()), enabled
+                ).simplify()
+        totals = next_totals
+    return list(totals.items())
+
+
+def _conditions_may_hold_together(
+    problem: Problem, first: FNode, second: FNode
+) -> bool:
+    """Return whether some state satisfies both conditions (True when unsure)."""
+    both = problem.environment.expression_manager.And(first, second).simplify()
+    if both.is_bool_constant():
+        return both.bool_constant_value()
+    variables: bidict.bidict = bidict.bidict()
+    model = cp_model.CpModel()
+    try:
+        var = add_cp_constraints(problem, both, variables, model, {})
+    except (NotImplementedError, UPProblemDefinitionError):
+        return True
+    if isinstance(var, (bool, int)):
+        return bool(var)
+    model.add(var == 1)
+    return solve_with_cp_sat(variables, model, []) is not None
+
+
+def merge_increments(
+    problem: Problem, action: InstantaneousAction
+) -> InstantaneousAction:
+    """Replace the increases and decreases of each fluent by their sum.
+
+    The integer fluent removers translate each increment from the value of the
+    fluent before the action, so two increments that hold together would apply
+    only one. For each fluent with increments that can hold together, this
+    function replaces them by the totals of ``combine_increments``. A total
+    that can never fit the bounds of the fluent becomes a precondition that
+    its condition is false, as the action would not be applicable.
+    """
+    em = problem.environment.expression_manager
+    groups: Dict[FNode, List[Effect]] = {}
+    for effect in action.effects:
+        if (effect.is_increase() or effect.is_decrease()) and not effect.forall:
+            groups.setdefault(effect.fluent, []).append(effect)
+    to_merge = {
+        fluent: effects
+        for fluent, effects in groups.items()
+        if any(
+            _conditions_may_hold_together(problem, a.condition, b.condition)
+            for a, b in itertools.combinations(effects, 2)
+        )
+    }
+    if not to_merge:
+        return action
+
+    new_action = action.clone()
+    new_action.clear_effects()
+    for effect in action.effects:
+        if not any(effect is e for effects in to_merge.values() for e in effects):
+            new_action._add_effect_instance(effect)
+    if action.simulated_effect is not None:
+        new_action.set_simulated_effect(action.simulated_effect)
+
+    for fluent, effects in to_merge.items():
+        terms = []
+        for effect in effects:
+            amount = effect.value.simplify()
+            if not amount.is_int_constant():
+                raise UPProblemDefinitionError(
+                    f"Increases and decreases of {fluent} in action {action.name} "
+                    "that can hold together must have constant amounts."
+                )
+            delta = amount.int_constant_value()
+            terms.append((delta if effect.is_increase() else -delta, effect.condition))
+        lower, upper = fluent.type.lower_bound, fluent.type.upper_bound
+        for total, condition in combine_increments(em, terms):
+            if total == 0:
+                continue
+            if lower is not None and upper is not None and abs(total) > upper - lower:
+                new_action.add_precondition(em.Not(condition).simplify())
+            elif total > 0:
+                new_action.add_increase_effect(fluent, total, condition)
+            else:
+                new_action.add_decrease_effect(fluent, -total, condition)
+    return new_action

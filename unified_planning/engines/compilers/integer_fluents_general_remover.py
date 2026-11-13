@@ -26,6 +26,10 @@ from unified_planning.engines.compilers.utils import (
     get_fluent_exps_in_expression,
     get_params_in_expression,
     evaluate_with_solution,
+    get_fresh_name,
+    replace_action,
+    merge_increments,
+    updated_minimize_action_costs,
     remove_write_only_fluents,
     requires_csp,
     compress_solutions,
@@ -53,11 +57,6 @@ from unified_planning.model import (
     MinimizeActionCosts,
 )
 from unified_planning.model.problem_kind_versioning import LATEST_PROBLEM_KIND_VERSION
-from unified_planning.engines.compilers.utils import (
-    get_fresh_name,
-    replace_action,
-    updated_minimize_action_costs,
-)
 from typing import Optional, OrderedDict, Union
 from functools import partial
 from unified_planning.shortcuts import (
@@ -1624,7 +1623,7 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         new_to_old = {}
         for old_action in problem.actions:
             new_actions = self._transform_action_integers(
-                problem, new_problem, old_action
+                problem, new_problem, merge_increments(problem, old_action)
             )
             for new_action in new_actions:
                 new_problem.add_action(new_action)

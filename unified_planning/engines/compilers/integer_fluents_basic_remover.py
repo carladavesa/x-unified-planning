@@ -17,7 +17,10 @@
 import math
 import unified_planning as up
 import unified_planning.engines as engines
-from unified_planning.engines.compilers.utils import remove_write_only_fluents
+from unified_planning.engines.compilers.utils import (
+    merge_increments,
+    remove_write_only_fluents,
+)
 from typing import List, Tuple
 from unified_planning.model.expression import ListExpression
 from unified_planning.model.operators import OperatorKind
@@ -1629,7 +1632,9 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         new_to_old: Dict[Action, Optional[Action]] = {}
         for old_action in cleaned_problem.actions:
             new_action = self._transform_action(
-                cleaned_problem, new_problem, old_action
+                cleaned_problem,
+                new_problem,
+                merge_increments(cleaned_problem, old_action),
             )
             if new_action is not None:
                 new_problem.add_action(new_action)

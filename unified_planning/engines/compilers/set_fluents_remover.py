@@ -38,6 +38,7 @@ from unified_planning.engines.compilers.utils import (
     get_fresh_name,
     replace_action,
     updated_minimize_action_costs,
+    combine_increments,
 )
 from typing import Dict, Iterable, Optional, Tuple, Union, List
 from functools import partial
@@ -1245,20 +1246,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             if all(disjoint(a[1], b[1]) for a, b in itertools.combinations(terms, 2)):
                 totals = terms
             else:
-                totals_by_delta = {0: TRUE()}
-                for delta, condition in terms:
-                    next_totals: Dict[int, FNode] = {}
-                    for total, guard in totals_by_delta.items():
-                        for change, branch in ((0, Not(condition)), (delta, condition)):
-                            enabled = And(guard, branch).simplify()
-                            if enabled.is_false():
-                                continue
-                            value = total + change
-                            next_totals[value] = Or(
-                                next_totals.get(value, FALSE()), enabled
-                            ).simplify()
-                    totals_by_delta = next_totals
-                totals = totals_by_delta.items()
+                totals = combine_increments(action.environment.expression_manager, terms)
             for delta, condition in totals:
                 if condition.is_false() or delta == 0:
                     continue
