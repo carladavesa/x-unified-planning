@@ -59,6 +59,7 @@ from unified_planning.shortcuts import (
     TRUE,
     ObjectExp,
     Iff,
+    Forall,
 )
 from typing import Dict
 
@@ -1039,8 +1040,15 @@ class IntegerFluentsBasicRemover(engines.engine.Engine, CompilerMixin):
         for effect in old_action.effects:
             bound_prec, new_effects = self._transform_effect(effect, new_problem)
 
-            # Add bound precondition if not trivial
+            # The bound only has to hold when the effect applies, when its condition holds.
             if bound_prec != TRUE():
+                new_condition = self._transform_expression(
+                    effect.condition, new_problem
+                )
+                if new_condition != TRUE():
+                    bound_prec = Or(Not(new_condition), bound_prec).simplify()
+                if effect.forall:
+                    bound_prec = Forall(bound_prec, *effect.forall)
                 new_action.add_precondition(bound_prec)
 
             # Add effects

@@ -570,6 +570,21 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             return allowed_values[0]
         return Or(allowed_values).simplify()
 
+    def _guarded_increase_decrease_bound(self, effect, problem, new_problem):
+        """Return the range guard of an increase/decrease, as (not C) or guard.
+
+        The guard only has to hold when the effect applies, that is, when its condition C holds.
+        """
+        bound_precondition = self._increase_decrease_bound_precondition(
+            effect, new_problem
+        )
+        if bound_precondition.is_true() or effect.condition.is_true() or effect.forall:
+            return bound_precondition
+        condition = self._transform_increase_decrease_condition(
+            effect, problem, new_problem
+        )
+        return Or(Not(condition), bound_precondition).simplify()
+
     def _create_precondition_from_variable(
         self, fnode: FNode, value: int, new_problem: Problem
     ) -> Optional[FNode]:
@@ -929,19 +944,9 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         """Add a single independent effect, representation-specific."""
         # Increase/decrease
         if effect.is_increase() or effect.is_decrease():
-            bound_precondition = self._increase_decrease_bound_precondition(
-                effect, new_problem
+            new_action.add_precondition(
+                self._guarded_increase_decrease_bound(effect, problem, new_problem)
             )
-            if not bound_precondition.is_true():
-                if effect.condition.is_true() or effect.forall:
-                    new_action.add_precondition(bound_precondition)
-                else:
-                    condition = self._transform_increase_decrease_condition(
-                        effect, problem, new_problem
-                    )
-                    new_action.add_precondition(
-                        Or(Not(condition), bound_precondition).simplify()
-                    )
             # Both object and binary: expand via _transform_increase_decrease_effect
             for new_eff in self._transform_increase_decrease_effect(
                 effect, problem, new_problem
@@ -1163,11 +1168,11 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             if old_effect.is_increase() or old_effect.is_decrease():
                 fluent = old_effect.fluent.fluent()
 
-                bound_precondition = self._increase_decrease_bound_precondition(
-                    old_effect, new_problem
+                new_action.add_precondition(
+                    self._guarded_increase_decrease_bound(
+                        old_effect, problem, new_problem
+                    )
                 )
-                if not bound_precondition.is_true():
-                    new_action.add_precondition(bound_precondition)
 
                 try:
                     delta = old_effect.value.constant_value()
