@@ -1156,8 +1156,9 @@ def add_cp_constraints(
         ]
         and_var = model.new_bool_var(f"and_{id(node)}")
         model.add_bool_and(*children).OnlyEnforceIf(and_var)
-        for child in children:
-            model.add_implication(and_var, child)
+        model.add_bool_or(
+            [not child if isinstance(child, (bool, int)) else child.Not() for child in children]
+        ).OnlyEnforceIf(and_var.Not())
         return and_var
 
     # -- OR --
