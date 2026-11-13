@@ -81,6 +81,8 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         self._fluent_mapping: Dict[str, Fluent] = {}
         self._cardinality_registry: Dict[str, FNode] = {}
         self._union_cardinalities: Dict[FNode, FNode] = {}
+        # Count encoding: a Boolean fluent for the membership of each set expression with an operation whose cardinality is counted
+        self._expression_memberships: Dict[FNode, Tuple[Fluent, List[FNode]]] = {}
         self._cardinality_deltas: Dict[FNode, Dict[Tuple[FNode, int], FNode]] = {}
         self._int_range_types: Dict[str, model.Type] = {}  # type_name → UserType
         self._int_to_obj: Dict[str, Dict[int, model.Object]] = {}
@@ -485,6 +487,53 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         ]
         return em.Count(*membership_exprs)
 
+    def _transform_expression_cardinality_as_count(
+        self, old_problem: Problem, new_problem: Problem, expression: FNode, elements
+    ) -> FNode:
+        """Transform |expression| into Count([member(o) for each element o]).
+
+        ``member`` is a Boolean fluent that holds when o is in the expression.
+        Its value is set in the initial state, and every action that changes
+        the membership of o in the expression updates it.
+        """
+        if expression not in self._expression_memberships:
+            parameters: List[FNode] = []
+
+            def collect_parameters(node: FNode):
+                if node.is_parameter_exp() or node.is_variable_exp():
+                    if node not in parameters:
+                        parameters.append(node)
+                for arg in node.args:
+                    collect_parameters(arg)
+
+            collect_parameters(expression)
+            set_type = expression.type
+            assert isinstance(set_type, _SetType)
+            helper = Fluent(
+                get_fresh_name(new_problem, "in_set_expression"),
+                BoolType(),
+                [model.Parameter("e", set_type.elements_type, new_problem.environment)]
+                + [
+                    model.Parameter(f"p{i}", p.type, new_problem.environment)
+                    for i, p in enumerate(parameters)
+                ],
+                environment=new_problem.environment,
+            )
+            new_problem.add_fluent(helper, default_initial_value=False)
+            for values in self._get_param_combinations(
+                new_problem, helper.signature[1:]
+            ):
+                substitutions: Dict[Expression, Expression] = dict(
+                    zip(parameters, values)
+                )
+                ground_expression = expression.substitute(substitutions)
+                for element in self._initial_set_value(old_problem, ground_expression):
+                    new_problem.set_initial_value(helper(element, *values), True)
+            self._expression_memberships[expression] = (helper, parameters)
+        helper, parameters = self._expression_memberships[expression]
+        em = new_problem.environment.expression_manager
+        return em.Count(*[helper(ObjectExp(elem), *parameters) for elem in elements])
+
     def _get_element_membership_expr(
         self, set_expr: FNode, elem_expr: FNode, new_problem: Problem
     ) -> FNode:
@@ -555,6 +604,11 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         elements = self._enumerate_elements(new_problem, elements_type)
         # Count encoding
         if self.cardinality_encoding == "count":
+            if not set_expr.is_fluent_exp():
+                # count only takes terms, so the membership of an expression is kept in a Boolean fluent
+                return self._transform_expression_cardinality_as_count(
+                    old_problem, new_problem, set_expr, elements
+                )
             return self._transform_cardinality_as_count(new_problem, set_expr, elements)
         # Integer encoding
         if set_expr.is_fluent_exp():
@@ -708,8 +762,12 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
     def _add_union_cardinality_effects(
         self, new_problem: Problem, action: InstantaneousAction
     ):
-        """Count changes to union membership after all simultaneous set effects."""
-        if not self._union_cardinalities:
+        """Count changes to union membership after all simultaneous set effects.
+
+        With the count encoding, update instead the Boolean fluents that hold
+        the membership of each counted set expression.
+        """
+        if not self._union_cardinalities and not self._expression_memberships:
             return
         effects = [
             ground
@@ -717,18 +775,22 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             for ground in effect.expand_effect(new_problem)
             if ground.fluent.type.is_bool_type()
         ]
-        for expression, card in self._union_cardinalities.items():
+        tracked = [
+            (e, c.fluent(), list(c.args), False)
+            for e, c in self._union_cardinalities.items()
+        ] + [(e, f, ps, True) for e, (f, ps) in self._expression_memberships.items()]
+        for expression, helper, parameters, is_membership in tracked:
             set_type = expression.type
             assert isinstance(set_type, _SetType)
             elements = self._enumerate_elements(new_problem, set_type.elements_type)
-            for values in self._get_param_combinations(
-                new_problem, card.fluent().signature
-            ):
+            signature = helper.signature[1:] if is_membership else helper.signature
+            for values in self._get_param_combinations(new_problem, signature):
                 substitutions: Dict[Expression, Expression] = dict(
-                    zip(card.args, values)
+                    zip(parameters, values)
                 )
                 ground_expression = expression.substitute(substitutions)
-                ground_card = card.fluent()(*values)
+                if not is_membership:
+                    ground_card = helper(*values)
                 for element in elements:
                     before = self._get_element_membership_expr(
                         ground_expression, ObjectExp(element), new_problem
@@ -746,6 +808,15 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                         ).simplify()
                     after = before.substitute(updates).simplify()
                     if after == before:
+                        continue
+                    if is_membership:
+                        member = helper(ObjectExp(element), *values)
+                        action.add_effect(
+                            member, True, And(Not(before), after).simplify()
+                        )
+                        action.add_effect(
+                            member, False, And(before, Not(after)).simplify()
+                        )
                         continue
                     self._record_cardinality_delta(
                         ground_card, before, 1, And(Not(before), after).simplify()
@@ -1365,6 +1436,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         self._fluent_mapping.clear()
         self._cardinality_registry.clear()
         self._union_cardinalities.clear()
+        self._expression_memberships.clear()
         new_to_old: Dict[Action, Optional[Action]] = {}
 
         # Transform set fluents
