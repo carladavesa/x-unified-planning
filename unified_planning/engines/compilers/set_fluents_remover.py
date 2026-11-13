@@ -39,7 +39,7 @@ from unified_planning.engines.compilers.utils import (
     replace_action,
     updated_minimize_action_costs,
     combine_increments,
-    membership_writes,
+    membership_writes, guard_conflicting_assignments,
 )
 from typing import Dict, Iterable, Optional, Tuple, Union, List
 from functools import partial
@@ -1452,8 +1452,10 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             new_action.name = get_fresh_name(new_problem, action.name)
             new_action.clear_preconditions()
 
-            # Transform preconditions
-            for precondition in action.preconditions:
+            # Transform preconditions, with the guards against conflicting assignments
+            for precondition in guard_conflicting_assignments(
+                    problem, action
+            ).preconditions:
                 new_precondition = self._transform_expression(
                     problem, new_problem, precondition
                 )

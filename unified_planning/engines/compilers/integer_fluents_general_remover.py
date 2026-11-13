@@ -34,7 +34,7 @@ from unified_planning.engines.compilers.utils import (
     requires_csp,
     compress_solutions,
     get_scalar_solution_value,
-    check_problem_no_division,
+    check_problem_no_division, guard_conflicting_assignments,
 )
 from typing import List, Iterable, Sequence, Tuple
 from unified_planning.model.expression import ListExpression
@@ -1628,7 +1628,11 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
         new_to_old = {}
         for old_action in problem.actions:
             new_actions = self._transform_action_integers(
-                problem, new_problem, merge_increments(problem, old_action)
+                problem,
+                new_problem,
+                merge_increments(
+                    problem, guard_conflicting_assignments(problem, old_action)
+                ),
             )
             for new_action in new_actions:
                 new_problem.add_action(new_action)

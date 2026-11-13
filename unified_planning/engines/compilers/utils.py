@@ -1745,19 +1745,85 @@ def conditions_may_hold_together(
     model.add(var == 1)
     return solve_with_cp_sat(variables, model, []) is not None
 
+def guard_conflicting_assignments(
+    problem: Problem, action: InstantaneousAction
+) -> InstantaneousAction:
+    """Make the action not applicable when two of its effects conflict."""
+    em = problem.environment.expression_manager
+
+    def root(node: FNode) -> FNode:
+        while not node.is_fluent_exp():
+            node = node.arg(0)
+        return node
+
+    def is_set_update(effect: Effect) -> bool:
+        value = effect.value
+        return (
+            effect.fluent.type.is_set_type()
+            and (value.is_set_add() or value.is_set_remove())
+            and value.arg(0) == effect.fluent
+        )
+
+    effects = [
+        e
+        for e in action.effects
+        if not e.fluent.type.is_bool_type() and not e.fluent.type.is_derived_bool_type()
+    ]
+    guards = []
+    for e1, e2 in itertools.combinations(effects, 2):
+        if root(e1.fluent).fluent() != root(e2.fluent).fluent():
+            continue
+        assign1 = e1.is_assignment() and not is_set_update(e1)
+        assign2 = e2.is_assignment() and not is_set_update(e2)
+        if not (assign1 or assign2):
+            continue  # increments are summed, set additions and removals combine
+        if assign1 and assign2:
+            if e1.value == e2.value:
+                continue
+            if e1.value.is_constant() and e2.value.is_constant():
+                different = em.TRUE()
+            else:
+                different = em.Not(em.Equals(e1.value, e2.value))
+        else:
+            different = em.TRUE()  # an assignment with an increment or a set update
+        if e1.fluent.is_fluent_exp() and e2.fluent.is_fluent_exp():
+            if any(
+                a.is_constant() and b.is_constant() and a != b
+                for a, b in zip(e1.fluent.args, e2.fluent.args)
+            ):
+                continue
+            same_place = em.And(
+                [em.Equals(a, b) for a, b in zip(e1.fluent.args, e2.fluent.args) if a != b]
+            )
+        elif e1.fluent == e2.fluent:
+            same_place = em.TRUE()
+        else:
+            raise UPProblemDefinitionError(
+                f"Cannot check whether {e1} and {e2} in action {action.name} write "
+                "the same location."
+            )
+        if e1.forall or e2.forall:
+            raise UPProblemDefinitionError(
+                f"Cannot check whether {e1} and {e2} in action {action.name} "
+                "conflict, as one of them has a forall."
+            )
+        conflict = em.And(e1.condition, e2.condition, same_place, different).simplify()
+        if conflict.is_false() or not conditions_may_hold_together(
+            problem, em.And(e1.condition, same_place).simplify(), e2.condition
+        ):
+            continue
+        guards.append(em.Not(conflict).simplify())
+    if not guards:
+        return action
+    new_action = action.clone()
+    for guard in guards:
+        new_action.add_precondition(guard)
+    return new_action
 
 def merge_increments(
     problem: Problem, action: InstantaneousAction
 ) -> InstantaneousAction:
-    """Replace the increases and decreases of each fluent by their sum.
-
-    The integer fluent removers translate each increment from the value of the
-    fluent before the action, so two increments that hold together would apply
-    only one. For each fluent with increments that can hold together, this
-    function replaces them by the totals of ``combine_increments``. A total
-    that can never fit the bounds of the fluent becomes a precondition that
-    its condition is false, as the action would not be applicable.
-    """
+    """Replace the increases and decreases of each fluent by their sum."""
     em = problem.environment.expression_manager
     groups: Dict[FNode, List[Effect]] = {}
     for effect in action.effects:
