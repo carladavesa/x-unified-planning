@@ -704,13 +704,30 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         self._union_cardinalities[expression] = result
         return result
 
+    def _membership_writes(self, membership, effects):
+        """Return the conditions under which the effects set membership to true
+        and to false, as two lists."""
+        enabled_true = []
+        enabled_false = []
+        for effect in effects:
+            if effect.fluent.fluent() != membership.fluent():
+                continue
+            matches = And(
+                [Equals(a, b) for a, b in zip(effect.fluent.args, membership.args)]
+            )
+            condition = And(effect.condition, matches).simplify()
+            if condition.is_false():
+                continue
+            enabled_true.append(And(condition, effect.value))
+            enabled_false.append(And(condition, Not(effect.value)))
+        return enabled_true, enabled_false
+
     def _add_union_cardinality_effects(
         self, new_problem: Problem, action: InstantaneousAction
     ):
         """Count changes to union membership after all simultaneous set effects."""
         if not self._union_cardinalities:
             return
-        em = new_problem.environment.expression_manager
         effects = [
             ground
             for effect in action.effects
@@ -731,43 +748,28 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 ground_card = card.fluent()(*values)
                 for element in elements:
                     before = self._get_element_membership_expr(
-                        ground_expression, em.ObjectExp(element), new_problem
+                        ground_expression, ObjectExp(element), new_problem
                     ).simplify()
                     updates: Dict[Expression, Expression] = {}
                     for membership in self._find_affected_fluents(before):
-                        enabled_true = []
-                        enabled_false = []
-                        for effect in effects:
-                            if effect.fluent.fluent() != membership.fluent():
-                                continue
-                            matches = em.And(
-                                [
-                                    em.Equals(a, b)
-                                    for a, b in zip(effect.fluent.args, membership.args)
-                                ]
-                            )
-                            condition = em.And(effect.condition, matches).simplify()
-                            if condition.is_false():
-                                continue
-                            enabled_true.append(em.And(condition, effect.value))
-                            enabled_false.append(
-                                em.And(condition, em.Not(effect.value))
-                            )
-                        updates[membership] = em.Or(
-                            em.Or(enabled_true),
-                            em.And(membership, em.Not(em.Or(enabled_false))),
+                        enabled_true, enabled_false = self._membership_writes(
+                            membership, effects
+                        )
+                        updates[membership] = Or(
+                            Or(enabled_true),
+                            And(membership, Not(Or(enabled_false))),
                         ).simplify()
                     after = before.substitute(updates).simplify()
                     if after == before:
                         continue
                     self._record_cardinality_delta(
-                        ground_card, before, 1, em.And(em.Not(before), after).simplify()
+                        ground_card, before, 1, And(Not(before), after).simplify()
                     )
                     self._record_cardinality_delta(
                         ground_card,
                         before,
                         -1,
-                        em.And(before, em.Not(after)).simplify(),
+                        And(before, Not(after)).simplify(),
                     )
 
     def _transform_add_remove(self, new_problem: Problem, node: FNode) -> FNode:
@@ -1140,8 +1142,13 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         new_effects: List[Effect],
         equality_conditions: List[FNode],
         effect_condition: Optional[FNode] = None,
+        action_effects: Optional[List[Effect]] = None,
     ):
-        """Add conditional effects to maintain cardinality helper fluents."""
+        """
+        Add conditional effects to maintain cardinality helper fluents.
+        ``action_effects`` are all the Boolean effects of the new action, used to find the elements that
+        the action both adds and removes.
+        """
         if effect_condition is None:
             effect_condition = TRUE()
         card_expr = self._cardinality_registry[card.fluent().name]
@@ -1193,10 +1200,20 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             for new_effect in new_effects:
                 membership = new_effect.fluent
                 adding = old_value.is_set_add()
+                if adding:
+                    guard = Not(membership)
+                else:
+                    # If the action also adds this element, it is removed first and then added, so it stays in the set.
+                    added, _ = self._membership_writes(
+                        new_problem.environment.expression_manager,
+                        membership,
+                        action_effects or [],
+                    )
+                    guard = And(membership, Not(Or(added)))
                 condition = And(
                     new_effect.condition,
                     equality_conditions,
-                    Not(membership) if adding else membership,
+                    guard,
                 ).simplify()
                 self._record_cardinality_delta(
                     card, membership, 1 if adding else -1, condition
@@ -1268,6 +1285,14 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
         new_action = action.clone()
         new_action.clear_effects()
         self._cardinality_deltas.clear()
+        action_effects = [
+            ground
+            for _, effects in transformed
+            if effects is not None
+            for effect in (effects if isinstance(effects, list) else [effects])
+            for ground in effect.expand_effect(new_problem)
+            if ground.fluent.type.is_bool_type()
+        ]
 
         for old_effect, new_effects in transformed:
             if new_effects is None:
@@ -1324,6 +1349,7 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                     self._transform_expression(
                         old_problem, new_problem, old_effect.condition
                     ),
+                    action_effects,
                 )
 
         self._add_union_cardinality_effects(new_problem, new_action)
