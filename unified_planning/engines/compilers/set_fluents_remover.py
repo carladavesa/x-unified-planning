@@ -563,6 +563,24 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 em.Equals(element, value) for value in set_expr.set_constant_value()
             ).simplify()
 
+        if set_expr.is_set_add() or set_expr.is_set_remove():
+            # elem in add(A, x): elem in A OR elem = x; elem in remove(A, x): elem in A AND elem != x
+            base, added = set_expr.args
+            if not (added.is_constant() or added.is_parameter_exp()):
+                raise NotImplementedError(
+                    f"The element of {set_expr} inside a cardinality must be a constant or a parameter."
+                )
+            element = elem_expr
+            if elem_expr.is_object_exp():
+                obj_type = elem_expr.object().type
+                int_values = self._obj_to_int.get(obj_type.name)
+                if int_values is not None:
+                    element = em.Int(int_values[elem_expr.object()])
+            in_base = self._get_element_membership_expr(base, elem_expr, new_problem)
+            if set_expr.is_set_add():
+                return em.Or(in_base, em.Equals(element, added))
+            return em.And(in_base, em.Not(em.Equals(element, added)))
+
         if set_expr.is_set_union():
             # elem in (A u B): elem in A OR elem in B
             set1, set2 = set_expr.args
@@ -694,7 +712,13 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 self._cardinality_registry[fluent_name] = set_expr
                 return new_fluent()
 
-        elif set_expr.is_set_union():
+        elif (
+            set_expr.is_set_union()
+            or set_expr.is_set_intersect()
+            or set_expr.is_set_difference()
+            or set_expr.is_set_add()
+            or set_expr.is_set_remove()
+        ):
             return self._transform_union_cardinality(old_problem, new_problem, set_expr)
 
         raise NotImplementedError(
@@ -709,6 +733,11 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             return set(value.set_constant_value())
         if expression.is_set_constant():
             return set(expression.set_constant_value())
+        if expression.is_set_add() or expression.is_set_remove():
+            base = self._initial_set_value(problem, expression.arg(0))
+            element = expression.arg(1)
+            assert element.is_constant(), f"Element {element} must be constant here."
+            return base | {element} if expression.is_set_add() else base - {element}
         left = self._initial_set_value(problem, expression.arg(0))
         right = self._initial_set_value(problem, expression.arg(1))
         if expression.is_set_union():
