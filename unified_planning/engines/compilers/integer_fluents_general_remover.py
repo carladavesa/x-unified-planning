@@ -659,13 +659,15 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             and effect.condition.is_true()
         }
 
-        # Fluents whose values a dependent increase or decrease uses
+        # Fluents whose values the dependent effects use
         update_var_strs = {
             str(f)
             for effect in dependent_effects
-            if effect.is_increase() or effect.is_decrease()
-            for f in get_fluent_exps_in_expression(effect.fluent)
-            | get_fluent_exps_in_expression(effect.value)
+            for expression in (
+                [effect.value, effect.condition]
+                + ([effect.fluent] if effect.is_increase() or effect.is_decrease() else [])
+            )
+            for f in get_fluent_exps_in_expression(expression)
         }
 
         def solution_substitutions(solution):
