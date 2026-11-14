@@ -415,6 +415,62 @@ def _is_set_element_update(effect: Effect) -> bool:
         and value.arg(0) == effect.fluent
     )
 
+def _array_position(fluent: "up.model.fnode.FNode"):
+    """
+    For an assignment target of an array (a whole array, a subarray or an element) with constant indices,
+    return the array fluent and the list of indices. Return None otherwise.
+    """
+    indices = []
+    node = fluent
+    while node.is_array_access():
+        index = node.arg(1)
+        if not index.is_int_constant():
+            return None
+        indices.append(index.int_constant_value())
+        node = node.arg(0)
+    if not node.is_fluent_exp() or not node.type.is_array_type():
+        return None
+    return node, indices[::-1]
+
+
+def _array_of_booleans(fluent: "up.model.fnode.FNode") -> bool:
+    """True if the target is a whole array or a subarray whose elements are Booleans."""
+    node_type = fluent.type
+    if not node_type.is_array_type():
+        return False
+    while node_type.is_array_type():
+        node_type = node_type.elements_type
+    return node_type.is_bool_type()
+
+
+def _value_at(value: "up.model.fnode.FNode", indices) -> "up.model.fnode.FNode":
+    """The value that an assignment of value writes at the given position below its target."""
+    em = value.environment.expression_manager
+    for index in indices:
+        if value.is_array_constant():
+            value = value.array_constant_value()[index]
+        else:
+            value = em.ArrayAccess(value, em.Int(index)).simplify()
+    return value
+
+
+def _array_overlap_conflict(position, value, other_fluent, other_value) -> bool:
+    """
+    True if two assignments to positions of the same array overlap (one covers the other) and write different
+    values at the covered positions.
+    """
+    other_position = _array_position(other_fluent)
+    if other_position is None or other_position[0] != position[0]:
+        return False
+    indices, other_indices = position[1], other_position[1]
+    if indices == other_indices:
+        return False  # the same target, checked as for any fluent
+    if indices == other_indices[: len(indices)]:
+        return _value_at(value, other_indices[len(indices) :]) != other_value
+    if other_indices == indices[: len(other_indices)]:
+        return _value_at(other_value, indices[len(other_indices) :]) != value
+    return False
+
 
 def check_conflicting_effects(
     effect: Effect,
@@ -456,6 +512,11 @@ def check_conflicting_effects(
             # Recorded under its own value, so that a later assignment of the whole set can find it
             fluents_assigned.setdefault(effect.value, effect.value)
         return
+    if _array_of_booleans(effect.fluent):
+        # Each position of an array of Booleans behaves as a Boolean fluent: assignments that write different
+        # values to the same position do not conflict, the position is set to false first and then to true
+        return
+    position = _array_position(effect.fluent)
     assigned_value = fluents_assigned.get(effect.fluent, None)
     if not effect.is_conditional() and not effect.fluent.type.is_bool_type():
         if effect.is_assignment():
@@ -486,6 +547,16 @@ def check_conflicting_effects(
                     msg = f"The effect {effect} is in conflict with the add or remove effects already in the {name}."
                 else:
                     msg = f"The effect {effect} at timing {timing} is in conflict with the add or remove effects already in the {name}."
+                raise UPConflictingEffectsException(msg)
+            # a whole array or a subarray, and an assignment to a part of it, that write different values at the same position
+            elif position is not None and any(
+                _array_overlap_conflict(position, effect.value, other, value)
+                for other, value in fluents_assigned.items()
+            ):
+                if timing is None:
+                    msg = f"The effect {effect} is in conflict with an assignment to an overlapping part of the array already in the {name}."
+                else:
+                    msg = f"The effect {effect} at timing {timing} is in conflict with an assignment to an overlapping part of the array already in the {name}."
                 raise UPConflictingEffectsException(msg)
             # the same fluent is involved in another assign
             elif assigned_value is not None:
