@@ -512,7 +512,13 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
             helper = Fluent(
                 get_fresh_name(new_problem, "in_set_expression"),
                 BoolType(),
-                [model.Parameter("e", set_type.elements_type, new_problem.environment)]
+                [
+                    model.Parameter(
+                        "e",
+                        self._resolve_element_type(new_problem, set_type.elements_type),
+                        new_problem.environment,
+                    )
+                ]
                 + [
                     model.Parameter(f"p{i}", p.type, new_problem.environment)
                     for i, p in enumerate(parameters)
@@ -528,7 +534,12 @@ class SetFluentsRemover(engines.engine.Engine, CompilerMixin):
                 )
                 ground_expression = expression.substitute(substitutions)
                 for element in self._initial_set_value(old_problem, ground_expression):
-                    new_problem.set_initial_value(helper(element, *values), True)
+                    element_object = self._to_element_object(
+                        new_problem, set_type.elements_type, element
+                    )
+                    new_problem.set_initial_value(
+                        helper(ObjectExp(element_object), *values), True
+                    )
             self._expression_memberships[expression] = (helper, parameters)
         helper, parameters = self._expression_memberships[expression]
         em = new_problem.environment.expression_manager
