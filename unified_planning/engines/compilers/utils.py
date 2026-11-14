@@ -1681,26 +1681,24 @@ def get_scalar_solution_value(solution, key):
 
 
 def combine_increments(
-    em: "up.model.ExpressionManager", terms: List[Tuple[int, FNode]]
-) -> List[Tuple[int, FNode]]:
+    em: "up.model.ExpressionManager", terms: List[Tuple[Union[int, FNode], FNode]]
+) -> List[Tuple[Union[int, FNode], FNode]]:
     """Sum the increments (delta, condition) of one fluent in one action.
-
-    In UP, the increments of the same fluent in one action are summed. This
-    returns one (total, condition) pair per possible total, with mutually
-    exclusive conditions. For example, (1, c1) and (2, c2) give
-    (0, not c1 and not c2), (1, c1 and not c2), (2, not c1 and c2) and
-    (3, c1 and c2).
     """
-    totals: Dict[int, FNode] = {0: em.TRUE()}
+    totals: Dict[Union[int, FNode], FNode] = {0: em.TRUE()}
     for delta, condition in terms:
-        next_totals: Dict[int, FNode] = {}
+        next_totals: Dict[Union[int, FNode], FNode] = {}
         for total, guard in totals.items():
             for change, branch in ((0, em.Not(condition)), (delta, condition)):
                 enabled = em.And(guard, branch).simplify()
                 if enabled.is_false():
                     continue
-                next_totals[total + change] = em.Or(
-                    next_totals.get(total + change, em.FALSE()), enabled
+                if isinstance(total, int) and isinstance(change, int):
+                    new_total = total + change
+                else:
+                    new_total = em.Plus(total, change).simplify()
+                next_totals[new_total] = em.Or(
+                    next_totals.get(new_total, em.FALSE()), enabled
                 ).simplify()
         totals = next_totals
     return list(totals.items())
@@ -1852,18 +1850,20 @@ def merge_increments(
         terms = []
         for effect in effects:
             amount = effect.value.simplify()
-            if not amount.is_int_constant():
-                raise UPProblemDefinitionError(
-                    f"Increases and decreases of {fluent} in action {action.name} "
-                    "that can hold together must have constant amounts."
-                )
-            delta = amount.int_constant_value()
-            terms.append((delta if effect.is_increase() else -delta, effect.condition))
+            if amount.is_int_constant():
+                delta = amount.int_constant_value()
+                delta = delta if effect.is_increase() else -delta
+            else:
+                delta = amount if effect.is_increase() else em.Times(-1, amount)
+            terms.append((delta, effect.condition))
         lower, upper = fluent.type.lower_bound, fluent.type.upper_bound
         for total, condition in combine_increments(em, terms):
             if total == 0:
                 continue
-            if lower is not None and upper is not None and abs(total) > upper - lower:
+            if not isinstance(total, int):
+                # The compiler checks the bounds of a total that is not a constant
+                new_action.add_increase_effect(fluent, total, condition)
+            elif lower is not None and upper is not None and abs(total) > upper - lower:
                 new_action.add_precondition(em.Not(condition).simplify())
             elif total > 0:
                 new_action.add_increase_effect(fluent, total, condition)

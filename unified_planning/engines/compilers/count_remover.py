@@ -787,17 +787,13 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
                         terms = []
                         for effect, condition, _ in fluent_writers:
                             delta = effect.value.simplify()
-                            if not delta.is_int_constant():
-                                raise UPProblemDefinitionError(
-                                    f"Increases and decreases of {tracked_fluent} in "
-                                    f"action {action.name} must have constant amounts."
-                                )
-                            delta = delta.int_constant_value()
+                            if delta.is_int_constant():
+                                delta = delta.int_constant_value()
+                                delta = delta if effect.is_increase() else -delta
+                            elif effect.is_decrease():
+                                delta = em.Times(-1, delta)
                             terms.append(
-                                (
-                                    delta if effect.is_increase() else -delta,
-                                    condition if condition is not None else TRUE(),
-                                )
+                                (delta, condition if condition is not None else TRUE())
                             )
                         changes[tracked_fluent] = [
                             (guard, em.Plus(tracked_fluent, total).simplify())
