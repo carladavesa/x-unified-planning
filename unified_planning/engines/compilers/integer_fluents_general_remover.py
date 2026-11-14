@@ -659,6 +659,15 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
             and effect.condition.is_true()
         }
 
+        # Fluents whose values a dependent increase or decrease uses
+        update_var_strs = {
+            str(f)
+            for effect in dependent_effects
+            if effect.is_increase() or effect.is_decrease()
+            for f in get_fluent_exps_in_expression(effect.fluent)
+            | get_fluent_exps_in_expression(effect.value)
+        }
+
         def solution_substitutions(solution):
             """Map projected values to their encoded expressions."""
             em = new_problem.environment.expression_manager
@@ -729,7 +738,11 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     continue
 
                 # Binary: only add preconditions for fluents that actually appear in the action's original preconditions
-                if self.representation == "binary" and var_str not in prec_var_strs:
+                if (
+                        self.representation == "binary"
+                        and var_str not in prec_var_strs
+                        and var_str not in update_var_strs
+                ):
                     continue
 
                 value = solution[var_str]
@@ -1174,9 +1187,13 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                     )
                 )
 
-                try:
-                    delta = old_effect.value.constant_value()
-                except:
+                # The amount takes its value in the solution when it is not a constant
+                delta = evaluate_with_solution(
+                    new_problem, old_effect.value, solution
+                ).simplify()
+                if delta.is_int_constant():
+                    delta = delta.int_constant_value()
+                else:
                     # Non-constant delta: fall back to full expansion
                     for new_eff in self._transform_increase_decrease_effect(
                         old_effect, problem, new_problem
@@ -1377,8 +1394,11 @@ class IntegerFluentsGeneralRemover(engines.engine.Engine, CompilerMixin):
                 effect_vars = get_fluent_exps_in_expression(effect.fluent)
                 value_vars = get_fluent_exps_in_expression(effect.value)
                 value_params = get_params_in_expression(effect.value)
-                if any(str(v) in prec_vars for v in effect_vars | value_vars) or (
-                    any(str(p) in prec_vars for p in value_params)
+                if (
+                        any(str(v) in prec_vars for v in effect_vars | value_vars)
+                        or any(str(p) in prec_vars for p in value_params)
+                        # The next value of a non-constant update is computed from a CP-SAT solution
+                        or not effect.value.simplify().is_int_constant()
                 ):
                     dependent_effects.append(effect)
                 else:
