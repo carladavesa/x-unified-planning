@@ -453,6 +453,13 @@ def _value_at(value: "up.model.fnode.FNode", indices) -> "up.model.fnode.FNode":
             value = em.ArrayAccess(value, em.Int(index)).simplify()
     return value
 
+def _array_covers(position, other_fluent) -> bool:
+    """True if the target at position is the same array as other_fluent and covers a strictly smaller part of it."""
+    other_position = _array_position(other_fluent)
+    if other_position is None or other_position[0] != position[0]:
+        return False
+    indices, other_indices = position[1], other_position[1]
+    return len(indices) < len(other_indices) and indices == other_indices[: len(indices)]
 
 def _array_overlap_conflict(position, value, other_fluent, other_value) -> bool:
     """
@@ -548,6 +555,15 @@ def check_conflicting_effects(
                 else:
                     msg = f"The effect {effect} at timing {timing} is in conflict with the add or remove effects already in the {name}."
                 raise UPConflictingEffectsException(msg)
+            # a whole array or a subarray that covers a position already increased or decreased
+            elif position is not None and any(
+                _array_covers(position, other) for other in fluents_inc_dec
+            ):
+                if timing is None:
+                    msg = f"The effect {effect} is in conflict with the increase/decrease effects already in the {name}."
+                else:
+                    msg = f"The effect {effect} at timing {timing} is in conflict with the increase/decrease effects already in the {name}."
+                raise UPConflictingEffectsException(msg)
             # a whole array or a subarray, and an assignment to a part of it, that write different values at the same position
             elif position is not None and any(
                 _array_overlap_conflict(position, effect.value, other, value)
@@ -586,7 +602,14 @@ def check_conflicting_effects(
             or effect.is_continuous_increase()
             or effect.is_continuous_decrease()
         ):
-            if effect.fluent in fluents_assigned:
+            if effect.fluent in fluents_assigned or (
+                position is not None
+                and any(
+                    _array_position(other) is not None
+                    and _array_covers(_array_position(other), effect.fluent)
+                    for other in fluents_assigned
+                )
+            ):
                 if timing is None:
                     msg = f"The effect {effect} is in conflict with the effects already in the {name}."
                 else:
