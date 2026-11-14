@@ -725,155 +725,207 @@ class CountRemover(engines.engine.Engine, CompilerMixin):
             affected_fluents = list(
                 dict.fromkeys(self._int_find_affected_fluents(count_expr))
             )
-            # For each fluent of the term, the effects that may write it, with
-            # their condition and the value the fluent takes.
-            writers: Dict[FNode, List[Tuple[Effect, Optional[FNode], FNode]]] = {}
-            for effect in action.effects:
-                for tracked_fluent in affected_fluents:
-                    # Must be same fluent name
-                    if effect.fluent.fluent().name != tracked_fluent.fluent().name:
-                        continue
+            helper_parameters = [
+                em.ParameterExp(p)
+                for p in self._int_get_params_in_expression(count_expr)
+            ]
+            groups = self._int_count_writers(
+                problem, action, affected_fluents, helper_parameters, ground=False
+            )
+            instances = list(groups)
+            if any(
+                all(
+                    not (a.is_constant() and b.is_constant() and a != b)
+                    for a, b in zip(i1, i2)
+                )
+                for i1, i2 in itertools.combinations(instances, 2)
+            ):
+                # Two instances of the helper written by the action may be the same one: compute every instance separately
+                groups = self._int_count_writers(
+                    problem, action, affected_fluents, helper_parameters, ground=True
+                )
+            for instance, writers in groups.items():
+                count_fluent = problem.fluent(count_name)(*instance)
+                term = count_expr.substitute(dict(zip(helper_parameters, instance)))
+                all_writers = [w for fluent_writers in writers.values() for w in fluent_writers]
+                if all(
+                    not conditions_may_hold_together(
+                        problem,
+                        TRUE() if c1 is None else c1,
+                        TRUE() if c2 is None else c2,
+                    )
+                    for (_, c1, _), (_, c2, _) in itertools.combinations(all_writers, 2)
+                ):
+                    # At most one effect writes the term: it takes the value of that effect, and the other fluents keep their value
+                    for tracked_fluent, fluent_writers in writers.items():
+                        for _, condition, value in fluent_writers:
+                            new_expr = term.substitute(
+                                {tracked_fluent: value}
+                            ).simplify()
+                            self._int_add_count_effect_to_action(
+                                action, count_fluent, new_expr, condition
+                            )
+                    continue
 
-                    # Check if arguments match (build equality conditions)
-                    equality_conditions = []
-                    all_match = True
-                    for effect_arg, tracked_arg in zip(
-                        effect.fluent.args, tracked_fluent.args
-                    ):
-                        if effect_arg == tracked_arg:
-                            # Exact match (same parameter or object)
+                # Several effects may write the term together
+                changes: Dict[FNode, List[Tuple[FNode, FNode]]] = {}
+                for tracked_fluent, fluent_writers in writers.items():
+                    if tracked_fluent.type.is_bool_type() and len(fluent_writers) > 1:
+                        # Delete before add, as for any Boolean fluent
+                        enabled_true, enabled_false = membership_writes(
+                            em, tracked_fluent, [w[0] for w in fluent_writers]
+                        )
+                        after = Or(
+                            Or(enabled_true),
+                            And(tracked_fluent, Not(Or(enabled_false))),
+                        ).simplify()
+                        changes[tracked_fluent] = [
+                            (Or(enabled_true + enabled_false).simplify(), after)
+                        ]
+                    elif all(w[0].is_increase() or w[0].is_decrease() for w in fluent_writers):
+                        # Increments of the same fluent are summed
+                        terms = []
+                        for effect, condition, _ in fluent_writers:
+                            delta = effect.value.simplify()
+                            if not delta.is_int_constant():
+                                raise UPProblemDefinitionError(
+                                    f"Increases and decreases of {tracked_fluent} in "
+                                    f"action {action.name} must have constant amounts."
+                                )
+                            delta = delta.int_constant_value()
+                            terms.append(
+                                (
+                                    delta if effect.is_increase() else -delta,
+                                    condition if condition is not None else TRUE(),
+                                )
+                            )
+                        changes[tracked_fluent] = [
+                            (guard, em.Plus(tracked_fluent, total).simplify())
+                            for total, guard in combine_increments(em, terms)
+                            if total != 0
+                        ]
+                    else:
+                        changes[tracked_fluent] = [
+                            (condition if condition is not None else TRUE(), value)
+                            for _, condition, value in fluent_writers
+                        ]
+
+                # The term after the action, for each combination of changes
+                fluents = list(changes)
+                options = [
+                    [(Not(Or([g for g, _ in changes[f]])), None)] + changes[f]
+                    for f in fluents
+                ]
+                touched = Or([g for f in fluents for g, _ in changes[f]]).simplify()
+                cases = []
+                for combination in itertools.product(*options):
+                    if all(value is None for _, value in combination):
+                        continue
+                    guard = And([g for g, _ in combination]).simplify()
+                    if guard.is_false():
+                        continue
+                    substitution: Dict[Expression, Expression] = {
+                        f: value
+                        for f, (_, value) in zip(fluents, combination)
+                        if value is not None
+                    }
+                    cases.append(And(guard, term.substitute(substitution)))
+                new_expr = Or(cases).simplify()
+                self._int_add_count_effect_to_action(
+                    action,
+                    count_fluent,
+                    new_expr,
+                    None if touched.is_true() else touched,
+                )
+        return action
+
+    def _int_count_writers(
+        self, problem, action, affected_fluents, helper_parameters, ground
+    ):
+        """Group the effects of the action that may write a fluent of a count term.
+
+        The term may contain parameters, which become the parameters of its
+        helper fluent. An effect writes the instance of the helper whose
+        parameters take the arguments of the effect: for example, if the term is
+        q(o), the effect q(a) := true writes the instance for o = a. With
+        ground=True, or when the effect does not fix a parameter of the term,
+        each value of that parameter gives a separate instance.
+
+        Return a map from the arguments of each instance to the effects that may
+        write its fluents, as (effect, condition, value) for each fluent.
+        """
+        em = problem.environment.expression_manager
+
+        groups: Dict[tuple, Dict[FNode, List[Tuple[Effect, Optional[FNode], FNode]]]] = {}
+        for effect in action.effects:
+            for tracked_fluent in affected_fluents:
+                # Must be same fluent name
+                if effect.fluent.fluent().name != tracked_fluent.fluent().name:
+                    continue
+                binding: Dict[FNode, FNode] = {}
+                equality_conditions = []
+                all_match = True
+                for effect_arg, tracked_arg in zip(effect.fluent.args, tracked_fluent.args):
+                    if tracked_arg in helper_parameters and not ground:
+                        # A parameter of the term takes the argument of the effect
+                        if tracked_arg not in binding:
+                            binding[tracked_arg] = effect_arg
+                        elif binding[tracked_arg] != effect_arg:
+                            equality_conditions.append(
+                                Equals(binding[tracked_arg], effect_arg)
+                            )
+                    elif tracked_arg in helper_parameters:
+                        continue  # matched below, once its value is chosen
+                    elif effect_arg == tracked_arg:
+                        # Exact match (same parameter or object)
+                        continue
+                    elif effect_arg.is_parameter_exp():
+                        # Effect has parameter, tracked has concrete object
+                        equality_conditions.append(Equals(effect_arg, tracked_arg))
+                    else:
+                        # Different concrete values - no match possible
+                        all_match = False
+                        break
+                if not all_match:
+                    continue
+                unbound = [p for p in helper_parameters if p not in binding]
+                for values in self._int_get_param_combinations(problem, [p.parameter() for p in unbound]):
+                    substitution = dict(binding)
+                    substitution.update(zip(unbound, map(em.ObjectExp, values)))
+                    instance_fluent = tracked_fluent.substitute(substitution)
+                    conditions = list(equality_conditions)
+                    if ground or unbound:
+                        # Match the chosen values against the arguments of the effect
+                        matches = []
+                        for effect_arg, tracked_arg in zip(
+                            effect.fluent.args, tracked_fluent.args
+                        ):
+                            if tracked_arg in unbound:
+                                matches.append(
+                                    Equals(effect_arg, substitution[tracked_arg]).simplify()
+                                )
+                        if any(m.is_false() for m in matches):
                             continue
-                        elif effect_arg.is_parameter_exp():
-                            # Effect has parameter, tracked has concrete object
-                            equality_conditions.append(Equals(effect_arg, tracked_arg))
-                        else:
-                            # Different concrete values - no match possible
-                            all_match = False
-                            break
-                    if not all_match:
-                        continue
-
+                        conditions += [m for m in matches if not m.is_true()]
                     # Combine effect condition with argument-matching equalities
                     condition = None
                     if effect.is_conditional():
                         condition = effect.condition
-                    for eq_cond in equality_conditions:
+                    for eq_cond in conditions:
                         condition = (
                             And(condition, eq_cond).simplify() if condition else eq_cond
                         )
                     if effect.is_increase():
-                        value = em.Plus(tracked_fluent, effect.value).simplify()
+                        value = em.Plus(instance_fluent, effect.value).simplify()
                     elif effect.is_decrease():
-                        value = em.Minus(tracked_fluent, effect.value).simplify()
+                        value = em.Minus(instance_fluent, effect.value).simplify()
                     else:
                         value = effect.value
-                    writers.setdefault(tracked_fluent, []).append(
+                    instance = tuple(substitution[p] for p in helper_parameters)
+                    groups.setdefault(instance, {}).setdefault(instance_fluent, []).append(
                         (effect, condition, value)
                     )
-            if not writers:
-                continue
-
-            count_parameters = [
-                Parameter(str(a), a.type)
-                for a in count_expr.args
-                if a.is_parameter_exp()
-            ]
-            count_fluent = problem.fluent(count_name)(*count_parameters)
-
-            all_writers = [w for fluent_writers in writers.values() for w in fluent_writers]
-            if all(
-                not conditions_may_hold_together(
-                    problem,
-                    TRUE() if c1 is None else c1,
-                    TRUE() if c2 is None else c2,
-                )
-                for (_, c1, _), (_, c2, _) in itertools.combinations(all_writers, 2)
-            ):
-                # At most one effect writes the term: it takes the value of
-                # that effect, and the other fluents keep their value.
-                for tracked_fluent, fluent_writers in writers.items():
-                    for _, condition, value in fluent_writers:
-                        new_expr = count_expr.substitute(
-                            {tracked_fluent: value}
-                        ).simplify()
-                        self._int_add_count_effect_to_action(
-                            action, count_fluent, new_expr, condition
-                        )
-                continue
-
-            # Several effects may write the term together. For each fluent,
-            # list the mutually exclusive ways it can change, as
-            # (condition, value).
-            changes: Dict[FNode, List[Tuple[FNode, FNode]]] = {}
-            for tracked_fluent, fluent_writers in writers.items():
-                if tracked_fluent.type.is_bool_type() and len(fluent_writers) > 1:
-                    # Delete before add, as for any Boolean fluent.
-                    enabled_true, enabled_false = membership_writes(
-                        em, tracked_fluent, [w[0] for w in fluent_writers]
-                    )
-                    after = Or(
-                        Or(enabled_true),
-                        And(tracked_fluent, Not(Or(enabled_false))),
-                    ).simplify()
-                    changes[tracked_fluent] = [
-                        (Or(enabled_true + enabled_false).simplify(), after)
-                    ]
-                elif all(w[0].is_increase() or w[0].is_decrease() for w in fluent_writers):
-                    # Increments of the same fluent are summed.
-                    terms = []
-                    for effect, condition, _ in fluent_writers:
-                        delta = effect.value.simplify()
-                        if not delta.is_int_constant():
-                            raise UPProblemDefinitionError(
-                                f"Increases and decreases of {tracked_fluent} in "
-                                f"action {action.name} must have constant amounts."
-                            )
-                        delta = delta.int_constant_value()
-                        terms.append(
-                            (
-                                delta if effect.is_increase() else -delta,
-                                condition if condition is not None else TRUE(),
-                            )
-                        )
-                    changes[tracked_fluent] = [
-                        (guard, em.Plus(tracked_fluent, total).simplify())
-                        for total, guard in combine_increments(em, terms)
-                        if total != 0
-                    ]
-                else:
-                    changes[tracked_fluent] = [
-                        (condition if condition is not None else TRUE(), value)
-                        for _, condition, value in fluent_writers
-                    ]
-
-            # The term after the action, for each combination of changes.
-            fluents = list(changes)
-            options = [
-                [(Not(Or([g for g, _ in changes[f]])), None)] + changes[f]
-                for f in fluents
-            ]
-            touched = Or([g for f in fluents for g, _ in changes[f]]).simplify()
-            cases = []
-            for combination in itertools.product(*options):
-                if all(value is None for _, value in combination):
-                    continue
-                guard = And([g for g, _ in combination]).simplify()
-                if guard.is_false():
-                    continue
-                substitution: Dict[Expression, Expression] = {
-                    f: value
-                    for f, (_, value) in zip(fluents, combination)
-                    if value is not None
-                }
-                cases.append(And(guard, count_expr.substitute(substitution)))
-            new_expr = Or(cases).simplify()
-            self._int_add_count_effect_to_action(
-                action,
-                count_fluent,
-                new_expr,
-                None if touched.is_true() else touched,
-            )
-        return action
+        return groups
 
     # ============================================================
     # MAIN COMPILATION
