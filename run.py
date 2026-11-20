@@ -84,26 +84,12 @@ COMPILATION_PIPELINES = {
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
         #CompilationKind.CONDITIONAL_EFFECTS_REMOVING,
     ],
-    "I3+A": [ # + axioms
-        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
-        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "object"}),
-        CompilationKind.USERTYPE_FLUENTS_REMOVING,
-        CompilationKind.GOALS_AS_AXIOMS,
-    ],
     "I4": [ # binary encoding, classical output
         CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
         (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
         (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
         CompilationKind.USERTYPE_FLUENTS_REMOVING,
         #CompilationKind.CONDITIONAL_EFFECTS_REMOVING,
-    ],
-    "I4+A": [ # + axioms
-        CompilationKind.INT_PARAMETERS_AND_VARIABLES_REMOVING,
-        (CompilationKind.ARRAY_FLUENTS_REMOVING, {"mode": "permissive"}),
-        (CompilationKind.INTEGER_FLUENTS_GENERAL_REMOVING, {"representation": "binary"}),
-        CompilationKind.USERTYPE_FLUENTS_REMOVING,
-        CompilationKind.GOALS_AS_AXIOMS,
     ],
 
     # -------- Count expressions --------
