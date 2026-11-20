@@ -179,15 +179,11 @@ class SlitherlinkDomain(Domain):
         problem = Problem("slitherlink_problem")
 
         node_degree = Fluent("node_degree", ArrayType(rows + 1, ArrayType(cols + 1, IntType(0, 2))))
-        cell_capacity = Fluent("cell_capacity", ArrayType(rows, ArrayType(cols, IntType(0, 4))))
-        h_edge = Fluent(
-            "h_edge",
-            ArrayType(rows + 1, ArrayType(cols, BoolType())),
-        )
-        v_edge = Fluent(
-            "v_edge",
-            ArrayType(rows, ArrayType(cols + 1, BoolType())),
-        )
+        # Cells with a ring of outside cells around the grid, as in the handcrafted model: cell (i, j)
+        # of the grid is cell_capacity[i + 1][j + 1], and each outside cell borders one edge.
+        cell_capacity = Fluent("cell_capacity", ArrayType(rows + 2, ArrayType(cols + 2, IntType(0, 4))))
+        h_edge = Fluent("h_edge", ArrayType(rows + 1, ArrayType(cols, BoolType())))
+        v_edge = Fluent("v_edge", ArrayType(rows, ArrayType(cols + 1, BoolType())))
         disable_link_0_0 = Fluent("disable_link_0_0", BoolType())
 
         problem.add_fluent(node_degree, default_initial_value=0)
@@ -197,163 +193,57 @@ class SlitherlinkDomain(Domain):
         problem.add_fluent(disable_link_0_0, default_initial_value=False)
 
         problem.set_initial_value(node_degree, data["node_degree_init"])
-        problem.set_initial_value(cell_capacity, data["cell_capacity_init"])
+        capacity = [[0] * (cols + 2) for _ in range(rows + 2)]
+        for i in range(rows):
+            capacity[i + 1][0] = capacity[i + 1][cols + 1] = 1
+            for j in range(cols):
+                capacity[i + 1][j + 1] = data["cell_capacity_init"][i][j]
+        for j in range(cols):
+            capacity[0][j + 1] = capacity[rows + 1][j + 1] = 1
+        problem.set_initial_value(cell_capacity, capacity)
         if data["disable_init"]:
             problem.set_initial_value(disable_link_0_0, True)
 
-        link_h_inner = InstantaneousAction(
-            "link_h_inner",
-            r=IntType(1, rows - 1),
-            c=IntType(0, cols - 1),
-        )
-        r = link_h_inner.parameter("r")
-        c = link_h_inner.parameter("c")
-        link_h_inner.add_precondition(Not(h_edge[r][c]))
-        link_h_inner.add_precondition(LT(node_degree[r][c], 2))
-        link_h_inner.add_precondition(LT(node_degree[r][c + 1], 2))
-        link_h_inner.add_precondition(GE(cell_capacity[r - 1][c], 1))
-        link_h_inner.add_precondition(GE(cell_capacity[r][c], 1))
-        link_h_inner.add_precondition(
-            Or(
-                Not(And(Equals(node_degree[r][c], 0), Equals(node_degree[r][c + 1], 0))),
-                Not(disable_link_0_0),
-            )
-        )
-        link_h_inner.add_effect(h_edge[r][c], True)
-        link_h_inner.add_increase_effect(node_degree[r][c], 1)
-        link_h_inner.add_increase_effect(node_degree[r][c + 1], 1)
-        link_h_inner.add_decrease_effect(cell_capacity[r - 1][c], 1)
-        link_h_inner.add_decrease_effect(cell_capacity[r][c], 1)
-        link_h_inner.add_effect(
-            disable_link_0_0,
-            True,
-            And(Equals(node_degree[r][c], 0), Equals(node_degree[r][c + 1], 0)),
-        )
-
-        link_h_top = InstantaneousAction("link_h_top", c=IntType(0, cols - 1))
-        c = link_h_top.parameter("c")
-        link_h_top.add_precondition(Not(h_edge[0][c]))
-        link_h_top.add_precondition(LT(node_degree[0][c], 2))
-        link_h_top.add_precondition(LT(node_degree[0][c + 1], 2))
-        link_h_top.add_precondition(GE(cell_capacity[0][c], 1))
-        link_h_top.add_precondition(
-            Or(
-                Not(And(Equals(node_degree[0][c], 0), Equals(node_degree[0][c + 1], 0))),
-                Not(disable_link_0_0),
-            )
-        )
-        link_h_top.add_effect(h_edge[0][c], True)
-        link_h_top.add_increase_effect(node_degree[0][c], 1)
-        link_h_top.add_increase_effect(node_degree[0][c + 1], 1)
-        link_h_top.add_decrease_effect(cell_capacity[0][c], 1)
-        link_h_top.add_effect(
-            disable_link_0_0,
-            True,
-            And(Equals(node_degree[0][c], 0), Equals(node_degree[0][c + 1], 0)),
-        )
-
-        link_h_bottom = InstantaneousAction("link_h_bottom", c=IntType(0, cols - 1))
-        c = link_h_bottom.parameter("c")
-        link_h_bottom.add_precondition(Not(h_edge[rows][c]))
-        link_h_bottom.add_precondition(LT(node_degree[rows][c], 2))
-        link_h_bottom.add_precondition(LT(node_degree[rows][c + 1], 2))
-        link_h_bottom.add_precondition(GE(cell_capacity[rows - 1][c], 1))
-        link_h_bottom.add_precondition(
-            Or(
-                Not(And(Equals(node_degree[rows][c], 0), Equals(node_degree[rows][c + 1], 0))),
-                Not(disable_link_0_0),
-            )
-        )
-        link_h_bottom.add_effect(h_edge[rows][c], True)
-        link_h_bottom.add_increase_effect(node_degree[rows][c], 1)
-        link_h_bottom.add_increase_effect(node_degree[rows][c + 1], 1)
-        link_h_bottom.add_decrease_effect(cell_capacity[rows - 1][c], 1)
-        link_h_bottom.add_effect(
-            disable_link_0_0,
-            True,
-            And(Equals(node_degree[rows][c], 0), Equals(node_degree[rows][c + 1], 0)),
-        )
-
-        link_v_inner = InstantaneousAction(
-            "link_v_inner",
-            r=IntType(0, rows - 1),
-            c=IntType(1, cols - 1),
-        )
-        r = link_v_inner.parameter("r")
-        c = link_v_inner.parameter("c")
-        link_v_inner.add_precondition(Not(v_edge[r][c]))
-        link_v_inner.add_precondition(LT(node_degree[r][c], 2))
-        link_v_inner.add_precondition(LT(node_degree[r + 1][c], 2))
-        link_v_inner.add_precondition(GE(cell_capacity[r][c - 1], 1))
-        link_v_inner.add_precondition(GE(cell_capacity[r][c], 1))
-        link_v_inner.add_precondition(
-            Or(
-                Not(And(Equals(node_degree[r][c], 0), Equals(node_degree[r + 1][c], 0))),
-                Not(disable_link_0_0),
-            )
-        )
-        link_v_inner.add_effect(v_edge[r][c], True)
-        link_v_inner.add_increase_effect(node_degree[r][c], 1)
-        link_v_inner.add_increase_effect(node_degree[r + 1][c], 1)
-        link_v_inner.add_decrease_effect(cell_capacity[r][c - 1], 1)
-        link_v_inner.add_decrease_effect(cell_capacity[r][c], 1)
-        link_v_inner.add_effect(
-            disable_link_0_0,
-            True,
-            And(Equals(node_degree[r][c], 0), Equals(node_degree[r + 1][c], 0)),
-        )
-
-        link_v_left = InstantaneousAction("link_v_left", r=IntType(0, rows - 1))
-        r = link_v_left.parameter("r")
-        link_v_left.add_precondition(Not(v_edge[r][0]))
-        link_v_left.add_precondition(LT(node_degree[r][0], 2))
-        link_v_left.add_precondition(LT(node_degree[r + 1][0], 2))
-        link_v_left.add_precondition(GE(cell_capacity[r][0], 1))
-        link_v_left.add_precondition(
-            Or(
-                Not(And(Equals(node_degree[r][0], 0), Equals(node_degree[r + 1][0], 0))),
-                Not(disable_link_0_0),
-            )
-        )
-        link_v_left.add_effect(v_edge[r][0], True)
-        link_v_left.add_increase_effect(node_degree[r][0], 1)
-        link_v_left.add_increase_effect(node_degree[r + 1][0], 1)
-        link_v_left.add_decrease_effect(cell_capacity[r][0], 1)
-        link_v_left.add_effect(
-            disable_link_0_0,
-            True,
-            And(Equals(node_degree[r][0], 0), Equals(node_degree[r + 1][0], 0)),
-        )
-
-        link_v_right = InstantaneousAction("link_v_right", r=IntType(0, rows - 1))
-        r = link_v_right.parameter("r")
-        link_v_right.add_precondition(Not(v_edge[r][cols]))
-        link_v_right.add_precondition(LT(node_degree[r][cols], 2))
-        link_v_right.add_precondition(LT(node_degree[r + 1][cols], 2))
-        link_v_right.add_precondition(GE(cell_capacity[r][cols - 1], 1))
-        link_v_right.add_precondition(
-            Or(
-                Not(And(Equals(node_degree[r][cols], 0), Equals(node_degree[r + 1][cols], 0))),
-                Not(disable_link_0_0),
-            )
-        )
-        link_v_right.add_effect(v_edge[r][cols], True)
-        link_v_right.add_increase_effect(node_degree[r][cols], 1)
-        link_v_right.add_increase_effect(node_degree[r + 1][cols], 1)
-        link_v_right.add_decrease_effect(cell_capacity[r][cols - 1], 1)
-        link_v_right.add_effect(
-            disable_link_0_0,
-            True,
-            And(Equals(node_degree[r][cols], 0), Equals(node_degree[r + 1][cols], 0)),
-        )
-
-        problem.add_actions([link_h_inner, link_h_top, link_h_bottom, link_v_inner, link_v_left, link_v_right])
+        # Link two adjacent nodes of degrees d1 and d2, as the actions link-d1-d2 of the handcrafted model
+        # Only the first link joins two nodes of degree 0, so the links form a single cycle
+        actions = []
+        for horizontal in (True, False):
+            for d1 in (0, 1):
+                for d2 in (0, 1):
+                    name = f"link_{'h' if horizontal else 'v'}_{d1}_{d2}"
+                    # k1 and k2 are the capacities of the two cells beside the edge
+                    if horizontal:
+                        action = InstantaneousAction(name, r=IntType(0, rows), c=IntType(0, cols - 1), k1=IntType(1, 4), k2=IntType(1, 4))
+                    else:
+                        action = InstantaneousAction(name, r=IntType(0, rows - 1), c=IntType(0, cols), k1=IntType(1, 4), k2=IntType(1, 4))
+                    r, c = action.parameter("r"), action.parameter("c")
+                    k1, k2 = action.parameter("k1"), action.parameter("k2")
+                    if horizontal:
+                        edge, n1, n2 = h_edge[r][c], node_degree[r][c], node_degree[r][c + 1]
+                        c1, c2 = cell_capacity[r][c + 1], cell_capacity[r + 1][c + 1]
+                    else:
+                        edge, n1, n2 = v_edge[r][c], node_degree[r][c], node_degree[r + 1][c]
+                        c1, c2 = cell_capacity[r + 1][c], cell_capacity[r + 1][c + 1]
+                    action.add_precondition(Not(edge))
+                    action.add_precondition(Equals(n1, d1))
+                    action.add_precondition(Equals(n2, d2))
+                    action.add_precondition(Equals(c1, k1))
+                    action.add_precondition(Equals(c2, k2))
+                    action.add_effect(edge, True)
+                    action.add_effect(n1, d1 + 1)
+                    action.add_effect(n2, d2 + 1)
+                    action.add_effect(c1, k1 - 1)
+                    action.add_effect(c2, k2 - 1)
+                    if d1 == 0 and d2 == 0:
+                        action.add_precondition(Not(disable_link_0_0))
+                        action.add_effect(disable_link_0_0, True)
+                    actions.append(action)
+        problem.add_actions(actions)
 
         for r, c in data["goal_node_not_degree1"]:
             problem.add_goal(Not(Equals(node_degree[r][c], 1)))
         for r, c in data["goal_cell_cap0"]:
-            problem.add_goal(Equals(cell_capacity[r][c], 0))
-
+            problem.add_goal(Equals(cell_capacity[r + 1][c + 1], 0))
         return problem
 
 
