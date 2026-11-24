@@ -187,6 +187,8 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         self, old_problem: Problem, new_problem: Problem, node: FNode
     ) -> Union[FNode, None]:
         """Transform fluent expression, handling arrays."""
+        if node.fluent() in self._undefined_derived:
+            return None  # Derived fluent whose axioms are all undefined
         new_args = []
         for arg in node.args:
             transformed = self._transform_expression(old_problem, new_problem, arg)
@@ -687,7 +689,10 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
     def _transform_axioms(
         self, problem: Problem, new_problem: Problem, new_to_old: Dict
     ):
-        """Transform axioms"""
+        """
+        Transform axioms. An axiom whose body is undefined is dropped, and if all the axioms of a derived fluent
+        are dropped, the fluent is undefined wherever it is used.
+        """
         for axiom in problem.axioms:
             # Check for integer parameters
             for param in axiom.parameters:
@@ -695,22 +700,29 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
                     raise NotImplementedError(
                         "Integer parameters in axioms are not supported!"
                     )
+        heads = {axiom.head.fluent.fluent() for axiom in problem.axioms}
+        # Repeat while new derived fluents become undefined, since they can occur in other bodies
+        while True:
+            kept = []
+            for axiom in problem.axioms:
+                bodies = [
+                    self._transform_expression(problem, new_problem, body)
+                    for body in axiom.body
+                ]
+                if None not in bodies:
+                    kept.append((axiom, bodies))
+            undefined = heads - {axiom.head.fluent.fluent() for axiom, _ in kept}
+            if undefined == self._undefined_derived:
+                break
+            self._undefined_derived = undefined
+
+        for axiom, bodies in kept:
             params = OrderedDict((p.name, p.type) for p in axiom.parameters)
-            # Clone and transform
             new_axiom_name = get_fresh_name(new_problem, axiom.name)
             new_axiom = Axiom(new_axiom_name, params, axiom.environment)
-
-            skip_axiom = False
             new_axiom.set_head(axiom.head.fluent)
-            for body in axiom.body:
-                new_body = self._transform_expression(problem, new_problem, body)
-                if new_body is None:
-                    skip_axiom = True
-                    break
-                else:
-                    new_axiom.add_body_condition(new_body)
-            if skip_axiom:
-                continue
+            for body in bodies:
+                new_axiom.add_body_condition(body)
             new_problem.add_axiom(new_axiom)
             new_to_old[new_axiom] = axiom
 
@@ -752,11 +764,14 @@ class ArrayFluentsRemover(engines.engine.Engine, CompilerMixin):
         new_problem.explicit_initial_values.clear()
         assert self.mode == "strict" or self.mode == "permissive"
 
-        # Transform components
+        # Transform components. Axioms go first, so that actions and goals know which derived fluents are undefined
         self._transform_fluents(problem, new_problem)
+        self._undefined_derived = set()
+        axioms_new_to_old = {}
+        self._transform_axioms(problem, new_problem, axioms_new_to_old)
         new_to_old = self._transform_actions(problem, new_problem)
         self._transform_goals(problem, new_problem)
-        self._transform_axioms(problem, new_problem, new_to_old)
+        new_to_old.update(axioms_new_to_old)
 
         # Transform quality metrics
         for metric in problem.quality_metrics:
