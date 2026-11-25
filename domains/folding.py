@@ -1,18 +1,19 @@
 """Folding planning domain.
 
-Example:
-  python run.py --domain folding --compilation I3 --solving fast-downward
+A string of nodes lies on a grid. A rotation at node n turns the part of the string after n by
+90 degrees around n, clockwise or counterclockwise, and the string must not cross itself. The goal
+fixes the position of every node. As in the handcrafted model, a rotation is split into passes over
+the part of the string after n: the first rotates the direction of every edge, the second frees the
+cells of the nodes, and the third places every node next to the previous one in a free cell. As in
+the handcrafted model, each cell is either free or holds one node, and each pass has its own cursor.
+The cost of a plan is the number of rotations.
 """
 
 from typing import Dict, Optional
-from unified_planning.model import Action, Expression, Object, IntVariable
+from unified_planning.model import Action, Expression
 from unified_planning.shortcuts import (
-    Fluent,
-    Int,
-    IntType,
-    InstantaneousAction,
-    MinimizeActionCosts,
-    Problem, UserType, Minus, Plus, LE, GE, ArrayType, And, Or, Equals, Not, Forall, BoolType,
+    ArrayType, BoolType, Equals, Fluent, Int, IntType, InstantaneousAction, LE, Minus, Plus,
+    MinimizeActionCosts, Not, Problem, Times,
 )
 from domains.base import Domain
 
@@ -69,17 +70,20 @@ INSTANCES: Dict[str, tuple[int, int, list[tuple[int, int]], list[tuple[int, int]
     "prob50": (48, 48, [(24, 23), (23, 23), (22, 23), (21, 23), (20, 23), (19, 23), (18, 23), (17, 23), (16, 23), (15, 23), (14, 23), (13, 23), (12, 23), (11, 23), (10, 23), (9, 23), (8, 23), (7, 23), (6, 23), (5, 23), (4, 23), (3, 23), (2, 23), (1, 23)], [(24, 23), (23, 23), (23, 24), (24, 24), (25, 24), (25, 23), (25, 22), (24, 22), (23, 22), (22, 22), (22, 23), (22, 24), (22, 25), (22, 26), (22, 27), (23, 27), (24, 27), (25, 27), (25, 26), (25, 25), (24, 25), (23, 25), (23, 26), (24, 26)]),
 }
 
+
 # Directions: 0 = row + 1, 1 = col + 1, 2 = row - 1, 3 = col - 1.
 # A clockwise rotation turns direction d into d - 1 (mod 4), a counterclockwise one into d + 1.
 DR = [1, 0, -1, 0]
 DC = [0, 1, 0, -1]
 
+
 def direction(a, b):
-    """Direction of the edge from position a to the adjacent position b."""
     return [(DR[d], DC[d]) for d in range(4)].index((b[0] - a[0], b[1] - a[1]))
+
 
 def turn(d, cw):
     return (d - 1) % 4 if cw else (d + 1) % 4
+
 
 class FoldingDomain(Domain):
     def __init__(self) -> None:
@@ -104,96 +108,120 @@ class FoldingDomain(Domain):
         x0, y0 = initial_state[0]  # node 0 never moves
         problem = Problem('folding_problem')
 
-        rows = Fluent('rows', ArrayType(nodes, IntType(0, r - 1)))
-        cols = Fluent('cols', ArrayType(nodes, IntType(0, c - 1)))
-        # Direction of the edge from node k to node k + 1
-        heading = Fluent('heading', ArrayType(nodes - 1, IntType(0, 3)))
+        at = Fluent('at', ArrayType(nodes, ArrayType(r, ArrayType(c, BoolType()))))  # node k is at (x, y)
+        heading = Fluent('heading', ArrayType(nodes - 1, IntType(0, 3)))  # direction of the edge k -> k + 1
+        free = Fluent('free', ArrayType(r, ArrayType(c, BoolType())))
         rotating = Fluent('rotating', BoolType())
-        first_pass = Fluent('first_pass', BoolType())
-        clockwise = Fluent('clockwise', BoolType())
-        cursor = Fluent('cursor', IntType(0, nodes))  # next node to process
-        pivot = Fluent('pivot', IntType(0, nodes - 2))
-        for f, v in ((rows, 0), (cols, 0), (heading, 0), (rotating, False), (first_pass, False),
-                     (clockwise, False), (cursor, 0), (pivot, 0)):
+        # Cursors of the three passes, as in the handcrafted model
+        turning = {cw: Fluent(f"turning_{'clockwise' if cw else 'counter_clockwise'}", ArrayType(nodes, BoolType())) for cw in (True, False)}
+        freeing = Fluent('freeing', ArrayType(nodes + 1, BoolType()))
+        placing = Fluent('placing', ArrayType(nodes, BoolType()))
+        pivot = Fluent('pivot', ArrayType(nodes - 1, BoolType()))
+        for f, v in ((at, False), (heading, 0), (free, True), (rotating, False), (turning[True], False),
+                     (turning[False], False), (freeing, False), (placing, False), (pivot, False)):
             problem.add_fluent(f, default_initial_value=v)
         for i, (x, y) in enumerate(initial_state):
-            problem.set_initial_value(rows[i], x)
-            problem.set_initial_value(cols[i], y)
+            problem.set_initial_value(at[i][x][y], True)
+            problem.set_initial_value(free[x][y], False)
             if i < nodes - 1:
                 problem.set_initial_value(heading[i], direction(initial_state[i], initial_state[i + 1]))
 
         costs: Dict[Action, Expression] = {}
 
-        # Rotate the edge after node n, whose direction is d, and start the first pass
+        def near_start(action, x, y, k):
+            # Node k is at Manhattan distance at most k from node 0, which never moves
+            for sx in (1, -1):
+                for sy in (1, -1):
+                    action.add_precondition(LE(Plus(Times(sx, Minus(x, x0)), Times(sy, Minus(y, y0))), k))
+
+        def box(k):
+            return (IntType(max(0, x0 - k), min(r - 1, x0 + k)), IntType(max(0, y0 - k), min(c - 1, y0 + k)))
+
+        # Rotate the part of the string after node n
         for cw in (True, False):
-            for d in range(4):
-                rotate = InstantaneousAction(f"rotate_{'clockwise' if cw else 'counter_clockwise'}_{d}", n=IntType(0, nodes - 2))
-                n = rotate.parameter('n')
-                rotate.add_precondition(Not(rotating))
-                rotate.add_precondition(Equals(heading[n], d))
-                rotate.add_effect(heading[n], turn(d, cw))
-                rotate.add_effect(rotating, True)
-                rotate.add_effect(first_pass, True)
-                rotate.add_effect(clockwise, cw)
-                rotate.add_effect(pivot, n)
-                rotate.add_effect(cursor, n + 1)
-                problem.add_action(rotate)
-                costs[rotate] = Int(1)
+            rotate = InstantaneousAction(f"rotate_{'clockwise' if cw else 'counter_clockwise'}", n=IntType(0, nodes - 2))
+            n = rotate.parameter('n')
+            rotate.add_precondition(Not(rotating))
+            rotate.add_effect(rotating, True)
+            rotate.add_effect(turning[cw][n], True)
+            rotate.add_effect(pivot[n], True)
+            problem.add_action(rotate)
+            costs[rotate] = Int(1)
 
         # First pass: rotate the edge after node k, whose direction is d
         for cw in (True, False):
             for d in range(4):
-                step = InstantaneousAction(f"first_pass_{'clockwise' if cw else 'counter_clockwise'}_{d}", k=IntType(1, nodes - 2))
+                step = InstantaneousAction(f"turn_edge_{'clockwise' if cw else 'counter_clockwise'}_{d}", k=IntType(0, nodes - 2))
                 k = step.parameter('k')
-                step.add_precondition(first_pass)
-                step.add_precondition(clockwise if cw else Not(clockwise))
-                step.add_precondition(Equals(cursor, k))
+                step.add_precondition(turning[cw][k])
                 step.add_precondition(Equals(heading[k], d))
                 step.add_effect(heading[k], turn(d, cw))
-                step.add_effect(cursor, k + 1)
+                step.add_effect(turning[cw][k], False)
+                step.add_effect(turning[cw][k + 1], True)
                 problem.add_action(step)
                 costs[step] = Int(0)
 
-        # Start the second pass after the pivot p, once every later edge is rotated
-        start = InstantaneousAction('start_second_pass', p=IntType(0, nodes - 2))
-        p = start.parameter('p')
-        start.add_precondition(first_pass)
-        start.add_precondition(Equals(cursor, nodes - 1))
-        start.add_precondition(Equals(pivot, p))
-        start.add_effect(first_pass, False)
-        start.add_effect(cursor, p + 1)
-        problem.add_action(start)
-        costs[start] = Int(0)
+        # Start the second pass after the pivot p, once every edge after p is rotated
+        for cw in (True, False):
+            start_free = InstantaneousAction(f"start_freeing_{'clockwise' if cw else 'counter_clockwise'}", p=IntType(0, nodes - 2))
+            p = start_free.parameter('p')
+            start_free.add_precondition(turning[cw][nodes - 1])
+            start_free.add_precondition(pivot[p])
+            start_free.add_effect(turning[cw][nodes - 1], False)
+            start_free.add_effect(freeing[p + 1], True)
+            problem.add_action(start_free)
+            costs[start_free] = Int(0)
 
-        # Second pass: place node k next to node k - 1, following the edge after k - 1. The new
-        # position must be free: nodes before k are already placed, and nodes after k still move.
+        # Second pass: free the cell of node k
         for k in range(1, nodes):
+            tx, ty = box(k)
+            step = InstantaneousAction(f'free_{k}', x=tx, y=ty)
+            x, y = step.parameter('x'), step.parameter('y')
+            near_start(step, x, y, k)
+            step.add_precondition(freeing[k])
+            step.add_precondition(at[k][x][y])
+            step.add_effect(at[k][x][y], False)
+            step.add_effect(free[x][y], True)
+            step.add_effect(freeing[k], False)
+            step.add_effect(freeing[k + 1], True)
+            problem.add_action(step)
+            costs[step] = Int(0)
+
+        # Start the third pass after the pivot p
+        start_place = InstantaneousAction('start_placing', p=IntType(0, nodes - 2))
+        p = start_place.parameter('p')
+        start_place.add_precondition(freeing[nodes])
+        start_place.add_precondition(pivot[p])
+        start_place.add_effect(freeing[nodes], False)
+        start_place.add_effect(pivot[p], False)
+        start_place.add_effect(placing[p + 1], True)
+        problem.add_action(start_place)
+        costs[start_place] = Int(0)
+
+        # Third pass: place node k next to node k - 1, at (x, y), following the edge after k - 1
+        for k in range(1, nodes):
+            tx, ty = box(k - 1)
             for d in range(4):
-                vertical = DR[d] != 0
-                lo, hi = (x0, r) if vertical else (y0, c)
-                step = InstantaneousAction(f'second_pass_{k}_{d}', v=IntType(max(0, lo - (k - 1)), min(hi - 1, lo + (k - 1))))
-                v = step.parameter('v')
-                same, moved = (cols, rows) if vertical else (rows, cols)
-                new = v + (DR[d] if vertical else DC[d])
-                step.add_precondition(rotating)
-                step.add_precondition(Not(first_pass))
-                step.add_precondition(Equals(cursor, k))
+                step = InstantaneousAction(f'place_{k}_{d}', x=tx, y=ty)
+                x, y = step.parameter('x'), step.parameter('y')
+                near_start(step, x, y, k - 1)
+                nx, ny = x + DR[d], y + DC[d]
+                step.add_precondition(placing[k])
                 step.add_precondition(Equals(heading[k - 1], d))
-                step.add_precondition(Equals(moved[k - 1], v))
-                for j in range(k - 1):
-                    step.add_precondition(Or(Not(Equals(moved[j], new)), Not(Equals(same[j], same[k - 1]))))
-                step.add_effect(moved[k], new)
-                step.add_effect(same[k], same[k - 1])
+                step.add_precondition(at[k - 1][x][y])
+                step.add_precondition(free[nx][ny])
+                step.add_effect(at[k][nx][ny], True)
+                step.add_effect(free[nx][ny], False)
+                step.add_effect(placing[k], False)
                 if k < nodes - 1:
-                    step.add_effect(cursor, k + 1)
+                    step.add_effect(placing[k + 1], True)
                 else:
                     step.add_effect(rotating, False)
                 problem.add_action(step)
                 costs[step] = Int(0)
 
         for i, (gx, gy) in enumerate(goal_state):
-            problem.add_goal(Equals(rows[i], gx))
-            problem.add_goal(Equals(cols[i], gy))
+            problem.add_goal(at[i][gx][gy])
         problem.add_goal(Not(rotating))
         problem.add_quality_metric(MinimizeActionCosts(costs))
         return problem
